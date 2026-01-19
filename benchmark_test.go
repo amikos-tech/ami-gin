@@ -938,3 +938,103 @@ func BenchmarkRealWorldScenario(b *testing.B) {
 		}
 	})
 }
+
+// =============================================================================
+// Compression Level Benchmarks
+// =============================================================================
+
+func BenchmarkCompressionLevels(b *testing.B) {
+	sizes := []int{100, 1000, 5000}
+
+	levels := []struct {
+		name  string
+		level CompressionLevel
+	}{
+		{"None", CompressionNone},
+		{"Zstd-1", CompressionFastest},
+		{"Zstd-3", CompressionDefault},
+		{"Zstd-9", CompressionBetter},
+		{"Zstd-15", CompressionBest},
+		{"Zstd-19", CompressionMax},
+	}
+
+	for _, size := range sizes {
+		idx := setupTestIndex(size)
+
+		for _, l := range levels {
+			b.Run(fmt.Sprintf("Encode/RGs=%d/%s", size, l.name), func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_, _ = EncodeWithLevel(idx, l.level)
+				}
+			})
+		}
+
+		// Pre-encode for decode and size benchmarks
+		encoded := make(map[string][]byte)
+		for _, l := range levels {
+			encoded[l.name], _ = EncodeWithLevel(idx, l.level)
+		}
+
+		for _, l := range levels {
+			data := encoded[l.name]
+			b.Run(fmt.Sprintf("Decode/RGs=%d/%s", size, l.name), func(b *testing.B) {
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_, _ = Decode(data)
+				}
+			})
+		}
+
+		// Report sizes
+		noneSize := len(encoded["None"])
+		for _, l := range levels {
+			data := encoded[l.name]
+			b.Run(fmt.Sprintf("Size/RGs=%d/%s", size, l.name), func(b *testing.B) {
+				b.ReportMetric(float64(len(data)), "bytes")
+				b.ReportMetric(float64(len(data))/1024, "KB")
+				if noneSize > 0 {
+					b.ReportMetric(float64(len(data))/float64(noneSize)*100, "ratio%")
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkCompressionLevelsThroughput(b *testing.B) {
+	idx := setupTestIndex(5000)
+
+	levels := []struct {
+		name  string
+		level CompressionLevel
+	}{
+		{"None", CompressionNone},
+		{"Zstd-1", CompressionFastest},
+		{"Zstd-3", CompressionDefault},
+		{"Zstd-9", CompressionBetter},
+		{"Zstd-15", CompressionBest},
+		{"Zstd-19", CompressionMax},
+	}
+
+	for _, l := range levels {
+		data, _ := EncodeWithLevel(idx, l.level)
+		uncompressedData, _ := EncodeWithLevel(idx, CompressionNone)
+		uncompressedSize := len(uncompressedData) - 4 // subtract magic bytes
+
+		b.Run(fmt.Sprintf("EncodeMBps/%s", l.name), func(b *testing.B) {
+			b.SetBytes(int64(uncompressedSize))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = EncodeWithLevel(idx, l.level)
+			}
+		})
+
+		b.Run(fmt.Sprintf("DecodeMBps/%s", l.name), func(b *testing.B) {
+			b.SetBytes(int64(uncompressedSize))
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, _ = Decode(data)
+			}
+		})
+	}
+}

@@ -14,6 +14,20 @@ import (
 
 const maxConfigSize = 1 << 20 // 1MB max config size
 
+// CompressionLevel specifies the compression level for index serialization.
+type CompressionLevel int
+
+const (
+	CompressionNone    CompressionLevel = 0  // No compression
+	CompressionFastest CompressionLevel = 1  // zstd level 1
+	CompressionDefault CompressionLevel = 3  // zstd level 3
+	CompressionBetter  CompressionLevel = 9  // zstd level 9
+	CompressionBest    CompressionLevel = 15 // zstd level 15 (recommended)
+	CompressionMax     CompressionLevel = 19 // zstd level 19 (slow)
+)
+
+const uncompressedMagic = "GINu"
+
 type SerializedConfig struct {
 	BloomFilterSize   uint32            `json:"bloom_filter_size"`
 	BloomFilterHashes uint8             `json:"bloom_filter_hashes"`
@@ -60,7 +74,14 @@ func readRGSet(r io.Reader) (*RGSet, error) {
 	return RGSetFromRoaring(bitmap, int(numRGs)), nil
 }
 
+// Encode serializes the index using zstd-15 compression (recommended default).
 func Encode(idx *GINIndex) ([]byte, error) {
+	return EncodeWithLevel(idx, CompressionBest)
+}
+
+// EncodeWithLevel serializes the index with the specified compression level.
+// Use CompressionNone (0) for no compression, or 1-19 for zstd compression levels.
+func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	var buf bytes.Buffer
 
 	if len(idx.DocIDMapping) > 0 {
@@ -113,7 +134,12 @@ func Encode(idx *GINIndex) ([]byte, error) {
 		return nil, errors.Wrap(err, "write config")
 	}
 
-	encoder, err := zstd.NewWriter(nil)
+	if level == CompressionNone {
+		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
+	}
+
+	encoder, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(int(level))))
 	if err != nil {
 		return nil, errors.Wrap(err, "create zstd encoder")
 	}
@@ -123,15 +149,23 @@ func Encode(idx *GINIndex) ([]byte, error) {
 }
 
 func Decode(data []byte) (*GINIndex, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "create zstd decoder")
-	}
-	defer decoder.Close()
+	var decompressed []byte
 
-	decompressed, err := decoder.DecodeAll(data, nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "decompress data")
+	// Check for uncompressed magic
+	if len(data) >= 4 && string(data[:4]) == uncompressedMagic {
+		decompressed = data[4:]
+	} else {
+		// Assume zstd compressed
+		decoder, err := zstd.NewReader(nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "create zstd decoder")
+		}
+		defer decoder.Close()
+
+		decompressed, err = decoder.DecodeAll(data, nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "decompress data")
+		}
 	}
 
 	buf := bytes.NewReader(decompressed)
