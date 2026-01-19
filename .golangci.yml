@@ -1,0 +1,44 @@
+version: "2"
+run:
+  modules-download-mode: readonly
+  timeout: 5m
+  concurrency: 4
+
+linters:
+  enable:
+    - dupword
+    - gocritic
+    - mirror
+  settings:
+    gocritic:
+      disable-all: false
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+        - -ST1020
+  exclusions:
+    rules:
+      - linters:
+          - errcheck
+        path: _test\.go
+      - linters:
+          - errcheck
+        path: examples/
+
+issues:
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gci
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(github.com/amikos-tech/gin-index)
+        - blank
+        - dot
+      custom-order: true
