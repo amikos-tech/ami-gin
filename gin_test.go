@@ -253,6 +253,154 @@ func TestSerializeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCompressionLevels(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.AddDocument(0, []byte(`{"name": "alice", "age": 30, "active": true}`))
+	builder.AddDocument(1, []byte(`{"name": "bob", "age": 25, "active": false}`))
+	builder.AddDocument(2, []byte(`{"name": "charlie", "age": 35}`))
+	idx := builder.Finalize()
+
+	levels := []struct {
+		name  string
+		level CompressionLevel
+	}{
+		{"None", CompressionNone},
+		{"Fastest", CompressionFastest},
+		{"Balanced", CompressionBalanced},
+		{"Better", CompressionBetter},
+		{"Best", CompressionBest},
+		{"Max", CompressionMax},
+	}
+
+	for _, tc := range levels {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := EncodeWithLevel(idx, tc.level)
+			if err != nil {
+				t.Fatalf("encode with level %d failed: %v", tc.level, err)
+			}
+
+			decoded, err := Decode(encoded)
+			if err != nil {
+				t.Fatalf("decode failed: %v", err)
+			}
+
+			if decoded.Header.NumDocs != idx.Header.NumDocs {
+				t.Errorf("NumDocs mismatch: %d vs %d", decoded.Header.NumDocs, idx.Header.NumDocs)
+			}
+			if decoded.Header.NumRowGroups != idx.Header.NumRowGroups {
+				t.Errorf("NumRowGroups mismatch")
+			}
+
+			result := decoded.Evaluate([]Predicate{EQ("$.name", "bob")})
+			if !result.IsSet(1) {
+				t.Error("query on decoded index failed")
+			}
+		})
+	}
+}
+
+func TestCompressionUncompressedMagic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"value": 1}`))
+	builder.AddDocument(1, []byte(`{"value": 2}`))
+	idx := builder.Finalize()
+
+	encoded, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode uncompressed failed: %v", err)
+	}
+
+	if len(encoded) < 4 {
+		t.Fatal("encoded data too short")
+	}
+	if string(encoded[:4]) != "GINu" {
+		t.Errorf("expected uncompressed magic 'GINu', got %q", string(encoded[:4]))
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode uncompressed failed: %v", err)
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.value", float64(2))})
+	if !result.IsSet(1) {
+		t.Error("query on decoded uncompressed index failed")
+	}
+}
+
+func TestCompressionCompressedMagic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"value": 1}`))
+	builder.AddDocument(1, []byte(`{"value": 2}`))
+	idx := builder.Finalize()
+
+	encoded, err := EncodeWithLevel(idx, CompressionFastest)
+	if err != nil {
+		t.Fatalf("encode compressed failed: %v", err)
+	}
+
+	if len(encoded) < 4 {
+		t.Fatal("encoded data too short")
+	}
+	if string(encoded[:4]) != "GINc" {
+		t.Errorf("expected compressed magic 'GINc', got %q", string(encoded[:4]))
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode compressed failed: %v", err)
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.value", float64(2))})
+	if !result.IsSet(1) {
+		t.Error("query on decoded compressed index failed")
+	}
+}
+
+func TestCompressionSizeReduction(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 100)
+	for i := 0; i < 100; i++ {
+		builder.AddDocument(DocID(i), []byte(fmt.Sprintf(`{"id": %d, "name": "user_%d", "value": %d}`, i, i%10, i*100)))
+	}
+	idx := builder.Finalize()
+
+	uncompressed, _ := EncodeWithLevel(idx, CompressionNone)
+	fastest, _ := EncodeWithLevel(idx, CompressionFastest)
+
+	if len(fastest) >= len(uncompressed) {
+		t.Errorf("zstd-1 should be smaller than uncompressed: %d >= %d", len(fastest), len(uncompressed))
+	}
+
+	// Note: For small datasets, higher compression levels may not always produce smaller output
+	// due to compression dictionary overhead. The benefit is more pronounced with larger data.
+	t.Logf("Sizes - Uncompressed: %d, Zstd-1: %d (%.1f%% of original)",
+		len(uncompressed), len(fastest), float64(len(fastest))/float64(len(uncompressed))*100)
+}
+
+func TestCompressionInvalidLevel(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"value": 1}`))
+	idx := builder.Finalize()
+
+	tests := []struct {
+		name  string
+		level CompressionLevel
+	}{
+		{"negative", CompressionLevel(-1)},
+		{"too_high", CompressionLevel(20)},
+		{"way_too_high", CompressionLevel(100)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := EncodeWithLevel(idx, tc.level)
+			if err == nil {
+				t.Errorf("expected error for compression level %d", tc.level)
+			}
+		})
+	}
+}
+
 func TestNestedJSON(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 

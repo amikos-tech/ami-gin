@@ -14,6 +14,23 @@ import (
 
 const maxConfigSize = 1 << 20 // 1MB max config size
 
+// CompressionLevel specifies the compression level for index serialization.
+type CompressionLevel int
+
+const (
+	CompressionNone     CompressionLevel = 0  // No compression
+	CompressionFastest  CompressionLevel = 1  // zstd level 1
+	CompressionBalanced CompressionLevel = 3  // zstd level 3
+	CompressionBetter   CompressionLevel = 9  // zstd level 9
+	CompressionBest     CompressionLevel = 15 // zstd level 15 (recommended)
+	CompressionMax      CompressionLevel = 19 // zstd level 19 (slow)
+)
+
+const (
+	uncompressedMagic = "GINu"
+	compressedMagic   = "GINc"
+)
+
 type SerializedConfig struct {
 	BloomFilterSize   uint32            `json:"bloom_filter_size"`
 	BloomFilterHashes uint8             `json:"bloom_filter_hashes"`
@@ -60,7 +77,18 @@ func readRGSet(r io.Reader) (*RGSet, error) {
 	return RGSetFromRoaring(bitmap, int(numRGs)), nil
 }
 
+// Encode serializes the index using zstd-15 compression (recommended default).
 func Encode(idx *GINIndex) ([]byte, error) {
+	return EncodeWithLevel(idx, CompressionBest)
+}
+
+// EncodeWithLevel serializes the index with the specified compression level.
+// Use CompressionNone (0) for no compression, or 1-19 for zstd compression levels.
+func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
+	if level < 0 || level > 19 {
+		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
+	}
+
 	var buf bytes.Buffer
 
 	if len(idx.DocIDMapping) > 0 {
@@ -113,25 +141,55 @@ func Encode(idx *GINIndex) ([]byte, error) {
 		return nil, errors.Wrap(err, "write config")
 	}
 
-	encoder, err := zstd.NewWriter(nil)
+	if level == CompressionNone {
+		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
+	}
+
+	encoder, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(int(level))))
 	if err != nil {
 		return nil, errors.Wrap(err, "create zstd encoder")
 	}
 	defer func() { _ = encoder.Close() }()
 
-	return encoder.EncodeAll(buf.Bytes(), nil), nil
+	compressed := encoder.EncodeAll(buf.Bytes(), nil)
+	return append([]byte(compressedMagic), compressed...), nil
 }
 
 func Decode(data []byte) (*GINIndex, error) {
-	decoder, err := zstd.NewReader(nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "create zstd decoder")
+	if len(data) < 4 {
+		return nil, errors.New("data too short")
 	}
-	defer decoder.Close()
 
-	decompressed, err := decoder.DecodeAll(data, nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "decompress data")
+	var decompressed []byte
+	magic := string(data[:4])
+
+	switch magic {
+	case uncompressedMagic:
+		decompressed = data[4:]
+	case compressedMagic:
+		decoder, err := zstd.NewReader(nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "create zstd decoder")
+		}
+		defer decoder.Close()
+
+		decompressed, err = decoder.DecodeAll(data[4:], nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "decompress data")
+		}
+	default:
+		// Legacy format: try zstd decompression without magic (backward compatibility)
+		decoder, err := zstd.NewReader(nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "create zstd decoder")
+		}
+		defer decoder.Close()
+
+		decompressed, err = decoder.DecodeAll(data, nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "decompress data")
+		}
 	}
 
 	buf := bytes.NewReader(decompressed)
