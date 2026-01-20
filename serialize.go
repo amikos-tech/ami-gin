@@ -18,12 +18,12 @@ const maxConfigSize = 1 << 20 // 1MB max config size
 type CompressionLevel int
 
 const (
-	CompressionNone    CompressionLevel = 0  // No compression
-	CompressionFastest CompressionLevel = 1  // zstd level 1
-	CompressionDefault CompressionLevel = 3  // zstd level 3
-	CompressionBetter  CompressionLevel = 9  // zstd level 9
-	CompressionBest    CompressionLevel = 15 // zstd level 15 (recommended)
-	CompressionMax     CompressionLevel = 19 // zstd level 19 (slow)
+	CompressionNone     CompressionLevel = 0  // No compression
+	CompressionFastest  CompressionLevel = 1  // zstd level 1
+	CompressionBalanced CompressionLevel = 3  // zstd level 3
+	CompressionBetter   CompressionLevel = 9  // zstd level 9
+	CompressionBest     CompressionLevel = 15 // zstd level 15 (recommended)
+	CompressionMax      CompressionLevel = 19 // zstd level 19 (slow)
 )
 
 const uncompressedMagic = "GINu"
@@ -82,6 +82,10 @@ func Encode(idx *GINIndex) ([]byte, error) {
 // EncodeWithLevel serializes the index with the specified compression level.
 // Use CompressionNone (0) for no compression, or 1-19 for zstd compression levels.
 func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
+	if level < 0 || level > 19 {
+		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
+	}
+
 	var buf bytes.Buffer
 
 	if len(idx.DocIDMapping) > 0 {

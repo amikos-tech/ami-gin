@@ -952,7 +952,7 @@ func BenchmarkCompressionLevels(b *testing.B) {
 	}{
 		{"None", CompressionNone},
 		{"Zstd-1", CompressionFastest},
-		{"Zstd-3", CompressionDefault},
+		{"Zstd-3", CompressionBalanced},
 		{"Zstd-9", CompressionBetter},
 		{"Zstd-15", CompressionBest},
 		{"Zstd-19", CompressionMax},
@@ -1010,7 +1010,7 @@ func BenchmarkCompressionLevelsThroughput(b *testing.B) {
 	}{
 		{"None", CompressionNone},
 		{"Zstd-1", CompressionFastest},
-		{"Zstd-3", CompressionDefault},
+		{"Zstd-3", CompressionBalanced},
 		{"Zstd-9", CompressionBetter},
 		{"Zstd-15", CompressionBest},
 		{"Zstd-19", CompressionMax},

@@ -266,7 +266,7 @@ func TestCompressionLevels(t *testing.T) {
 	}{
 		{"None", CompressionNone},
 		{"Fastest", CompressionFastest},
-		{"Default", CompressionDefault},
+		{"Balanced", CompressionBalanced},
 		{"Better", CompressionBetter},
 		{"Best", CompressionBest},
 		{"Max", CompressionMax},
@@ -346,6 +346,30 @@ func TestCompressionSizeReduction(t *testing.T) {
 	// due to compression dictionary overhead. The benefit is more pronounced with larger data.
 	t.Logf("Sizes - Uncompressed: %d, Zstd-1: %d (%.1f%% of original)",
 		len(uncompressed), len(fastest), float64(len(fastest))/float64(len(uncompressed))*100)
+}
+
+func TestCompressionInvalidLevel(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"value": 1}`))
+	idx := builder.Finalize()
+
+	tests := []struct {
+		name  string
+		level CompressionLevel
+	}{
+		{"negative", CompressionLevel(-1)},
+		{"too_high", CompressionLevel(20)},
+		{"way_too_high", CompressionLevel(100)},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := EncodeWithLevel(idx, tc.level)
+			if err == nil {
+				t.Errorf("expected error for compression level %d", tc.level)
+			}
+		})
+	}
 }
 
 func TestNestedJSON(t *testing.T) {
