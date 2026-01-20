@@ -26,7 +26,10 @@ const (
 	CompressionMax      CompressionLevel = 19 // zstd level 19 (slow)
 )
 
-const uncompressedMagic = "GINu"
+const (
+	uncompressedMagic = "GINu"
+	compressedMagic   = "GINc"
+)
 
 type SerializedConfig struct {
 	BloomFilterSize   uint32            `json:"bloom_filter_size"`
@@ -149,17 +152,34 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	}
 	defer func() { _ = encoder.Close() }()
 
-	return encoder.EncodeAll(buf.Bytes(), nil), nil
+	compressed := encoder.EncodeAll(buf.Bytes(), nil)
+	return append([]byte(compressedMagic), compressed...), nil
 }
 
 func Decode(data []byte) (*GINIndex, error) {
-	var decompressed []byte
+	if len(data) < 4 {
+		return nil, errors.New("data too short")
+	}
 
-	// Check for uncompressed magic
-	if len(data) >= 4 && string(data[:4]) == uncompressedMagic {
+	var decompressed []byte
+	magic := string(data[:4])
+
+	switch magic {
+	case uncompressedMagic:
 		decompressed = data[4:]
-	} else {
-		// Assume zstd compressed
+	case compressedMagic:
+		decoder, err := zstd.NewReader(nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "create zstd decoder")
+		}
+		defer decoder.Close()
+
+		decompressed, err = decoder.DecodeAll(data[4:], nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "decompress data")
+		}
+	default:
+		// Legacy format: try zstd decompression without magic (backward compatibility)
 		decoder, err := zstd.NewReader(nil)
 		if err != nil {
 			return nil, errors.Wrap(err, "create zstd decoder")

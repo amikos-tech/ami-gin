@@ -328,6 +328,35 @@ func TestCompressionUncompressedMagic(t *testing.T) {
 	}
 }
 
+func TestCompressionCompressedMagic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"value": 1}`))
+	builder.AddDocument(1, []byte(`{"value": 2}`))
+	idx := builder.Finalize()
+
+	encoded, err := EncodeWithLevel(idx, CompressionFastest)
+	if err != nil {
+		t.Fatalf("encode compressed failed: %v", err)
+	}
+
+	if len(encoded) < 4 {
+		t.Fatal("encoded data too short")
+	}
+	if string(encoded[:4]) != "GINc" {
+		t.Errorf("expected compressed magic 'GINc', got %q", string(encoded[:4]))
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode compressed failed: %v", err)
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.value", float64(2))})
+	if !result.IsSet(1) {
+		t.Error("query on decoded compressed index failed")
+	}
+}
+
 func TestCompressionSizeReduction(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 100)
 	for i := 0; i < 100; i++ {
