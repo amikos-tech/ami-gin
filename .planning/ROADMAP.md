@@ -30,7 +30,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. `go build ./...` and `go test ./...` pass in a clean environment with the new module path
   4. No internal references (Kiba Team, gin-index-prd.md) remain in any tracked file
   5. `.planning/` directory contains no sensitive internal references
-**Plans**: TBD
+**Plans:** 2 plans
+
+Plans:
+- [ ] 01-01-PLAN.md — Add MIT LICENSE and rename module path to ami-gin
+- [ ] 01-02-PLAN.md — Remove internal PRD and untrack .planning/ directory
 
 ### Phase 2: Security Hardening
 **Goal**: The deserialization path is safe to expose to untrusted inputs
@@ -84,7 +88,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation | 0/? | Not started | - |
+| 1. Foundation | 0/2 | Planning | - |
 | 2. Security Hardening | 0/? | Not started | - |
 | 3. CI Pipeline | 0/? | Not started | - |
 | 4. Contributor Experience | 0/? | Not started | - |
