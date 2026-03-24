@@ -1001,6 +1001,309 @@ func BenchmarkCompressionLevels(b *testing.B) {
 	}
 }
 
+// =============================================================================
+// Worst-Case Composite Query Benchmarks
+// =============================================================================
+
+func generateWorstCaseDoc(i int) []byte {
+	doc := map[string]any{
+		"id":          i,
+		"name":        fmt.Sprintf("user_%d", i%100),
+		"email":       fmt.Sprintf("user%d@example.com", i),
+		"age":         20 + (i % 50),
+		"score":       float64(i%1000) / 10.0,
+		"active":      i%2 == 0,
+		"status":      []string{"active", "pending", "inactive", "suspended"}[i%4],
+		"description": fmt.Sprintf("This is a detailed description for user %d with various keywords like error_code_%d and warning_level_%d", i, i%50, i%20),
+		"tags":        []string{fmt.Sprintf("tag_%d", i%20), fmt.Sprintf("category_%d", i%10), fmt.Sprintf("group_%d", i%5)},
+		"metadata": map[string]any{
+			"created": fmt.Sprintf("2024-01-%02d", (i%28)+1),
+			"version": fmt.Sprintf("v%d.%d.%d", i%5, i%10, i%100),
+		},
+		"nullable_field": func() any {
+			if i%3 == 0 {
+				return nil
+			}
+			return fmt.Sprintf("value_%d", i)
+		}(),
+	}
+	data, _ := json.Marshal(doc)
+	return data
+}
+
+func setupWorstCaseIndex(numRGs int) *GINIndex {
+	builder, _ := NewBuilder(DefaultConfig(), numRGs)
+	for i := 0; i < numRGs; i++ {
+		builder.AddDocument(DocID(i), generateWorstCaseDoc(i))
+	}
+	return builder.Finalize()
+}
+
+func BenchmarkCompositeWorstCase(b *testing.B) {
+	idx := setupWorstCaseIndex(1000)
+
+	b.Run("EQ+Range+Contains", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				EQ("$.status", "active"),
+				GTE("$.age", 25),
+				LTE("$.age", 45),
+				Contains("$.description", "error_code"),
+			})
+		}
+	})
+
+	b.Run("EQ+Range+Contains+IN", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				EQ("$.active", true),
+				GTE("$.score", 20.0),
+				LT("$.score", 80.0),
+				Contains("$.description", "warning"),
+				IN("$.status", "active", "pending", "suspended"),
+			})
+		}
+	})
+
+	b.Run("EQ+Range+Contains+Null", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				EQ("$.name", "user_42"),
+				GT("$.age", 30),
+				Contains("$.email", "example"),
+				IsNotNull("$.nullable_field"),
+			})
+		}
+	})
+
+	b.Run("AllOperatorTypes", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				EQ("$.status", "active"),
+				NE("$.name", "user_0"),
+				GTE("$.age", 25),
+				LTE("$.score", 50.0),
+				Contains("$.description", "user"),
+				IN("$.tags[*]", "tag_1", "tag_5", "tag_10"),
+				IsNotNull("$.nullable_field"),
+			})
+		}
+	})
+
+	b.Run("Regex+Range+EQ", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				Regex("$.description", "error_code_[0-9]+"),
+				GTE("$.age", 20),
+				LTE("$.age", 40),
+				EQ("$.active", true),
+			})
+		}
+	})
+
+	b.Run("LargeIN+Range", func(b *testing.B) {
+		// IN with 20 values
+		values := make([]any, 20)
+		for i := 0; i < 20; i++ {
+			values[i] = fmt.Sprintf("user_%d", i*5)
+		}
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				IN("$.name", values...),
+				GTE("$.age", 25),
+				LTE("$.age", 45),
+			})
+		}
+	})
+
+	b.Run("MultipleContains", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				Contains("$.description", "detailed"),
+				Contains("$.description", "keywords"),
+				Contains("$.email", "user"),
+			})
+		}
+	})
+
+	b.Run("NegationHeavy", func(b *testing.B) {
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				NE("$.status", "inactive"),
+				NE("$.name", "user_0"),
+				NIN("$.tags[*]", "tag_0", "tag_19"),
+				IsNotNull("$.nullable_field"),
+			})
+		}
+	})
+
+	b.Run("HighSelectivity", func(b *testing.B) {
+		// Query that matches most row groups (worst case for bitmap ops)
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				GTE("$.age", 20), // matches all
+				LTE("$.age", 69), // matches all
+				IsNotNull("$.name"),
+			})
+		}
+	})
+
+	b.Run("LowSelectivity", func(b *testing.B) {
+		// Query that matches very few row groups
+		for i := 0; i < b.N; i++ {
+			idx.Evaluate([]Predicate{
+				EQ("$.name", "user_42"),
+				EQ("$.age", 42),
+				EQ("$.status", "active"),
+				Contains("$.description", "user 42"),
+			})
+		}
+	})
+}
+
+func BenchmarkCompositeVsPredicateCount(b *testing.B) {
+	idx := setupWorstCaseIndex(1000)
+
+	// Test scaling with predicate count using mixed operator types
+	predicateSets := []struct {
+		name  string
+		preds []Predicate
+	}{
+		{"2_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			GTE("$.age", 30),
+		}},
+		{"3_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			GTE("$.age", 30),
+			Contains("$.description", "error"),
+		}},
+		{"4_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			GTE("$.age", 30),
+			LTE("$.score", 50.0),
+			Contains("$.description", "error"),
+		}},
+		{"5_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			GTE("$.age", 30),
+			LTE("$.score", 50.0),
+			Contains("$.description", "error"),
+			IsNotNull("$.nullable_field"),
+		}},
+		{"6_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			GTE("$.age", 30),
+			LTE("$.score", 50.0),
+			Contains("$.description", "error"),
+			IsNotNull("$.nullable_field"),
+			IN("$.tags[*]", "tag_1", "tag_5"),
+		}},
+		{"8_Mixed", []Predicate{
+			EQ("$.status", "active"),
+			NE("$.name", "user_0"),
+			GTE("$.age", 25),
+			LTE("$.age", 45),
+			GTE("$.score", 10.0),
+			LTE("$.score", 80.0),
+			Contains("$.description", "user"),
+			IsNotNull("$.nullable_field"),
+		}},
+	}
+
+	for _, ps := range predicateSets {
+		b.Run(ps.name, func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				idx.Evaluate(ps.preds)
+			}
+		})
+	}
+}
+
+func BenchmarkCompositeVsIndexSize(b *testing.B) {
+	sizes := []int{100, 500, 1000, 5000}
+
+	preds := []Predicate{
+		EQ("$.status", "active"),
+		GTE("$.age", 25),
+		LTE("$.score", 50.0),
+		Contains("$.description", "error"),
+		IsNotNull("$.nullable_field"),
+	}
+
+	for _, size := range sizes {
+		idx := setupWorstCaseIndex(size)
+		b.Run(fmt.Sprintf("RGs=%d", size), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				idx.Evaluate(preds)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Realistic Row Group Benchmarks (many rows per RG)
+// =============================================================================
+
+func BenchmarkRealisticRowGroups(b *testing.B) {
+	// Simulate realistic Parquet scenario: many rows per row group
+	rowsPerRG := []int{1000, 10000, 50000}
+	numRGs := 20
+
+	for _, rows := range rowsPerRG {
+		b.Run(fmt.Sprintf("Build/RGs=%d/RowsPerRG=%d", numRGs, rows), func(b *testing.B) {
+			docs := make([][]byte, rows)
+			for i := 0; i < rows; i++ {
+				docs[i] = generateWorstCaseDoc(i)
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				builder, _ := NewBuilder(DefaultConfig(), numRGs)
+				for rg := 0; rg < numRGs; rg++ {
+					for _, doc := range docs {
+						builder.AddDocument(DocID(rg), doc)
+					}
+				}
+				builder.Finalize()
+			}
+		})
+	}
+
+	// Query performance with realistic index
+	for _, rows := range rowsPerRG {
+		// Build index once
+		builder, _ := NewBuilder(DefaultConfig(), numRGs)
+		for rg := 0; rg < numRGs; rg++ {
+			for i := 0; i < rows; i++ {
+				builder.AddDocument(DocID(rg), generateWorstCaseDoc(rg*rows+i))
+			}
+		}
+		idx := builder.Finalize()
+
+		totalRows := numRGs * rows
+
+		b.Run(fmt.Sprintf("Query/Rows=%dk/RGs=%d", totalRows/1000, numRGs), func(b *testing.B) {
+			preds := []Predicate{
+				EQ("$.status", "active"),
+				GTE("$.age", 25),
+				Contains("$.description", "error"),
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				idx.Evaluate(preds)
+			}
+		})
+
+		b.Run(fmt.Sprintf("IndexSize/Rows=%dk/RGs=%d", totalRows/1000, numRGs), func(b *testing.B) {
+			data, _ := Encode(idx)
+			b.ReportMetric(float64(len(data)), "bytes")
+			b.ReportMetric(float64(len(data))/float64(numRGs), "bytes/RG")
+			b.ReportMetric(float64(len(data))/float64(totalRows), "bytes/row")
+		})
+	}
+}
+
 func BenchmarkCompressionLevelsThroughput(b *testing.B) {
 	idx := setupTestIndex(5000)
 
