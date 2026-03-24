@@ -23,7 +23,7 @@ A credible first impression: anyone who finds the repo can immediately understan
 
 ### Active
 
-- [ ] Add Apache-2.0 LICENSE file
+- [ ] Add MIT LICENSE file
 - [ ] Change module path from `github.com/amikos-tech/gin-index` to `github.com/amikos-tech/ami-gin`
 - [ ] Remove or scrub internal references (PRD with "Kiba Team" mentions)
 - [ ] Add CI pipeline (GitHub Actions: test, lint, build)
@@ -45,7 +45,7 @@ A credible first impression: anyone who finds the repo can immediately understan
 
 - The repo is currently private at `https://github.com/amikos-tech/ami-gin`
 - Module path in go.mod is `github.com/amikos-tech/gin-index` — needs to match the actual repo
-- All dependencies are permissively licensed (Apache-2.0, MIT, BSD-3) — no conflicts with Apache-2.0
+- All dependencies are permissively licensed (Apache-2.0, MIT, BSD-3) — no conflicts with MIT
 - Existing CI is limited to Claude code review workflows — no Go test/lint pipeline
 - `gin-index-prd.md` contains internal "Kiba Team" references that need scrubbing
 - Codebase has 1.35:1 test-to-source ratio — strong testing foundation
@@ -53,7 +53,7 @@ A credible first impression: anyone who finds the repo can immediately understan
 
 ## Constraints
 
-- **License**: Apache-2.0 — matches amikos-tech ecosystem (Chroma uses Apache-2.0) and dependency licenses
+- **License**: MIT — simple, permissive, compatible with all dependency licenses
 - **Module path**: Must be `github.com/amikos-tech/ami-gin` to match the GitHub repo URL
 - **Go version**: 1.25.5 (already current)
 - **No breaking API changes**: Existing API surface is clean — preserve it through the OSS transition
@@ -62,7 +62,7 @@ A credible first impression: anyone who finds the repo can immediately understan
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Apache-2.0 license | Matches amikos-tech ecosystem and all dependency licenses | — Pending |
+| MIT license | Simple, permissive, compatible with all dependency licenses | — Pending |
 | Module path = repo path (`ami-gin`) | Standard Go convention, reduces confusion | — Pending |
 | Remove PRD rather than scrub | Internal planning doc has no value for external contributors | — Pending |
 
