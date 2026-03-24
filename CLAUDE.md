@@ -193,7 +193,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - No `.go-version` or `.tool-versions` file detected
 - Go modules (`go.mod` + `go.sum`)
 - Lockfile: `go.sum` present (67KB)
-- Module path: `github.com/amikos-tech/gin-index`
+- Module path: `github.com/amikos-tech/ami-gin`
 ## Frameworks
 - No web or application framework. This is a standalone Go library with a CLI tool.
 - `testing` (stdlib) - Unit and benchmark tests
@@ -204,7 +204,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - `make` - Build automation (`Makefile`)
 - Linters enabled: `dupword`, `gocritic`, `mirror`
 - Formatter: `gci` (import ordering)
-- Import order: standard -> third-party -> `github.com/amikos-tech/gin-index` -> blank -> dot
+- Import order: standard -> third-party -> `github.com/amikos-tech/ami-gin` -> blank -> dot
 - `errcheck` suppressed for `_test.go` and `examples/`
 - Timeout: 5m, concurrency: 4
 ## Key Dependencies
@@ -413,7 +413,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - `DefaultConfig()` provides production-ready defaults (bloom=65536, trigrams=enabled, HLL precision=12)
 ## Entry Points
 - Location: `builder.go:NewBuilder()`, `builder.go:AddDocument()`, `builder.go:Finalize()`
-- Triggers: User code importing `github.com/amikos-tech/gin-index`
+- Triggers: User code importing `github.com/amikos-tech/ami-gin`
 - Responsibilities: Full build-query-serialize lifecycle
 - Location: `cmd/gin-index/main.go`
 - Triggers: `gin-index build|query|info|extract` commands
