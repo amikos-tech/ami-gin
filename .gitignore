@@ -13,3 +13,6 @@ unit.xml
 
 # OS
 .DS_Store
+
+# GSD workflow (local-only planning artifacts)
+.planning/
