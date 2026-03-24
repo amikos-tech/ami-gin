@@ -12,7 +12,7 @@ import (
 
 	"github.com/pkg/errors"
 
-	gin "github.com/amikos-tech/gin-index"
+	gin "github.com/amikos-tech/ami-gin"
 )
 
 func main() {
