@@ -38,7 +38,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/amikos-tech/gin-index)
+        - prefix(github.com/amikos-tech/ami-gin)
         - blank
         - dot
       custom-order: true

@@ -70,7 +70,7 @@ The index decouples **pruning** (which row groups to read) from **execution** (D
 ## Installation
 
 ```bash
-go get github.com/amikos-tech/gin-index
+go get github.com/amikos-tech/ami-gin
 ```
 
 ## Quick Start
@@ -80,7 +80,7 @@ package main
 
 import (
     "fmt"
-    gin "github.com/amikos-tech/gin-index"
+    gin "github.com/amikos-tech/ami-gin"
 )
 
 func main() {
@@ -464,7 +464,7 @@ A command-line tool is provided for common operations:
 
 ```bash
 # Install
-go install github.com/amikos-tech/gin-index/cmd/gin-index@latest
+go install github.com/amikos-tech/ami-gin/cmd/gin-index@latest
 
 # Build sidecar index
 gin-index build -c attributes data.parquet
