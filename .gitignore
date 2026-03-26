@@ -11,5 +11,11 @@ unit.xml
 .vscode/
 *.swp
 
+# Claude Code
+.claude/settings.local.json
+
 # OS
 .DS_Store
+
+# GSD workflow (local-only planning artifacts)
+.planning/

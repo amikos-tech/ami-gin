@@ -7,7 +7,7 @@ import (
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
 
-	gin "github.com/amikos-tech/gin-index"
+	gin "github.com/amikos-tech/ami-gin"
 )
 
 type Record struct {
