@@ -237,15 +237,6 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - `go.mod` - Module definition and dependencies
 - `.golangci.yml` - Linter configuration
 - `Makefile` - Build targets: `build`, `test`, `lint`, `lint-fix`, `clean`, `help`
-## Build Commands
-# Build library
-# Build CLI tool
-# Run all tests with coverage (via gotestsum)
-# Run tests directly
-# Run specific test
-# Lint
-# Lint with auto-fix
-# Clean artifacts
 ## Platform Requirements
 - Go 1.25.5+
 - `golangci-lint` for linting
