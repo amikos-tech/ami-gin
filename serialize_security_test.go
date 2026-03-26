@@ -3,9 +3,8 @@ package gin
 import (
 	"bytes"
 	"encoding/binary"
-	"testing"
-
 	stderrors "errors"
+	"testing"
 
 	"github.com/pkg/errors"
 )
