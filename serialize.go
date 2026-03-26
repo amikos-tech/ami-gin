@@ -14,6 +14,11 @@ import (
 
 const maxConfigSize = 1 << 20 // 1MB max config size
 
+var (
+	ErrVersionMismatch = errors.New("version mismatch")
+	ErrInvalidFormat   = errors.New("invalid format")
+)
+
 // CompressionLevel specifies the compression level for index serialization.
 type CompressionLevel int
 
@@ -179,17 +184,7 @@ func Decode(data []byte) (*GINIndex, error) {
 			return nil, errors.Wrap(err, "decompress data")
 		}
 	default:
-		// Legacy format: try zstd decompression without magic (backward compatibility)
-		decoder, err := zstd.NewReader(nil)
-		if err != nil {
-			return nil, errors.Wrap(err, "create zstd decoder")
-		}
-		defer decoder.Close()
-
-		decompressed, err = decoder.DecodeAll(data, nil)
-		if err != nil {
-			return nil, errors.Wrap(err, "decompress data")
-		}
+		return nil, errors.Wrapf(ErrInvalidFormat, "unrecognized magic bytes: %q", magic)
 	}
 
 	buf := bytes.NewReader(decompressed)
@@ -281,6 +276,9 @@ func readHeader(r io.Reader, idx *GINIndex) error {
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.Version); err != nil {
 		return err
+	}
+	if idx.Header.Version != Version {
+		return errors.Wrapf(ErrVersionMismatch, "got version %d, expected %d", idx.Header.Version, Version)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.Flags); err != nil {
 		return err
