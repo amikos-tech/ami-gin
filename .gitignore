@@ -11,6 +11,9 @@ unit.xml
 .vscode/
 *.swp
 
+# Claude Code
+.claude/settings.local.json
+
 # OS
 .DS_Store
 
