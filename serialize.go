@@ -40,8 +40,13 @@ const (
 )
 
 var (
+	// ErrVersionMismatch is returned by Decode when the binary format version
+	// does not match the expected version (Version constant).
 	ErrVersionMismatch = errors.New("version mismatch")
-	ErrInvalidFormat   = errors.New("invalid format")
+
+	// ErrInvalidFormat is returned by Decode when the binary data is structurally
+	// invalid: unrecognized magic bytes, oversized allocations, or corrupt fields.
+	ErrInvalidFormat = errors.New("invalid format")
 )
 
 // CompressionLevel specifies the compression level for index serialization.
