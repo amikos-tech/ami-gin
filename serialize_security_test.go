@@ -115,9 +115,23 @@ func TestDecodeBoundsRGSet(t *testing.T) {
 	// dataLen = maxRGSetSize + 1 (exceeds limit)
 	binary.Write(&buf, binary.LittleEndian, uint32(maxRGSetSize+1))
 
-	_, err := readRGSet(&buf)
+	_, err := readRGSet(&buf, 100)
 	if err == nil {
 		t.Fatal("expected error for oversized RGSet, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Errorf("expected ErrInvalidFormat, got: %v", err)
+	}
+}
+
+func TestDecodeBoundsRGSetNumRGs(t *testing.T) {
+	var buf bytes.Buffer
+	// numRGs = maxRGs + 1 (exceeds header-derived limit)
+	binary.Write(&buf, binary.LittleEndian, uint32(101))
+
+	_, err := readRGSet(&buf, 100)
+	if err == nil {
+		t.Fatal("expected error for oversized numRGs, got nil")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
@@ -300,7 +314,7 @@ func TestDecodeBoundsStringLengthRGs(t *testing.T) {
 	}
 }
 
-func TestDecodeCraftedPayload(t *testing.T) {
+func TestDecodeCraftedInnerMagic(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.AddDocument(0, []byte(`{"name": "alice"}`))
 	idx := builder.Finalize()
@@ -310,12 +324,13 @@ func TestDecodeCraftedPayload(t *testing.T) {
 		t.Fatalf("encode failed: %v", err)
 	}
 
-	// Set NumPaths to max uint32 in header
-	binary.LittleEndian.PutUint32(data[24:28], 0xFFFFFFFF)
+	// Header layout: [4:8] is inner magic "GIN\x01"
+	// Corrupt inner magic to trigger ErrInvalidFormat in readHeader
+	copy(data[4:8], []byte("XXXX"))
 
 	_, err = Decode(data)
 	if err == nil {
-		t.Fatal("expected error for crafted payload, got nil")
+		t.Fatal("expected error for corrupted inner magic, got nil")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)

@@ -87,10 +87,13 @@ func writeRGSet(w io.Writer, rs *RGSet) error {
 	return err
 }
 
-func readRGSet(r io.Reader) (*RGSet, error) {
+func readRGSet(r io.Reader, maxRGs uint32) (*RGSet, error) {
 	var numRGs uint32
 	if err := binary.Read(r, binary.LittleEndian, &numRGs); err != nil {
 		return nil, err
+	}
+	if numRGs > maxRGs {
+		return nil, errors.Wrapf(ErrInvalidFormat, "rgset numRGs %d exceeds max %d", numRGs, maxRGs)
 	}
 	var dataLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &dataLen); err != nil {
@@ -191,7 +194,7 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 
 func Decode(data []byte) (*GINIndex, error) {
 	if len(data) < 4 {
-		return nil, errors.New("data too short")
+		return nil, errors.Wrap(ErrInvalidFormat, "data too short")
 	}
 
 	var decompressed []byte
@@ -300,7 +303,7 @@ func readHeader(r io.Reader, idx *GINIndex) error {
 		return err
 	}
 	if string(idx.Header.Magic[:]) != MagicBytes {
-		return errors.New("invalid magic bytes")
+		return errors.Wrapf(ErrInvalidFormat, "invalid inner magic bytes: %q", string(idx.Header.Magic[:]))
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.Version); err != nil {
 		return err
@@ -486,7 +489,7 @@ func readStringIndexes(r io.Reader, idx *GINIndex) error {
 			}
 			si.Terms[j] = string(termBytes)
 
-			rgSet, err := readRGSet(r)
+			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err
 			}
@@ -706,11 +709,11 @@ func readNullIndexes(r io.Reader, idx *GINIndex) error {
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
 			return err
 		}
-		nullBitmap, err := readRGSet(r)
+		nullBitmap, err := readRGSet(r, idx.Header.NumRowGroups)
 		if err != nil {
 			return err
 		}
-		presentBitmap, err := readRGSet(r)
+		presentBitmap, err := readRGSet(r, idx.Header.NumRowGroups)
 		if err != nil {
 			return err
 		}
@@ -817,7 +820,7 @@ func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 			if _, err := io.ReadFull(r, trigramBytes); err != nil {
 				return err
 			}
-			rgSet, err := readRGSet(r)
+			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err
 			}
