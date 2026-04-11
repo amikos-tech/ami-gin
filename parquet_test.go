@@ -92,6 +92,147 @@ func TestSidecarReadWrite(t *testing.T) {
 	}
 }
 
+func TestWriteSidecarPreservesParquetPermissions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourceMode os.FileMode
+		wantMode   os.FileMode
+	}{
+		{name: "preserve rw bits", sourceMode: 0o640, wantMode: 0o640},
+		{name: "drop execute bits", sourceMode: 0o755, wantMode: 0o644},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			parquetFile := tmpDir + "/mode-data.parquet"
+
+			records := []testRecord{
+				{ID: 1, Attributes: `{"status": "ok"}`},
+				{ID: 2, Attributes: `{"status": "warn"}`},
+			}
+			createTestParquetFile(t, parquetFile, records, 1)
+
+			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
+				t.Fatalf("chmod parquet file: %v", err)
+			}
+
+			idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+			if err != nil {
+				t.Fatalf("BuildFromParquet: %v", err)
+			}
+
+			if err := WriteSidecar(parquetFile, idx); err != nil {
+				t.Fatalf("WriteSidecar: %v", err)
+			}
+
+			info, err := os.Stat(SidecarPath(parquetFile))
+			if err != nil {
+				t.Fatalf("stat sidecar: %v", err)
+			}
+
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Fatalf("sidecar mode = %o, want %o", got, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestWriteSidecarRefreshesExistingSidecarPermissions(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetFile := tmpDir + "/mode-data.parquet"
+
+	records := []testRecord{
+		{ID: 1, Attributes: `{"status": "ok"}`},
+		{ID: 2, Attributes: `{"status": "warn"}`},
+	}
+	createTestParquetFile(t, parquetFile, records, 1)
+
+	if err := os.Chmod(parquetFile, 0o755); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+
+	sidecar := SidecarPath(parquetFile)
+	if err := os.WriteFile(sidecar, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale sidecar: %v", err)
+	}
+	if err := os.Chmod(sidecar, 0o600); err != nil {
+		t.Fatalf("chmod stale sidecar: %v", err)
+	}
+
+	if err := WriteSidecar(parquetFile, idx); err != nil {
+		t.Fatalf("WriteSidecar: %v", err)
+	}
+
+	info, err := os.Stat(sidecar)
+	if err != nil {
+		t.Fatalf("stat sidecar: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o644); got != want {
+		t.Fatalf("sidecar mode = %o, want %o", got, want)
+	}
+
+	loaded, err := ReadSidecar(parquetFile)
+	if err != nil {
+		t.Fatalf("ReadSidecar: %v", err)
+	}
+	if loaded.Header.NumDocs != idx.Header.NumDocs {
+		t.Fatalf("sidecar docs = %d, want %d", loaded.Header.NumDocs, idx.Header.NumDocs)
+	}
+}
+
+func TestArtifactFileMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   os.FileMode
+		want os.FileMode
+	}{
+		{name: "preserve rw bits", in: 0o640, want: 0o640},
+		{name: "drop execute bits", in: 0o755, want: 0o644},
+		{name: "preserve group write and world read", in: 0o664, want: 0o664},
+		{name: "mask world writable and execute bits", in: 0o777, want: 0o666},
+		{name: "high bits do not affect rw mask", in: 0o4755, want: 0o644},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := artifactFileMode(tt.in); got != tt.want {
+				t.Fatalf("artifactFileMode(%o) = %o, want %o", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWriteFileWithModeWrapsErrors(t *testing.T) {
+	t.Parallel()
+
+	err := writeFileWithMode(t.TempDir(), []byte("data"), 0o600)
+	if err == nil {
+		t.Fatal("writeFileWithMode(directory) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "write file with mode") {
+		t.Fatalf("writeFileWithMode(directory) error = %q, want write file with mode context", err)
+	}
+}
+
 func TestBuildFromParquet(t *testing.T) {
 	tmpDir := t.TempDir()
 	parquetFile := tmpDir + "/data.parquet"
@@ -206,6 +347,106 @@ func TestRebuildWithIndex(t *testing.T) {
 
 	if loaded.Header.NumRowGroups != idx.Header.NumRowGroups {
 		t.Errorf("NumRowGroups = %d, want %d", loaded.Header.NumRowGroups, idx.Header.NumRowGroups)
+	}
+}
+
+func TestRebuildWithIndexPreservesParquetPermissions(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourceMode os.FileMode
+		wantMode   os.FileMode
+	}{
+		{name: "preserve rw bits", sourceMode: 0o640, wantMode: 0o640},
+		{name: "drop execute bits", sourceMode: 0o755, wantMode: 0o644},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			parquetFile := tmpDir + "/mode-embedded.parquet"
+
+			records := []testRecord{
+				{ID: 1, Attributes: `{"x": 1}`},
+				{ID: 2, Attributes: `{"x": 2}`},
+			}
+			createTestParquetFile(t, parquetFile, records, 1)
+
+			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
+				t.Fatalf("chmod parquet file: %v", err)
+			}
+
+			idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+			if err != nil {
+				t.Fatalf("BuildFromParquet: %v", err)
+			}
+
+			if err := RebuildWithIndex(parquetFile, idx, DefaultParquetConfig()); err != nil {
+				t.Fatalf("RebuildWithIndex: %v", err)
+			}
+
+			info, err := os.Stat(parquetFile)
+			if err != nil {
+				t.Fatalf("stat rebuilt parquet: %v", err)
+			}
+
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Fatalf("rebuilt parquet mode = %o, want %o", got, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestRebuildWithIndexRefreshesModeFromSourceDespiteStaleTempFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetFile := tmpDir + "/stale-temp.parquet"
+
+	records := []testRecord{
+		{ID: 1, Attributes: `{"x": 1}`},
+		{ID: 2, Attributes: `{"x": 2}`},
+	}
+	createTestParquetFile(t, parquetFile, records, 1)
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+
+	tmpFile := parquetFile + ".tmp"
+	if err := os.WriteFile(tmpFile, []byte("stale"), 0o600); err != nil {
+		t.Fatalf("write stale temp file: %v", err)
+	}
+	if err := os.Chmod(tmpFile, 0o600); err != nil {
+		t.Fatalf("chmod stale temp file: %v", err)
+	}
+
+	if err := RebuildWithIndex(parquetFile, idx, DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex: %v", err)
+	}
+
+	info, err := os.Stat(parquetFile)
+	if err != nil {
+		t.Fatalf("stat rebuilt parquet: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("rebuilt parquet mode = %o, want %o", got, want)
+	}
+
+	loaded, err := ReadFromParquetMetadata(parquetFile, DefaultParquetConfig())
+	if err != nil {
+		t.Fatalf("ReadFromParquetMetadata: %v", err)
+	}
+	if loaded.Header.NumDocs != idx.Header.NumDocs {
+		t.Fatalf("rebuilt parquet docs = %d, want %d", loaded.Header.NumDocs, idx.Header.NumDocs)
 	}
 }
 

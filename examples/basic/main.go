@@ -24,20 +24,16 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Add documents to different row groups
-	// Row group 0: users from engineering
-	builder.AddDocument(0, []byte(`{"name": "alice", "department": "engineering", "level": "senior"}`))
-	builder.AddDocument(0, []byte(`{"name": "bob", "department": "engineering", "level": "junior"}`))
-
-	// Row group 1: users from sales
-	builder.AddDocument(1, []byte(`{"name": "charlie", "department": "sales", "level": "senior"}`))
-	builder.AddDocument(1, []byte(`{"name": "diana", "department": "sales", "level": "manager"}`))
-
-	// Row group 2: users from marketing
-	builder.AddDocument(2, []byte(`{"name": "eve", "department": "marketing", "level": "senior"}`))
-
-	// Row group 3: more engineering
-	builder.AddDocument(3, []byte(`{"name": "frank", "department": "engineering", "level": "manager"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"name": "alice", "department": "engineering", "level": "senior"}`},
+		exampleDocument{rgID: 0, body: `{"name": "bob", "department": "engineering", "level": "junior"}`},
+		exampleDocument{rgID: 1, body: `{"name": "charlie", "department": "sales", "level": "senior"}`},
+		exampleDocument{rgID: 1, body: `{"name": "diana", "department": "sales", "level": "manager"}`},
+		exampleDocument{rgID: 2, body: `{"name": "eve", "department": "marketing", "level": "senior"}`},
+		exampleDocument{rgID: 3, body: `{"name": "frank", "department": "engineering", "level": "manager"}`},
+	); err != nil {
+		return err
+	}
 
 	// Build the index
 	idx := builder.Finalize()
@@ -86,5 +82,19 @@ func run() error {
 		return errors.Wrap(err, "validate path")
 	}
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

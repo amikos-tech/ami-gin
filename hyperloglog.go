@@ -77,7 +77,7 @@ func (hll *HyperLogLog) AddString(s string) {
 func (hll *HyperLogLog) addHash(hash uint64) {
 	idx := hash >> (64 - hll.precision)
 	w := hash<<hll.precision | (1 << (hll.precision - 1))
-	rho := uint8(leadingZeros(w) + 1)
+	rho := leadingZeros(w) + 1
 
 	if rho > hll.registers[idx] {
 		hll.registers[idx] = rho

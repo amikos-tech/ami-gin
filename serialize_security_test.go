@@ -273,7 +273,7 @@ func TestDecodeBoundsNumericRGs(t *testing.T) {
 	// pathID = 0
 	binary.Write(&buf, binary.LittleEndian, uint16(0))
 	// valueType = TypeInt
-	binary.Write(&buf, binary.LittleEndian, uint8(TypeInt))
+	binary.Write(&buf, binary.LittleEndian, TypeInt)
 	// globalMin
 	binary.Write(&buf, binary.LittleEndian, uint64(0))
 	// globalMax

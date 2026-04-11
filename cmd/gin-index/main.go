@@ -15,6 +15,8 @@ import (
 	gin "github.com/amikos-tech/ami-gin"
 )
 
+const defaultLocalArtifactMode os.FileMode = 0o600
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -179,12 +181,17 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 			if outPath == "" {
 				outPath = input + ".gin"
 			}
+			fileMode, err := localOutputMode(input)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+				return
+			}
 			data, err := gin.Encode(idx)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 				return
 			}
-			if err := os.WriteFile(outPath, data, 0644); err != nil {
+			if err := writeLocalIndexFile(outPath, data, fileMode); err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 				return
 			}
@@ -262,7 +269,7 @@ func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConf
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
-			data, err := os.ReadFile(indexPath)
+			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
 				return
@@ -350,7 +357,7 @@ func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
-			data, err := os.ReadFile(indexPath)
+			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
 				return
@@ -459,7 +466,6 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 		fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 		return
 	}
-
 	if gin.IsS3Path(output) {
 		bucket, s3Key, err := gin.ParseS3Path(output)
 		if err != nil {
@@ -476,13 +482,62 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 			return
 		}
 	} else {
-		if err := os.WriteFile(output, data, 0644); err != nil {
+		fileMode, err := localOutputMode(parquetPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+			return
+		}
+		if err := writeLocalIndexFile(output, data, fileMode); err != nil {
 			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 			return
 		}
 	}
 
 	fmt.Printf("  Index extracted to %s\n", output)
+}
+
+func readLocalIndexFile(path string) ([]byte, error) {
+	cleanedPath := filepath.Clean(path)
+	// #nosec G304 -- the CLI intentionally reads the user-selected local index path after cleaning it.
+	data, err := os.ReadFile(cleanedPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "read local index file")
+	}
+	return data, nil
+}
+
+// Keep in sync with parquet.go:artifactFileMode.
+func artifactFileMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() & 0o666
+}
+
+func localFileMode(path string) (os.FileMode, error) {
+	cleanedPath := filepath.Clean(path)
+	info, err := os.Stat(cleanedPath)
+	if err != nil {
+		return 0, errors.Wrap(err, "stat local file")
+	}
+
+	return artifactFileMode(info.Mode()), nil
+}
+
+func localOutputMode(sourcePath string) (os.FileMode, error) {
+	if gin.IsS3Path(sourcePath) {
+		return defaultLocalArtifactMode, nil
+	}
+
+	return localFileMode(sourcePath)
+}
+
+func writeLocalIndexFile(path string, data []byte, mode os.FileMode) error {
+	cleanedPath := filepath.Clean(path)
+	if err := os.WriteFile(cleanedPath, data, mode); err != nil {
+		return errors.Wrap(err, "write local index file")
+	}
+	if err := os.Chmod(cleanedPath, mode); err != nil {
+		return errors.Wrap(err, "chmod local index file")
+	}
+	return nil
 }
 
 func resolveParquetFiles(path string) ([]string, error) {
@@ -601,15 +656,16 @@ func parsePredicate(s string) (gin.Predicate, error) {
 		regex *regexp.Regexp
 		op    gin.Operator
 	}{
+		{regexp.MustCompile(`(?i)^(.+?)\s+NOT\s+IN\s+\((.+)\)$`), gin.OpNIN},
+		{regexp.MustCompile(`(?i)^(.+?)\s+IN\s+\((.+)\)$`), gin.OpIN},
+		{regexp.MustCompile(`(?i)^(.+?)\s+CONTAINS\s+(.+)$`), gin.OpContains},
+		{regexp.MustCompile(`(?i)^(.+?)\s+REGEX\s+(.+)$`), gin.OpRegex},
 		{regexp.MustCompile(`^(.+?)\s*!=\s*(.+)$`), gin.OpNE},
 		{regexp.MustCompile(`^(.+?)\s*>=\s*(.+)$`), gin.OpGTE},
 		{regexp.MustCompile(`^(.+?)\s*<=\s*(.+)$`), gin.OpLTE},
 		{regexp.MustCompile(`^(.+?)\s*>\s*(.+)$`), gin.OpGT},
 		{regexp.MustCompile(`^(.+?)\s*<\s*(.+)$`), gin.OpLT},
 		{regexp.MustCompile(`^(.+?)\s*=\s*(.+)$`), gin.OpEQ},
-		{regexp.MustCompile(`(?i)^(.+?)\s+CONTAINS\s+(.+)$`), gin.OpContains},
-		{regexp.MustCompile(`(?i)^(.+?)\s+IN\s+\((.+)\)$`), gin.OpIN},
-		{regexp.MustCompile(`(?i)^(.+?)\s+NOT\s+IN\s+\((.+)\)$`), gin.OpNIN},
 	}
 
 	for _, p := range patterns {
@@ -618,66 +674,54 @@ func parsePredicate(s string) (gin.Predicate, error) {
 			valueStr := strings.TrimSpace(matches[2])
 
 			if p.op == gin.OpIN || p.op == gin.OpNIN {
-				values, err := parseValueList(valueStr)
-				if err != nil {
-					return gin.Predicate{}, err
-				}
-				return gin.Predicate{Path: path, Operator: p.op, Value: values}, nil
+				return gin.Predicate{Path: path, Operator: p.op, Value: parseValueList(valueStr)}, nil
 			}
 
-			value, err := parseValue(valueStr)
-			if err != nil {
-				return gin.Predicate{}, err
-			}
-			return gin.Predicate{Path: path, Operator: p.op, Value: value}, nil
+			return gin.Predicate{Path: path, Operator: p.op, Value: parseValue(valueStr)}, nil
 		}
 	}
 
 	return gin.Predicate{}, errors.Errorf("cannot parse predicate: %s", s)
 }
 
-func parseValue(s string) (any, error) {
+func parseValue(s string) any {
 	s = strings.TrimSpace(s)
 
 	if (strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) ||
 		(strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) {
-		return s[1 : len(s)-1], nil
+		return s[1 : len(s)-1]
 	}
 
 	if s == "true" {
-		return true, nil
+		return true
 	}
 	if s == "false" {
-		return false, nil
+		return false
 	}
 	if s == "null" {
-		return nil, nil
+		return nil
 	}
 
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return float64(i), nil
+		return float64(i)
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f, nil
+		return f
 	}
 
-	return s, nil
+	return s
 }
 
-func parseValueList(s string) ([]any, error) {
+func parseValueList(s string) []any {
 	var values []any
 	err := json.Unmarshal([]byte("["+s+"]"), &values)
 	if err != nil {
 		parts := strings.Split(s, ",")
 		for _, p := range parts {
-			v, err := parseValue(strings.TrimSpace(p))
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, v)
+			values = append(values, parseValue(strings.TrimSpace(p)))
 		}
 	}
-	return values, nil
+	return values
 }
 
 func describeTypes(types uint8) string {

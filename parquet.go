@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"encoding/base64"
+	stderrors "errors"
 	"io"
 	"os"
 	"strings"
@@ -27,17 +28,51 @@ func SidecarPath(parquetFile string) string {
 	return parquetFile + ".gin"
 }
 
+// Keep in sync with cmd/gin-index/main.go:artifactFileMode.
+func artifactFileMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() & 0o666
+}
+
+func parquetFileMode(parquetFile string) (os.FileMode, error) {
+	info, err := os.Stat(parquetFile)
+	if err != nil {
+		return 0, errors.Wrap(err, "stat parquet file")
+	}
+
+	return artifactFileMode(info.Mode()), nil
+}
+
+func writeFileWithMode(path string, data []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, data, mode); err != nil {
+		return errors.Wrap(err, "write file with mode")
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return errors.Wrap(err, "chmod file with mode")
+	}
+
+	return nil
+}
+
 func WriteSidecar(parquetFile string, idx *GINIndex) error {
 	data, err := Encode(idx)
 	if err != nil {
 		return errors.Wrap(err, "encode index")
 	}
+	mode, err := parquetFileMode(parquetFile)
+	if err != nil {
+		return err
+	}
 	sidecar := SidecarPath(parquetFile)
-	return os.WriteFile(sidecar, data, 0644)
+	if err := writeFileWithMode(sidecar, data, mode); err != nil {
+		return errors.Wrap(err, "write sidecar")
+	}
+
+	return nil
 }
 
 func ReadSidecar(parquetFile string) (*GINIndex, error) {
 	sidecar := SidecarPath(parquetFile)
+	// #nosec G304 -- the sidecar path is deterministically derived from the caller-selected parquet path.
 	data, err := os.ReadFile(sidecar)
 	if err != nil {
 		return nil, errors.Wrap(err, "read sidecar")
@@ -52,6 +87,7 @@ func HasSidecar(parquetFile string) bool {
 }
 
 func openParquetFile(path string) (*parquet.File, *os.File, error) {
+	// #nosec G304 -- parquet files are intentionally opened from caller-selected paths.
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "open file")
@@ -115,7 +151,7 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 
 		for {
 			page, err := pages.ReadPage()
-			if err == io.EOF {
+			if stderrors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
@@ -127,7 +163,7 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 			values := page.Values()
 			data := make([]parquet.Value, numValues)
 			n, err := values.ReadValues(data)
-			if err != nil && err != io.EOF {
+			if err != nil && !stderrors.Is(err, io.EOF) {
 				_ = pages.Close()
 				return nil, errors.Wrapf(err, "read values in row group %d", rgID)
 			}
@@ -261,7 +297,7 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 		for {
 			row := make([]parquet.Value, len(schema.Fields()))
 			_, err := reader.ReadRows([]parquet.Row{row})
-			if err == io.EOF {
+			if stderrors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
@@ -274,7 +310,16 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 	_ = srcFile.Close()
 
 	tmpFile := parquetFile + ".tmp"
-	f, err := os.Create(tmpFile)
+	mode, err := parquetFileMode(parquetFile)
+	if err != nil {
+		return errors.Wrap(err, "resolve file mode")
+	}
+	// Remove any crash-surviving temp file so the recreated inode gets the current mode.
+	if err := os.Remove(tmpFile); err != nil && !stderrors.Is(err, os.ErrNotExist) {
+		return errors.Wrap(err, "remove temp file")
+	}
+	// #nosec G304 -- the temporary file path is derived from the caller-selected parquet path.
+	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return errors.Wrap(err, "create temp file")
 	}

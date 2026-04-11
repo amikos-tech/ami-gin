@@ -23,24 +23,19 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: products $10-$50
-	builder.AddDocument(0, []byte(`{"name": "widget", "price": 19.99, "stock": 100}`))
-	builder.AddDocument(0, []byte(`{"name": "gadget", "price": 49.99, "stock": 50}`))
-
-	// Row group 1: products $50-$100
-	builder.AddDocument(1, []byte(`{"name": "device", "price": 79.99, "stock": 25}`))
-	builder.AddDocument(1, []byte(`{"name": "tool", "price": 99.99, "stock": 75}`))
-
-	// Row group 2: products $100-$500
-	builder.AddDocument(2, []byte(`{"name": "appliance", "price": 299.99, "stock": 10}`))
-	builder.AddDocument(2, []byte(`{"name": "equipment", "price": 449.99, "stock": 5}`))
-
-	// Row group 3: premium products $500+
-	builder.AddDocument(3, []byte(`{"name": "luxury item", "price": 999.99, "stock": 2}`))
-
-	// Row group 4: budget products under $20
-	builder.AddDocument(4, []byte(`{"name": "basic", "price": 9.99, "stock": 500}`))
-	builder.AddDocument(4, []byte(`{"name": "simple", "price": 14.99, "stock": 300}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"name": "widget", "price": 19.99, "stock": 100}`},
+		exampleDocument{rgID: 0, body: `{"name": "gadget", "price": 49.99, "stock": 50}`},
+		exampleDocument{rgID: 1, body: `{"name": "device", "price": 79.99, "stock": 25}`},
+		exampleDocument{rgID: 1, body: `{"name": "tool", "price": 99.99, "stock": 75}`},
+		exampleDocument{rgID: 2, body: `{"name": "appliance", "price": 299.99, "stock": 10}`},
+		exampleDocument{rgID: 2, body: `{"name": "equipment", "price": 449.99, "stock": 5}`},
+		exampleDocument{rgID: 3, body: `{"name": "luxury item", "price": 999.99, "stock": 2}`},
+		exampleDocument{rgID: 4, body: `{"name": "basic", "price": 9.99, "stock": 500}`},
+		exampleDocument{rgID: 4, body: `{"name": "simple", "price": 14.99, "stock": 300}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -92,5 +87,19 @@ func run() error {
 	result = idx.Evaluate([]gin.Predicate{gin.GT("$.price", 10000.0)})
 	fmt.Printf("Row groups: %v (empty = no matches)\n", result.ToSlice())
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

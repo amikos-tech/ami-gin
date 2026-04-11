@@ -7,11 +7,21 @@ run:
 linters:
   enable:
     - dupword
+    - errorlint
+    - goconst
     - gocritic
+    - gosec
     - mirror
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
   settings:
     gocritic:
       disable-all: false
+    gosec:
+      excludes:
+        - G115
     staticcheck:
       checks:
         - all
@@ -22,6 +32,9 @@ linters:
     rules:
       - linters:
           - errcheck
+        path: _test\.go
+      - linters:
+          - gosec
         path: _test\.go
       - linters:
           - errcheck

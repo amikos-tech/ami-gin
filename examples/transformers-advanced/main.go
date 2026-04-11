@@ -58,13 +58,16 @@ func ipRangeExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Network security logs with different IP ranges
-	builder.AddDocument(0, []byte(`{"client_ip": "192.168.1.1", "action": "login"}`))
-	builder.AddDocument(0, []byte(`{"client_ip": "192.168.1.50", "action": "download"}`))
-	builder.AddDocument(1, []byte(`{"client_ip": "10.0.0.1", "action": "upload"}`))
-	builder.AddDocument(1, []byte(`{"client_ip": "10.0.0.100", "action": "login"}`))
-	builder.AddDocument(2, []byte(`{"client_ip": "192.168.2.1", "action": "admin"}`))
-	builder.AddDocument(3, []byte(`{"client_ip": "172.16.0.1", "action": "api_call"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"client_ip": "192.168.1.1", "action": "login"}`},
+		exampleDocument{rgID: 0, body: `{"client_ip": "192.168.1.50", "action": "download"}`},
+		exampleDocument{rgID: 1, body: `{"client_ip": "10.0.0.1", "action": "upload"}`},
+		exampleDocument{rgID: 1, body: `{"client_ip": "10.0.0.100", "action": "login"}`},
+		exampleDocument{rgID: 2, body: `{"client_ip": "192.168.2.1", "action": "admin"}`},
+		exampleDocument{rgID: 3, body: `{"client_ip": "172.16.0.1", "action": "api_call"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -105,11 +108,14 @@ func semverExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Software package metadata
-	builder.AddDocument(0, []byte(`{"name": "app-core", "version": "1.5.0"}`))
-	builder.AddDocument(1, []byte(`{"name": "app-ui", "version": "v2.1.3"}`))
-	builder.AddDocument(2, []byte(`{"name": "app-api", "version": "2.0.0-beta"}`))
-	builder.AddDocument(3, []byte(`{"name": "app-cli", "version": "3.0.0"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"name": "app-core", "version": "1.5.0"}`},
+		exampleDocument{rgID: 1, body: `{"name": "app-ui", "version": "v2.1.3"}`},
+		exampleDocument{rgID: 2, body: `{"name": "app-api", "version": "2.0.0-beta"}`},
+		exampleDocument{rgID: 3, body: `{"name": "app-cli", "version": "3.0.0"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -155,10 +161,13 @@ func caseInsensitiveExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// User records with inconsistent casing
-	builder.AddDocument(0, []byte(`{"username": "Alice", "email": "Alice@Example.COM"}`))
-	builder.AddDocument(1, []byte(`{"username": "BOB", "email": "bob@example.com"}`))
-	builder.AddDocument(2, []byte(`{"username": "charlie", "email": "CHARLIE@EXAMPLE.COM"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"username": "Alice", "email": "Alice@Example.COM"}`},
+		exampleDocument{rgID: 1, body: `{"username": "BOB", "email": "bob@example.com"}`},
+		exampleDocument{rgID: 2, body: `{"username": "charlie", "email": "CHARLIE@EXAMPLE.COM"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -201,11 +210,14 @@ func emailDomainExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Users from different organizations
-	builder.AddDocument(0, []byte(`{"name": "Alice", "email": "alice@company.com"}`))
-	builder.AddDocument(1, []byte(`{"name": "Bob", "email": "bob@GMAIL.COM"}`))
-	builder.AddDocument(2, []byte(`{"name": "Charlie", "email": "charlie@company.com"}`))
-	builder.AddDocument(3, []byte(`{"name": "Diana", "email": "diana@startup.io"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"name": "Alice", "email": "alice@company.com"}`},
+		exampleDocument{rgID: 1, body: `{"name": "Bob", "email": "bob@GMAIL.COM"}`},
+		exampleDocument{rgID: 2, body: `{"name": "Charlie", "email": "charlie@company.com"}`},
+		exampleDocument{rgID: 3, body: `{"name": "Diana", "email": "diana@startup.io"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -244,11 +256,14 @@ func regexExtractExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Log messages with error codes
-	builder.AddDocument(0, []byte(`{"message": "ERROR[E1001]: Connection timeout", "order_id": "order-100"}`))
-	builder.AddDocument(1, []byte(`{"message": "ERROR[E2001]: Invalid input", "order_id": "order-200"}`))
-	builder.AddDocument(2, []byte(`{"message": "ERROR[E1001]: Connection refused", "order_id": "order-300"}`))
-	builder.AddDocument(3, []byte(`{"message": "INFO: Success", "order_id": "order-400"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"message": "ERROR[E1001]: Connection timeout", "order_id": "order-100"}`},
+		exampleDocument{rgID: 1, body: `{"message": "ERROR[E2001]: Invalid input", "order_id": "order-200"}`},
+		exampleDocument{rgID: 2, body: `{"message": "ERROR[E1001]: Connection refused", "order_id": "order-300"}`},
+		exampleDocument{rgID: 3, body: `{"message": "INFO: Success", "order_id": "order-400"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -284,11 +299,14 @@ func durationExample() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// API request latencies
-	builder.AddDocument(0, []byte(`{"endpoint": "/api/users", "latency": "50ms"}`))
-	builder.AddDocument(1, []byte(`{"endpoint": "/api/search", "latency": "1s"}`))
-	builder.AddDocument(2, []byte(`{"endpoint": "/api/export", "latency": "2m30s"}`))
-	builder.AddDocument(3, []byte(`{"endpoint": "/api/health", "latency": "5ms"}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"endpoint": "/api/users", "latency": "50ms"}`},
+		exampleDocument{rgID: 1, body: `{"endpoint": "/api/search", "latency": "1s"}`},
+		exampleDocument{rgID: 2, body: `{"endpoint": "/api/export", "latency": "2m30s"}`},
+		exampleDocument{rgID: 3, body: `{"endpoint": "/api/health", "latency": "5ms"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -316,5 +334,19 @@ func durationExample() error {
 	fmt.Println("- RegexExtract: Parse structured IDs and error codes")
 	fmt.Println("- DurationToMs: Query latency/timeout thresholds")
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

@@ -23,8 +23,8 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: User with nested address
-	builder.AddDocument(0, []byte(`{
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{
 		"user": {
 			"name": "alice",
 			"address": {
@@ -33,10 +33,8 @@ func run() error {
 			}
 		},
 		"tags": ["admin", "developer"]
-	}`))
-
-	// Row group 1: User from different city
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"user": {
 			"name": "bob",
 			"address": {
@@ -45,10 +43,8 @@ func run() error {
 			}
 		},
 		"tags": ["developer", "reviewer"]
-	}`))
-
-	// Row group 2: User from same country as alice
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"user": {
 			"name": "charlie",
 			"address": {
@@ -57,10 +53,8 @@ func run() error {
 			}
 		},
 		"tags": ["tester"]
-	}`))
-
-	// Row group 3: Deep nesting
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"user": {
 			"name": "diana",
 			"address": {
@@ -69,7 +63,10 @@ func run() error {
 			}
 		},
 		"tags": ["admin", "manager"]
-	}`))
+	}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -131,5 +128,19 @@ func run() error {
 		fmt.Printf("  %s (cardinality: %d)\n", p.PathName, p.Cardinality)
 	}
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

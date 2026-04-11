@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
+	stderrors "errors"
 	"io"
 	"math"
 
@@ -956,7 +957,7 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 func readConfig(r io.Reader) (*GINConfig, error) {
 	var configLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &configLen); err != nil {
-		if err == io.EOF {
+		if stderrors.Is(err, io.EOF) {
 			return nil, nil
 		}
 		return nil, err

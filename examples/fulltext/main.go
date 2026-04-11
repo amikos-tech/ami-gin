@@ -27,45 +27,42 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: Tech articles
-	builder.AddDocument(0, []byte(`{
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{
 		"title": "Introduction to Machine Learning",
 		"content": "Machine learning is a subset of artificial intelligence that enables systems to learn from data."
-	}`))
-	builder.AddDocument(0, []byte(`{
+	}`},
+		exampleDocument{rgID: 0, body: `{
 		"title": "Deep Learning Fundamentals",
 		"content": "Deep learning uses neural networks with multiple layers to process complex patterns."
-	}`))
-
-	// Row group 1: Database articles
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"title": "PostgreSQL Performance Tuning",
 		"content": "Learn how to optimize your PostgreSQL database for better performance and scalability."
-	}`))
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"title": "Introduction to NoSQL Databases",
 		"content": "NoSQL databases provide flexible schemas and horizontal scaling for modern applications."
-	}`))
-
-	// Row group 2: Web development
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"title": "Building REST APIs with Go",
 		"content": "Learn how to build performant REST APIs using the Go programming language."
-	}`))
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"title": "React Best Practices",
 		"content": "Best practices for building scalable React applications with modern patterns."
-	}`))
-
-	// Row group 3: DevOps
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"title": "Kubernetes for Beginners",
 		"content": "Getting started with Kubernetes container orchestration and deployment."
-	}`))
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"title": "CI/CD Pipeline Setup",
 		"content": "How to set up continuous integration and deployment pipelines for your team."
-	}`))
+	}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -109,5 +106,19 @@ func run() error {
 	result = idx.Evaluate([]gin.Predicate{gin.Contains("$.content", "blockchain")})
 	fmt.Printf("Row groups: %v\n", result.ToSlice())
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }
