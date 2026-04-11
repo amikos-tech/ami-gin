@@ -15,6 +15,8 @@ import (
 	gin "github.com/amikos-tech/ami-gin"
 )
 
+const defaultLocalArtifactMode os.FileMode = 0o600
+
 func main() {
 	if len(os.Args) < 2 {
 		printUsage()
@@ -179,7 +181,7 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 			if outPath == "" {
 				outPath = input + ".gin"
 			}
-			fileMode, err := localFileMode(input)
+			fileMode, err := localOutputMode(input)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
 				return
@@ -464,12 +466,6 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 		fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 		return
 	}
-	fileMode, err := localFileMode(parquetPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
-		return
-	}
-
 	if gin.IsS3Path(output) {
 		bucket, s3Key, err := gin.ParseS3Path(output)
 		if err != nil {
@@ -486,6 +482,11 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 			return
 		}
 	} else {
+		fileMode, err := localOutputMode(parquetPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+			return
+		}
 		if err := writeLocalIndexFile(output, data, fileMode); err != nil {
 			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 			return
@@ -505,6 +506,10 @@ func readLocalIndexFile(path string) ([]byte, error) {
 	return data, nil
 }
 
+func artifactFileMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() & 0o666
+}
+
 func localFileMode(path string) (os.FileMode, error) {
 	cleanedPath := filepath.Clean(path)
 	info, err := os.Stat(cleanedPath)
@@ -512,13 +517,24 @@ func localFileMode(path string) (os.FileMode, error) {
 		return 0, errors.Wrap(err, "stat local file")
 	}
 
-	return info.Mode().Perm(), nil
+	return artifactFileMode(info.Mode()), nil
+}
+
+func localOutputMode(sourcePath string) (os.FileMode, error) {
+	if gin.IsS3Path(sourcePath) {
+		return defaultLocalArtifactMode, nil
+	}
+
+	return localFileMode(sourcePath)
 }
 
 func writeLocalIndexFile(path string, data []byte, mode os.FileMode) error {
 	cleanedPath := filepath.Clean(path)
 	if err := os.WriteFile(cleanedPath, data, mode); err != nil {
 		return errors.Wrap(err, "write local index file")
+	}
+	if err := os.Chmod(cleanedPath, mode); err != nil {
+		return errors.Wrap(err, "chmod local index file")
 	}
 	return nil
 }
@@ -639,16 +655,16 @@ func parsePredicate(s string) (gin.Predicate, error) {
 		regex *regexp.Regexp
 		op    gin.Operator
 	}{
+		{regexp.MustCompile(`(?i)^(.+?)\s+NOT\s+IN\s+\((.+)\)$`), gin.OpNIN},
+		{regexp.MustCompile(`(?i)^(.+?)\s+IN\s+\((.+)\)$`), gin.OpIN},
+		{regexp.MustCompile(`(?i)^(.+?)\s+CONTAINS\s+(.+)$`), gin.OpContains},
+		{regexp.MustCompile(`(?i)^(.+?)\s+REGEX\s+(.+)$`), gin.OpRegex},
 		{regexp.MustCompile(`^(.+?)\s*!=\s*(.+)$`), gin.OpNE},
 		{regexp.MustCompile(`^(.+?)\s*>=\s*(.+)$`), gin.OpGTE},
 		{regexp.MustCompile(`^(.+?)\s*<=\s*(.+)$`), gin.OpLTE},
 		{regexp.MustCompile(`^(.+?)\s*>\s*(.+)$`), gin.OpGT},
 		{regexp.MustCompile(`^(.+?)\s*<\s*(.+)$`), gin.OpLT},
 		{regexp.MustCompile(`^(.+?)\s*=\s*(.+)$`), gin.OpEQ},
-		{regexp.MustCompile(`(?i)^(.+?)\s+CONTAINS\s+(.+)$`), gin.OpContains},
-		{regexp.MustCompile(`(?i)^(.+?)\s+REGEX\s+(.+)$`), gin.OpRegex},
-		{regexp.MustCompile(`(?i)^(.+?)\s+IN\s+\((.+)\)$`), gin.OpIN},
-		{regexp.MustCompile(`(?i)^(.+?)\s+NOT\s+IN\s+\((.+)\)$`), gin.OpNIN},
 	}
 
 	for _, p := range patterns {

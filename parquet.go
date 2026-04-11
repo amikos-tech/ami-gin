@@ -28,13 +28,28 @@ func SidecarPath(parquetFile string) string {
 	return parquetFile + ".gin"
 }
 
+func artifactFileMode(mode os.FileMode) os.FileMode {
+	return mode.Perm() & 0o666
+}
+
 func parquetFileMode(parquetFile string) (os.FileMode, error) {
 	info, err := os.Stat(parquetFile)
 	if err != nil {
 		return 0, errors.Wrap(err, "stat parquet file")
 	}
 
-	return info.Mode().Perm(), nil
+	return artifactFileMode(info.Mode()), nil
+}
+
+func writeFileWithMode(path string, data []byte, mode os.FileMode) error {
+	if err := os.WriteFile(path, data, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func WriteSidecar(parquetFile string, idx *GINIndex) error {
@@ -47,7 +62,11 @@ func WriteSidecar(parquetFile string, idx *GINIndex) error {
 		return err
 	}
 	sidecar := SidecarPath(parquetFile)
-	return os.WriteFile(sidecar, data, mode)
+	if err := writeFileWithMode(sidecar, data, mode); err != nil {
+		return errors.Wrap(err, "write sidecar")
+	}
+
+	return nil
 }
 
 func ReadSidecar(parquetFile string) (*GINIndex, error) {

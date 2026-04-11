@@ -54,14 +54,29 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 			predicate: gin.Predicate{Path: "$.brand", Operator: gin.OpRegex, Value: "Toyota|Tesla"},
 		},
 		{
+			name:      "regex with equals",
+			input:     `$.brand REGEX "a=b"`,
+			predicate: gin.Predicate{Path: "$.brand", Operator: gin.OpRegex, Value: "a=b"},
+		},
+		{
 			name:      "contains",
 			input:     `$.message CONTAINS "warn"`,
 			predicate: gin.Predicate{Path: "$.message", Operator: gin.OpContains, Value: "warn"},
 		},
 		{
+			name:      "contains with equals",
+			input:     `$.message CONTAINS "a=b"`,
+			predicate: gin.Predicate{Path: "$.message", Operator: gin.OpContains, Value: "a=b"},
+		},
+		{
 			name:      "in list",
 			input:     `$.count IN (1, 2, "three")`,
 			predicate: gin.Predicate{Path: "$.count", Operator: gin.OpIN, Value: []any{float64(1), float64(2), "three"}},
+		},
+		{
+			name:      "not in list",
+			input:     `$.count NOT IN (1, 2, "three")`,
+			predicate: gin.Predicate{Path: "$.count", Operator: gin.OpNIN, Value: []any{float64(1), float64(2), "three"}},
 		},
 		{
 			name:      "is null",
@@ -99,59 +114,125 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 }
 
 func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
-	tmpDir := t.TempDir()
-	parquetFile := filepath.Join(tmpDir, "data.parquet")
-	createCLIParquetFile(t, parquetFile, []cliTestRecord{
-		{ID: 1, Attributes: `{"brand":"Toyota"}`},
-		{ID: 2, Attributes: `{"brand":"Tesla"}`},
-	}, 1)
+	t.Parallel()
 
-	if err := os.Chmod(parquetFile, 0o640); err != nil {
-		t.Fatalf("chmod parquet file: %v", err)
+	tests := []struct {
+		name       string
+		sourceMode os.FileMode
+		wantMode   os.FileMode
+	}{
+		{name: "preserve rw bits", sourceMode: 0o640, wantMode: 0o640},
+		{name: "drop execute bits", sourceMode: 0o755, wantMode: 0o644},
 	}
 
-	buildSingleFile(parquetFile, "attributes", "", false, gin.DefaultConfig(), gin.DefaultParquetConfig())
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	info, err := os.Stat(parquetFile + ".gin")
-	if err != nil {
-		t.Fatalf("stat sidecar: %v", err)
-	}
+			tmpDir := t.TempDir()
+			parquetFile := filepath.Join(tmpDir, "data.parquet")
+			createCLIParquetFile(t, parquetFile, []cliTestRecord{
+				{ID: 1, Attributes: `{"brand":"Toyota"}`},
+				{ID: 2, Attributes: `{"brand":"Tesla"}`},
+			}, 1)
 
-	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
-		t.Fatalf("sidecar mode = %o, want %o", got, want)
+			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
+				t.Fatalf("chmod parquet file: %v", err)
+			}
+
+			buildSingleFile(parquetFile, "attributes", "", false, gin.DefaultConfig(), gin.DefaultParquetConfig())
+
+			info, err := os.Stat(parquetFile + ".gin")
+			if err != nil {
+				t.Fatalf("stat sidecar: %v", err)
+			}
+
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Fatalf("sidecar mode = %o, want %o", got, tt.wantMode)
+			}
+		})
 	}
 }
 
 func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		sourceMode os.FileMode
+		wantMode   os.FileMode
+	}{
+		{name: "preserve rw bits", sourceMode: 0o640, wantMode: 0o640},
+		{name: "drop execute bits", sourceMode: 0o755, wantMode: 0o644},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			tmpDir := t.TempDir()
+			parquetFile := filepath.Join(tmpDir, "embedded.parquet")
+			createCLIParquetFile(t, parquetFile, []cliTestRecord{
+				{ID: 1, Attributes: `{"status":"ok"}`},
+				{ID: 2, Attributes: `{"status":"warn"}`},
+			}, 1)
+
+			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
+				t.Fatalf("chmod parquet file: %v", err)
+			}
+
+			idx, err := gin.BuildFromParquet(parquetFile, "attributes", gin.DefaultConfig())
+			if err != nil {
+				t.Fatalf("BuildFromParquet: %v", err)
+			}
+			if err := gin.RebuildWithIndex(parquetFile, idx, gin.DefaultParquetConfig()); err != nil {
+				t.Fatalf("RebuildWithIndex: %v", err)
+			}
+
+			output := filepath.Join(tmpDir, "extracted.gin")
+
+			extractSingleFile(parquetFile, output, gin.DefaultParquetConfig())
+
+			info, err := os.Stat(output)
+			if err != nil {
+				t.Fatalf("stat extracted output: %v", err)
+			}
+
+			if got := info.Mode().Perm(); got != tt.wantMode {
+				t.Fatalf("extracted output mode = %o, want %o", got, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestLocalOutputMode(t *testing.T) {
+	t.Parallel()
+
 	tmpDir := t.TempDir()
-	parquetFile := filepath.Join(tmpDir, "embedded.parquet")
+	parquetFile := filepath.Join(tmpDir, "data.parquet")
 	createCLIParquetFile(t, parquetFile, []cliTestRecord{
-		{ID: 1, Attributes: `{"status":"ok"}`},
-		{ID: 2, Attributes: `{"status":"warn"}`},
+		{ID: 1, Attributes: `{"brand":"Toyota"}`},
 	}, 1)
 
-	if err := os.Chmod(parquetFile, 0o640); err != nil {
+	if err := os.Chmod(parquetFile, 0o755); err != nil {
 		t.Fatalf("chmod parquet file: %v", err)
 	}
 
-	idx, err := gin.BuildFromParquet(parquetFile, "attributes", gin.DefaultConfig())
+	mode, err := localOutputMode(parquetFile)
 	if err != nil {
-		t.Fatalf("BuildFromParquet: %v", err)
+		t.Fatalf("localOutputMode(local): %v", err)
 	}
-	if err := gin.RebuildWithIndex(parquetFile, idx, gin.DefaultParquetConfig()); err != nil {
-		t.Fatalf("RebuildWithIndex: %v", err)
+	if mode != 0o644 {
+		t.Fatalf("localOutputMode(local) = %o, want %o", mode, os.FileMode(0o644))
 	}
 
-	output := filepath.Join(tmpDir, "extracted.gin")
-
-	extractSingleFile(parquetFile, output, gin.DefaultParquetConfig())
-
-	info, err := os.Stat(output)
+	mode, err = localOutputMode("s3://bucket/data.parquet")
 	if err != nil {
-		t.Fatalf("stat extracted output: %v", err)
+		t.Fatalf("localOutputMode(s3): %v", err)
 	}
-
-	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
-		t.Fatalf("extracted output mode = %o, want %o", got, want)
+	if mode != 0o600 {
+		t.Fatalf("localOutputMode(s3) = %o, want %o", mode, os.FileMode(0o600))
 	}
 }
