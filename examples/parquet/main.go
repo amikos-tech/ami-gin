@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
@@ -118,11 +119,13 @@ func run() error {
 }
 
 func createParquetFile(path string) error {
-	f, err := os.Create(path)
+	cleanedPath := filepath.Clean(path)
+	// #nosec G304 -- this example writes to a temp file path it created itself.
+	f, err := os.OpenFile(cleanedPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "create parquet file")
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	records := []Record{
 		{ID: 1, Attributes: `{"status": "success", "count": 10, "message": "All good"}`},
@@ -141,9 +144,9 @@ func createParquetFile(path string) error {
 
 	for _, r := range records {
 		if _, err := writer.Write([]Record{r}); err != nil {
-			return fmt.Errorf("write record: %w", err)
+			return errors.Wrap(err, "write record")
 		}
 	}
 
-	return writer.Close()
+	return errors.Wrap(writer.Close(), "close parquet writer")
 }

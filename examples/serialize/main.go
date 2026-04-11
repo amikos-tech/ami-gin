@@ -24,11 +24,15 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	builder.AddDocument(0, []byte(`{"product": "laptop", "brand": "acme", "price": 999.99}`))
-	builder.AddDocument(0, []byte(`{"product": "mouse", "brand": "acme", "price": 29.99}`))
-	builder.AddDocument(1, []byte(`{"product": "keyboard", "brand": "techco", "price": 79.99}`))
-	builder.AddDocument(1, []byte(`{"product": "monitor", "brand": "viewmax", "price": 349.99}`))
-	builder.AddDocument(2, []byte(`{"product": "webcam", "brand": "acme", "price": 89.99}`))
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"product": "laptop", "brand": "acme", "price": 999.99}`},
+		exampleDocument{rgID: 0, body: `{"product": "mouse", "brand": "acme", "price": 29.99}`},
+		exampleDocument{rgID: 1, body: `{"product": "keyboard", "brand": "techco", "price": 79.99}`},
+		exampleDocument{rgID: 1, body: `{"product": "monitor", "brand": "viewmax", "price": 349.99}`},
+		exampleDocument{rgID: 2, body: `{"product": "webcam", "brand": "acme", "price": 89.99}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -49,7 +53,7 @@ func run() error {
 
 	// Save to file
 	filename := "/tmp/gin_index.bin"
-	if err := os.WriteFile(filename, encoded, 0644); err != nil {
+	if err := os.WriteFile(filename, encoded, 0600); err != nil {
 		return errors.Wrap(err, "write index file")
 	}
 	fmt.Printf("Saved to: %s\n", filename)
@@ -86,8 +90,24 @@ func run() error {
 	fmt.Printf("Query 'product contains board' on loaded: %v\n", result.ToSlice())
 
 	// Cleanup
-	os.Remove(filename)
+	if err := os.Remove(filename); err != nil {
+		return errors.Wrap(err, "remove index file")
+	}
 	fmt.Printf("\nCleaned up %s\n", filename)
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

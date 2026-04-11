@@ -34,51 +34,46 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: January 2024 records
-	builder.AddDocument(0, []byte(`{
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{
 		"name": "alice",
 		"created_at": "2024-01-15T10:30:00Z",
 		"birth_date": "1990-05-20",
 		"custom_ts": "2024/01/15 10:30"
-	}`))
-	builder.AddDocument(0, []byte(`{
+	}`},
+		exampleDocument{rgID: 0, body: `{
 		"name": "bob",
 		"created_at": "2024-01-20T14:00:00Z",
 		"birth_date": "1985-03-10",
 		"custom_ts": "2024/01/20 14:00"
-	}`))
-
-	// Row group 1: March 2024 records
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"name": "charlie",
 		"created_at": "2024-03-01T09:00:00Z",
 		"birth_date": "1992-08-15",
 		"custom_ts": "2024/03/01 09:00"
-	}`))
-
-	// Row group 2: June 2024 records
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"name": "diana",
 		"created_at": "2024-06-15T16:45:00Z",
 		"birth_date": "1988-12-01",
 		"custom_ts": "2024/06/15 16:45"
-	}`))
-
-	// Row group 3: September 2024 records
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"name": "eve",
 		"created_at": "2024-09-01T08:00:00Z",
 		"birth_date": "1995-02-28",
 		"custom_ts": "2024/09/01 08:00"
-	}`))
-
-	// Row group 4: December 2024 records
-	builder.AddDocument(4, []byte(`{
+	}`},
+		exampleDocument{rgID: 4, body: `{
 		"name": "frank",
 		"created_at": "2024-12-25T12:00:00Z",
 		"birth_date": "1980-07-04",
 		"custom_ts": "2024/12/25 12:00"
-	}`))
+	}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -133,5 +128,19 @@ func run() error {
 	fmt.Println("3. Per-row-group min/max stats allow fast pruning")
 	fmt.Println("4. No need to parse dates at query time")
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

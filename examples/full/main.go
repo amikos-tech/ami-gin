@@ -23,45 +23,42 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: Tech product
-	builder.AddDocument(0, []byte(`{
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{
 		"name": "Laptop Pro",
 		"description": "High performance laptop for developers",
 		"price": 1299.99,
 		"quantity": 50,
 		"in_stock": true,
 		"tags": ["electronics", "computers"]
-	}`))
-
-	// Row group 1: Book
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"name": "Go Programming",
 		"description": "Learn Go programming language",
 		"price": 49.99,
 		"quantity": 200,
 		"in_stock": true,
 		"tags": ["books", "programming"]
-	}`))
-
-	// Row group 2: Out of stock item
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"name": "Vintage Keyboard",
 		"description": "Classic mechanical keyboard",
 		"price": 299.99,
 		"quantity": 0,
 		"in_stock": false,
 		"tags": ["electronics", "accessories"]
-	}`))
-
-	// Row group 3: Expensive item
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"name": "Server Rack",
 		"description": "Enterprise server rack for data centers",
 		"price": 5999.99,
 		"quantity": 5,
 		"in_stock": true,
 		"tags": ["electronics", "enterprise"]
-	}`))
+	}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -144,5 +141,19 @@ func run() error {
 		gin.LT("$.price", 100.0),
 	}).ToSlice()) // [1]
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

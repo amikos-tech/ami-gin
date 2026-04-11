@@ -184,7 +184,7 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 				fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 				return
 			}
-			if err := os.WriteFile(outPath, data, 0644); err != nil {
+			if err := writeLocalIndexFile(outPath, data); err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 				return
 			}
@@ -262,7 +262,7 @@ func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConf
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
-			data, err := os.ReadFile(indexPath)
+			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
 				return
@@ -350,7 +350,7 @@ func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
-			data, err := os.ReadFile(indexPath)
+			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
 				return
@@ -476,13 +476,31 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 			return
 		}
 	} else {
-		if err := os.WriteFile(output, data, 0644); err != nil {
+		if err := writeLocalIndexFile(output, data); err != nil {
 			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 			return
 		}
 	}
 
 	fmt.Printf("  Index extracted to %s\n", output)
+}
+
+func readLocalIndexFile(path string) ([]byte, error) {
+	cleanedPath := filepath.Clean(path)
+	// #nosec G304 -- the CLI intentionally reads the user-selected local index path after cleaning it.
+	data, err := os.ReadFile(cleanedPath)
+	if err != nil {
+		return nil, errors.Wrap(err, "read local index file")
+	}
+	return data, nil
+}
+
+func writeLocalIndexFile(path string, data []byte) error {
+	cleanedPath := filepath.Clean(path)
+	if err := os.WriteFile(cleanedPath, data, 0600); err != nil {
+		return errors.Wrap(err, "write local index file")
+	}
+	return nil
 }
 
 func resolveParquetFiles(path string) ([]string, error) {

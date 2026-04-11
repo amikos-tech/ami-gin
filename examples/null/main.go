@@ -23,21 +23,18 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: Complete records
-	builder.AddDocument(0, []byte(`{"name": "alice", "email": "alice@example.com", "phone": "555-1234"}`))
-	builder.AddDocument(0, []byte(`{"name": "bob", "email": "bob@example.com", "phone": "555-5678"}`))
-
-	// Row group 1: Missing phone
-	builder.AddDocument(1, []byte(`{"name": "charlie", "email": "charlie@example.com", "phone": null}`))
-	builder.AddDocument(1, []byte(`{"name": "diana", "email": "diana@example.com"}`)) // phone field absent
-
-	// Row group 2: Missing email
-	builder.AddDocument(2, []byte(`{"name": "eve", "email": null, "phone": "555-9999"}`))
-	builder.AddDocument(2, []byte(`{"name": "frank", "phone": "555-0000"}`)) // email field absent
-
-	// Row group 3: Multiple nulls
-	builder.AddDocument(3, []byte(`{"name": "grace", "email": null, "phone": null}`))
-	builder.AddDocument(3, []byte(`{"name": "henry"}`)) // both absent
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{"name": "alice", "email": "alice@example.com", "phone": "555-1234"}`},
+		exampleDocument{rgID: 0, body: `{"name": "bob", "email": "bob@example.com", "phone": "555-5678"}`},
+		exampleDocument{rgID: 1, body: `{"name": "charlie", "email": "charlie@example.com", "phone": null}`},
+		exampleDocument{rgID: 1, body: `{"name": "diana", "email": "diana@example.com"}`},
+		exampleDocument{rgID: 2, body: `{"name": "eve", "email": null, "phone": "555-9999"}`},
+		exampleDocument{rgID: 2, body: `{"name": "frank", "phone": "555-0000"}`},
+		exampleDocument{rgID: 3, body: `{"name": "grace", "email": null, "phone": null}`},
+		exampleDocument{rgID: 3, body: `{"name": "henry"}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -79,5 +76,19 @@ func run() error {
 	})
 	fmt.Printf("Row groups: %v\n", result.ToSlice())
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }

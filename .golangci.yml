@@ -19,6 +19,9 @@ linters:
   settings:
     gocritic:
       disable-all: false
+    gosec:
+      excludes:
+        - G115
     staticcheck:
       checks:
         - all
@@ -29,6 +32,9 @@ linters:
     rules:
       - linters:
           - errcheck
+        path: _test\.go
+      - linters:
+          - gosec
         path: _test\.go
       - linters:
           - errcheck

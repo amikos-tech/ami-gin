@@ -27,40 +27,35 @@ func run() error {
 		return errors.Wrap(err, "create builder")
 	}
 
-	// Row group 0: Toyota content
-	builder.AddDocument(0, []byte(`{
+	if err := addDocuments(builder,
+		exampleDocument{rgID: 0, body: `{
 		"brand": "Toyota Corolla",
 		"category": "sedan",
 		"log": "INFO: Vehicle started successfully"
-	}`))
-
-	// Row group 1: Tesla content
-	builder.AddDocument(1, []byte(`{
+	}`},
+		exampleDocument{rgID: 1, body: `{
 		"brand": "Tesla Model 3",
 		"category": "electric",
 		"log": "ERROR: Battery low warning triggered"
-	}`))
-
-	// Row group 2: Ford content
-	builder.AddDocument(2, []byte(`{
+	}`},
+		exampleDocument{rgID: 2, body: `{
 		"brand": "Ford Mustang",
 		"category": "sports",
 		"log": "WARNING: Engine temperature high"
-	}`))
-
-	// Row group 3: Mixed brands
-	builder.AddDocument(3, []byte(`{
+	}`},
+		exampleDocument{rgID: 3, body: `{
 		"brand": "Toyota Camry and Tesla Model S comparison",
 		"category": "review",
 		"log": "INFO: Comparison completed"
-	}`))
-
-	// Row group 4: Honda (no match for Toyota|Tesla|Ford)
-	builder.AddDocument(4, []byte(`{
+	}`},
+		exampleDocument{rgID: 4, body: `{
 		"brand": "Honda Civic",
 		"category": "sedan",
 		"log": "DEBUG: Diagnostics running"
-	}`))
+	}`},
+	); err != nil {
+		return err
+	}
 
 	idx := builder.Finalize()
 
@@ -110,5 +105,19 @@ func run() error {
 	result = idx.Evaluate([]gin.Predicate{gin.Regex("$.log", "ERROR:.*[a-z]+")})
 	fmt.Printf("Row groups: %v (expected: [1])\n", result.ToSlice())
 
+	return nil
+}
+
+type exampleDocument struct {
+	rgID gin.DocID
+	body string
+}
+
+func addDocuments(builder *gin.GINBuilder, docs ...exampleDocument) error {
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.rgID, []byte(doc.body)); err != nil {
+			return errors.Wrapf(err, "add document to row group %d", doc.rgID)
+		}
+	}
 	return nil
 }
