@@ -205,6 +205,8 @@ func TestArtifactFileMode(t *testing.T) {
 		{name: "preserve rw bits", in: 0o640, want: 0o640},
 		{name: "drop execute bits", in: 0o755, want: 0o644},
 		{name: "preserve group write and world read", in: 0o664, want: 0o664},
+		{name: "mask world writable and execute bits", in: 0o777, want: 0o666},
+		{name: "ignore high bits before masking", in: 0o4755, want: 0o644},
 	}
 
 	for _, tt := range tests {
@@ -399,7 +401,7 @@ func TestRebuildWithIndexPreservesParquetPermissions(t *testing.T) {
 	}
 }
 
-func TestRebuildWithIndexRemovesStaleTempFile(t *testing.T) {
+func TestRebuildWithIndexRefreshesModeFromSourceDespiteStaleTempFile(t *testing.T) {
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -410,6 +412,9 @@ func TestRebuildWithIndexRemovesStaleTempFile(t *testing.T) {
 		{ID: 2, Attributes: `{"x": 2}`},
 	}
 	createTestParquetFile(t, parquetFile, records, 1)
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
 
 	idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
 	if err != nil {
@@ -420,13 +425,20 @@ func TestRebuildWithIndexRemovesStaleTempFile(t *testing.T) {
 	if err := os.WriteFile(tmpFile, []byte("stale"), 0o600); err != nil {
 		t.Fatalf("write stale temp file: %v", err)
 	}
+	if err := os.Chmod(tmpFile, 0o600); err != nil {
+		t.Fatalf("chmod stale temp file: %v", err)
+	}
 
 	if err := RebuildWithIndex(parquetFile, idx, DefaultParquetConfig()); err != nil {
 		t.Fatalf("RebuildWithIndex: %v", err)
 	}
 
-	if _, err := os.Stat(tmpFile); !os.IsNotExist(err) {
-		t.Fatalf("temp file still exists or stat failed: %v", err)
+	info, err := os.Stat(parquetFile)
+	if err != nil {
+		t.Fatalf("stat rebuilt parquet: %v", err)
+	}
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("rebuilt parquet mode = %o, want %o", got, want)
 	}
 
 	loaded, err := ReadFromParquetMetadata(parquetFile, DefaultParquetConfig())

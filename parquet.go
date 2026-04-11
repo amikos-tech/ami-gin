@@ -312,7 +312,7 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 	tmpFile := parquetFile + ".tmp"
 	mode, err := parquetFileMode(parquetFile)
 	if err != nil {
-		return errors.Wrap(err, "rebuild with index: resolve file mode")
+		return errors.Wrap(err, "resolve file mode")
 	}
 	// Remove any crash-surviving temp file so the recreated inode gets the current mode.
 	if err := os.Remove(tmpFile); err != nil && !stderrors.Is(err, os.ErrNotExist) {
