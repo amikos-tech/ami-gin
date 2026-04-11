@@ -7,8 +7,15 @@ run:
 linters:
   enable:
     - dupword
+    - errorlint
+    - goconst
     - gocritic
+    - gosec
     - mirror
+    - nilerr
+    - prealloc
+    - unconvert
+    - unparam
   settings:
     gocritic:
       disable-all: false

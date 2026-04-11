@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-func mustNewBuilder(t *testing.T, config GINConfig, numRGs int, opts ...BuilderOption) *GINBuilder {
+func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 	t.Helper()
-	builder, err := NewBuilder(config, numRGs, opts...)
+	builder, err := NewBuilder(config, numRGs)
 	if err != nil {
 		t.Fatalf("failed to create builder: %v", err)
 	}

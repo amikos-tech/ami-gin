@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"encoding/base64"
+	stderrors "errors"
 	"io"
 	"os"
 	"strings"
@@ -115,7 +116,7 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 
 		for {
 			page, err := pages.ReadPage()
-			if err == io.EOF {
+			if stderrors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {
@@ -127,7 +128,7 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 			values := page.Values()
 			data := make([]parquet.Value, numValues)
 			n, err := values.ReadValues(data)
-			if err != nil && err != io.EOF {
+			if err != nil && !stderrors.Is(err, io.EOF) {
 				_ = pages.Close()
 				return nil, errors.Wrapf(err, "read values in row group %d", rgID)
 			}
@@ -261,7 +262,7 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 		for {
 			row := make([]parquet.Value, len(schema.Fields()))
 			_, err := reader.ReadRows([]parquet.Row{row})
-			if err == io.EOF {
+			if stderrors.Is(err, io.EOF) {
 				break
 			}
 			if err != nil {

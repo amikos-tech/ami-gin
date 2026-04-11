@@ -618,66 +618,54 @@ func parsePredicate(s string) (gin.Predicate, error) {
 			valueStr := strings.TrimSpace(matches[2])
 
 			if p.op == gin.OpIN || p.op == gin.OpNIN {
-				values, err := parseValueList(valueStr)
-				if err != nil {
-					return gin.Predicate{}, err
-				}
-				return gin.Predicate{Path: path, Operator: p.op, Value: values}, nil
+				return gin.Predicate{Path: path, Operator: p.op, Value: parseValueList(valueStr)}, nil
 			}
 
-			value, err := parseValue(valueStr)
-			if err != nil {
-				return gin.Predicate{}, err
-			}
-			return gin.Predicate{Path: path, Operator: p.op, Value: value}, nil
+			return gin.Predicate{Path: path, Operator: p.op, Value: parseValue(valueStr)}, nil
 		}
 	}
 
 	return gin.Predicate{}, errors.Errorf("cannot parse predicate: %s", s)
 }
 
-func parseValue(s string) (any, error) {
+func parseValue(s string) any {
 	s = strings.TrimSpace(s)
 
 	if (strings.HasPrefix(s, "\"") && strings.HasSuffix(s, "\"")) ||
 		(strings.HasPrefix(s, "'") && strings.HasSuffix(s, "'")) {
-		return s[1 : len(s)-1], nil
+		return s[1 : len(s)-1]
 	}
 
 	if s == "true" {
-		return true, nil
+		return true
 	}
 	if s == "false" {
-		return false, nil
+		return false
 	}
 	if s == "null" {
-		return nil, nil
+		return nil
 	}
 
 	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return float64(i), nil
+		return float64(i)
 	}
 	if f, err := strconv.ParseFloat(s, 64); err == nil {
-		return f, nil
+		return f
 	}
 
-	return s, nil
+	return s
 }
 
-func parseValueList(s string) ([]any, error) {
+func parseValueList(s string) []any {
 	var values []any
 	err := json.Unmarshal([]byte("["+s+"]"), &values)
 	if err != nil {
 		parts := strings.Split(s, ",")
 		for _, p := range parts {
-			v, err := parseValue(strings.TrimSpace(p))
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, v)
+			values = append(values, parseValue(strings.TrimSpace(p)))
 		}
 	}
-	return values, nil
+	return values
 }
 
 func describeTypes(types uint8) string {
