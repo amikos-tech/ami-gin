@@ -506,6 +506,7 @@ func readLocalIndexFile(path string) ([]byte, error) {
 	return data, nil
 }
 
+// Keep in sync with parquet.go:artifactFileMode.
 func artifactFileMode(mode os.FileMode) os.FileMode {
 	return mode.Perm() & 0o666
 }

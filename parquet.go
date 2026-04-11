@@ -28,6 +28,7 @@ func SidecarPath(parquetFile string) string {
 	return parquetFile + ".gin"
 }
 
+// Keep in sync with cmd/gin-index/main.go:artifactFileMode.
 func artifactFileMode(mode os.FileMode) os.FileMode {
 	return mode.Perm() & 0o666
 }
@@ -43,10 +44,10 @@ func parquetFileMode(parquetFile string) (os.FileMode, error) {
 
 func writeFileWithMode(path string, data []byte, mode os.FileMode) error {
 	if err := os.WriteFile(path, data, mode); err != nil {
-		return err
+		return errors.Wrap(err, "write file with mode")
 	}
 	if err := os.Chmod(path, mode); err != nil {
-		return err
+		return errors.Wrap(err, "chmod file with mode")
 	}
 
 	return nil
@@ -311,8 +312,9 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 	tmpFile := parquetFile + ".tmp"
 	mode, err := parquetFileMode(parquetFile)
 	if err != nil {
-		return err
+		return errors.Wrap(err, "rebuild with index: resolve file mode")
 	}
+	// Remove any crash-surviving temp file so the recreated inode gets the current mode.
 	if err := os.Remove(tmpFile); err != nil && !stderrors.Is(err, os.ErrNotExist) {
 		return errors.Wrap(err, "remove temp file")
 	}

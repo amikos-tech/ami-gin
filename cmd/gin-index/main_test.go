@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/parquet-go/parquet-go"
@@ -59,6 +60,11 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 			predicate: gin.Predicate{Path: "$.brand", Operator: gin.OpRegex, Value: "a=b"},
 		},
 		{
+			name:      "regex lowercase",
+			input:     `$.brand regex "Toyota|Tesla"`,
+			predicate: gin.Predicate{Path: "$.brand", Operator: gin.OpRegex, Value: "Toyota|Tesla"},
+		},
+		{
 			name:      "contains",
 			input:     `$.message CONTAINS "warn"`,
 			predicate: gin.Predicate{Path: "$.message", Operator: gin.OpContains, Value: "warn"},
@@ -69,6 +75,11 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 			predicate: gin.Predicate{Path: "$.message", Operator: gin.OpContains, Value: "a=b"},
 		},
 		{
+			name:      "contains mixed case",
+			input:     `$.message CoNtAiNs "warn"`,
+			predicate: gin.Predicate{Path: "$.message", Operator: gin.OpContains, Value: "warn"},
+		},
+		{
 			name:      "in list",
 			input:     `$.count IN (1, 2, "three")`,
 			predicate: gin.Predicate{Path: "$.count", Operator: gin.OpIN, Value: []any{float64(1), float64(2), "three"}},
@@ -76,6 +87,11 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 		{
 			name:      "not in list",
 			input:     `$.count NOT IN (1, 2, "three")`,
+			predicate: gin.Predicate{Path: "$.count", Operator: gin.OpNIN, Value: []any{float64(1), float64(2), "three"}},
+		},
+		{
+			name:      "not in lowercase",
+			input:     `$.count not in (1, 2, "three")`,
 			predicate: gin.Predicate{Path: "$.count", Operator: gin.OpNIN, Value: []any{float64(1), float64(2), "three"}},
 		},
 		{
@@ -108,6 +124,80 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 			}
 			if !reflect.DeepEqual(got.Value, tt.predicate.Value) {
 				t.Fatalf("parsePredicate(%q) value = %#v, want %#v", tt.input, got.Value, tt.predicate.Value)
+			}
+		})
+	}
+}
+
+func TestParsePredicateRejectsMalformedInput(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		``,
+		`$.brand REGEX`,
+		`$.message CONTAINS`,
+		`$.count NOT IN`,
+		`$.deleted_at IS`,
+	}
+
+	for _, input := range tests {
+		input := input
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parsePredicate(input)
+			if err == nil {
+				t.Fatalf("parsePredicate(%q) returned nil error", input)
+			}
+		})
+	}
+}
+
+func TestParsePredicateRegexRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	builder, err := gin.NewBuilder(gin.DefaultConfig(), 2)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	if err := builder.AddDocument(0, []byte(`{"brand":"Toyota Corolla"}`)); err != nil {
+		t.Fatalf("AddDocument(0): %v", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"brand":"Ford Mustang"}`)); err != nil {
+		t.Fatalf("AddDocument(1): %v", err)
+	}
+
+	pred, err := parsePredicate(`$.brand REGEX "Toy.*"`)
+	if err != nil {
+		t.Fatalf("parsePredicate: %v", err)
+	}
+
+	result := builder.Finalize().Evaluate([]gin.Predicate{pred})
+	if got := result.ToSlice(); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("regex round trip = %v, want [0]", got)
+	}
+}
+
+func TestArtifactFileMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		in   os.FileMode
+		want os.FileMode
+	}{
+		{name: "preserve rw bits", in: 0o640, want: 0o640},
+		{name: "drop execute bits", in: 0o755, want: 0o644},
+		{name: "preserve group write and world read", in: 0o664, want: 0o664},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := artifactFileMode(tt.in); got != tt.want {
+				t.Fatalf("artifactFileMode(%o) = %o, want %o", tt.in, got, tt.want)
 			}
 		})
 	}
@@ -234,5 +324,17 @@ func TestLocalOutputMode(t *testing.T) {
 	}
 	if mode != 0o600 {
 		t.Fatalf("localOutputMode(s3) = %o, want %o", mode, os.FileMode(0o600))
+	}
+}
+
+func TestLocalOutputModeWrapsStatErrors(t *testing.T) {
+	t.Parallel()
+
+	_, err := localOutputMode(filepath.Join(t.TempDir(), "missing.parquet"))
+	if err == nil {
+		t.Fatal("localOutputMode(missing) returned nil error")
+	}
+	if !strings.Contains(err.Error(), "stat local file") {
+		t.Fatalf("localOutputMode(missing) error = %q, want stat local file context", err)
 	}
 }
