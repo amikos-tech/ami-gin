@@ -1,11 +1,44 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
+	"github.com/parquet-go/parquet-go"
+
 	gin "github.com/amikos-tech/ami-gin"
 )
+
+type cliTestRecord struct {
+	ID         int64  `parquet:"id"`
+	Attributes string `parquet:"attributes"`
+}
+
+func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord, rowsPerRG int64) {
+	t.Helper()
+
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatalf("create parquet file: %v", err)
+	}
+	defer f.Close()
+
+	writer := parquet.NewGenericWriter[cliTestRecord](f,
+		parquet.MaxRowsPerRowGroup(rowsPerRG),
+	)
+
+	for _, record := range records {
+		if _, err := writer.Write([]cliTestRecord{record}); err != nil {
+			t.Fatalf("write parquet record: %v", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close parquet writer: %v", err)
+	}
+}
 
 func TestParsePredicateSupportedOperators(t *testing.T) {
 	t.Parallel()
@@ -65,3 +98,60 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 	}
 }
 
+func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	parquetFile := filepath.Join(tmpDir, "data.parquet")
+	createCLIParquetFile(t, parquetFile, []cliTestRecord{
+		{ID: 1, Attributes: `{"brand":"Toyota"}`},
+		{ID: 2, Attributes: `{"brand":"Tesla"}`},
+	}, 1)
+
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	buildSingleFile(parquetFile, "attributes", "", false, gin.DefaultConfig(), gin.DefaultParquetConfig())
+
+	info, err := os.Stat(parquetFile + ".gin")
+	if err != nil {
+		t.Fatalf("stat sidecar: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("sidecar mode = %o, want %o", got, want)
+	}
+}
+
+func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	parquetFile := filepath.Join(tmpDir, "embedded.parquet")
+	createCLIParquetFile(t, parquetFile, []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+		{ID: 2, Attributes: `{"status":"warn"}`},
+	}, 1)
+
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	idx, err := gin.BuildFromParquet(parquetFile, "attributes", gin.DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+	if err := gin.RebuildWithIndex(parquetFile, idx, gin.DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex: %v", err)
+	}
+
+	output := filepath.Join(tmpDir, "extracted.gin")
+
+	extractSingleFile(parquetFile, output, gin.DefaultParquetConfig())
+
+	info, err := os.Stat(output)
+	if err != nil {
+		t.Fatalf("stat extracted output: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("extracted output mode = %o, want %o", got, want)
+	}
+}

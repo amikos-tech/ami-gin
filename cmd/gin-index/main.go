@@ -179,12 +179,17 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 			if outPath == "" {
 				outPath = input + ".gin"
 			}
+			fileMode, err := localFileMode(input)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+				return
+			}
 			data, err := gin.Encode(idx)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 				return
 			}
-			if err := writeLocalIndexFile(outPath, data); err != nil {
+			if err := writeLocalIndexFile(outPath, data, fileMode); err != nil {
 				fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 				return
 			}
@@ -459,6 +464,11 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 		fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
 		return
 	}
+	fileMode, err := localFileMode(parquetPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+		return
+	}
 
 	if gin.IsS3Path(output) {
 		bucket, s3Key, err := gin.ParseS3Path(output)
@@ -476,7 +486,7 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 			return
 		}
 	} else {
-		if err := writeLocalIndexFile(output, data); err != nil {
+		if err := writeLocalIndexFile(output, data, fileMode); err != nil {
 			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
 			return
 		}
@@ -495,9 +505,19 @@ func readLocalIndexFile(path string) ([]byte, error) {
 	return data, nil
 }
 
-func writeLocalIndexFile(path string, data []byte) error {
+func localFileMode(path string) (os.FileMode, error) {
 	cleanedPath := filepath.Clean(path)
-	if err := os.WriteFile(cleanedPath, data, 0600); err != nil {
+	info, err := os.Stat(cleanedPath)
+	if err != nil {
+		return 0, errors.Wrap(err, "stat local file")
+	}
+
+	return info.Mode().Perm(), nil
+}
+
+func writeLocalIndexFile(path string, data []byte, mode os.FileMode) error {
+	cleanedPath := filepath.Clean(path)
+	if err := os.WriteFile(cleanedPath, data, mode); err != nil {
 		return errors.Wrap(err, "write local index file")
 	}
 	return nil

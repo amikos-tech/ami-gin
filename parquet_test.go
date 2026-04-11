@@ -92,6 +92,39 @@ func TestSidecarReadWrite(t *testing.T) {
 	}
 }
 
+func TestWriteSidecarPreservesParquetPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	parquetFile := tmpDir + "/mode-data.parquet"
+
+	records := []testRecord{
+		{ID: 1, Attributes: `{"status": "ok"}`},
+		{ID: 2, Attributes: `{"status": "warn"}`},
+	}
+	createTestParquetFile(t, parquetFile, records, 1)
+
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+
+	if err := WriteSidecar(parquetFile, idx); err != nil {
+		t.Fatalf("WriteSidecar: %v", err)
+	}
+
+	info, err := os.Stat(SidecarPath(parquetFile))
+	if err != nil {
+		t.Fatalf("stat sidecar: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("sidecar mode = %o, want %o", got, want)
+	}
+}
+
 func TestBuildFromParquet(t *testing.T) {
 	tmpDir := t.TempDir()
 	parquetFile := tmpDir + "/data.parquet"
@@ -206,6 +239,39 @@ func TestRebuildWithIndex(t *testing.T) {
 
 	if loaded.Header.NumRowGroups != idx.Header.NumRowGroups {
 		t.Errorf("NumRowGroups = %d, want %d", loaded.Header.NumRowGroups, idx.Header.NumRowGroups)
+	}
+}
+
+func TestRebuildWithIndexPreservesParquetPermissions(t *testing.T) {
+	tmpDir := t.TempDir()
+	parquetFile := tmpDir + "/mode-embedded.parquet"
+
+	records := []testRecord{
+		{ID: 1, Attributes: `{"x": 1}`},
+		{ID: 2, Attributes: `{"x": 2}`},
+	}
+	createTestParquetFile(t, parquetFile, records, 1)
+
+	if err := os.Chmod(parquetFile, 0o640); err != nil {
+		t.Fatalf("chmod parquet file: %v", err)
+	}
+
+	idx, err := BuildFromParquet(parquetFile, "attributes", DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+
+	if err := RebuildWithIndex(parquetFile, idx, DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex: %v", err)
+	}
+
+	info, err := os.Stat(parquetFile)
+	if err != nil {
+		t.Fatalf("stat rebuilt parquet: %v", err)
+	}
+
+	if got, want := info.Mode().Perm(), os.FileMode(0o640); got != want {
+		t.Fatalf("rebuilt parquet mode = %o, want %o", got, want)
 	}
 }
 

@@ -28,13 +28,26 @@ func SidecarPath(parquetFile string) string {
 	return parquetFile + ".gin"
 }
 
+func parquetFileMode(parquetFile string) (os.FileMode, error) {
+	info, err := os.Stat(parquetFile)
+	if err != nil {
+		return 0, errors.Wrap(err, "stat parquet file")
+	}
+
+	return info.Mode().Perm(), nil
+}
+
 func WriteSidecar(parquetFile string, idx *GINIndex) error {
 	data, err := Encode(idx)
 	if err != nil {
 		return errors.Wrap(err, "encode index")
 	}
+	mode, err := parquetFileMode(parquetFile)
+	if err != nil {
+		return err
+	}
 	sidecar := SidecarPath(parquetFile)
-	return os.WriteFile(sidecar, data, 0600)
+	return os.WriteFile(sidecar, data, mode)
 }
 
 func ReadSidecar(parquetFile string) (*GINIndex, error) {
@@ -277,8 +290,15 @@ func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) erro
 	_ = srcFile.Close()
 
 	tmpFile := parquetFile + ".tmp"
+	mode, err := parquetFileMode(parquetFile)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(tmpFile); err != nil && !stderrors.Is(err, os.ErrNotExist) {
+		return errors.Wrap(err, "remove temp file")
+	}
 	// #nosec G304 -- the temporary file path is derived from the caller-selected parquet path.
-	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
 		return errors.Wrap(err, "create temp file")
 	}
