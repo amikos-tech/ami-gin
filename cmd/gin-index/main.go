@@ -626,6 +626,7 @@ func parsePredicate(s string) (gin.Predicate, error) {
 		{regexp.MustCompile(`^(.+?)\s*<\s*(.+)$`), gin.OpLT},
 		{regexp.MustCompile(`^(.+?)\s*=\s*(.+)$`), gin.OpEQ},
 		{regexp.MustCompile(`(?i)^(.+?)\s+CONTAINS\s+(.+)$`), gin.OpContains},
+		{regexp.MustCompile(`(?i)^(.+?)\s+REGEX\s+(.+)$`), gin.OpRegex},
 		{regexp.MustCompile(`(?i)^(.+?)\s+IN\s+\((.+)\)$`), gin.OpIN},
 		{regexp.MustCompile(`(?i)^(.+?)\s+NOT\s+IN\s+\((.+)\)$`), gin.OpNIN},
 	}
