@@ -97,4 +97,5 @@ jobs:
         with:
           go-version-input: "1.26"
           go-package: ./...
+          repo-checkout: false
           output-format: text
