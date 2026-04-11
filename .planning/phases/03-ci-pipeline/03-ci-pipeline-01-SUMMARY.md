@@ -10,7 +10,7 @@ provides:
   - canonical GitHub Actions CI workflow with stable required-check names
 affects: [github-actions, makefile, linting, examples, readme]
 tech-stack:
-  added: [gotestsum@v1.13.0, golangci/golangci-lint-action@v9, codecov/codecov-action@v5, golang/govulncheck-action@v1]
+  added: [gotestsum@v1.13.0, golangci/golangci-lint-action@v9, golang/govulncheck-action@v1]
   patterns: [keep contributor commands in make, keep CI orchestration in workflow yaml, use exact job IDs for merge-gate contexts]
 key-files:
   created:
@@ -27,7 +27,7 @@ key-decisions:
   - "Kept lint, build, govulncheck, and matrix test orchestration in ci.yml while preserving make as the contributor-facing command surface."
   - "Used the exact job IDs test, lint, build, and govulncheck so GitHub ruleset enforcement can bind to stable check names later in the phase."
 patterns-established:
-  - "CI contract pattern: make exposes local commands, ci.yml owns runner-specific orchestration, artifacts, and external uploads."
+  - "CI contract pattern: make exposes local commands, ci.yml owns runner-specific orchestration, GitHub artifacts, and GitHub-native coverage summaries."
   - "Lint remediation pattern: fix all repo entrypoints that surface under the expanded linter set, not just core-library files."
 requirements-completed: [CI-01, CI-02, CI-03, CI-04]
 duration: 54 min
@@ -50,7 +50,7 @@ completed: 2026-04-11
 
 - Expanded `Makefile` with pinned `gotestsum`, `integration-test`, and `security-scan` while preserving the existing contributor command surface.
 - Enabled the required golangci-lint policy and cleared the resulting `errorlint`, `unconvert`, `unparam`, and `gosec` findings across library, CLI, and example entrypoints.
-- Added `.github/workflows/ci.yml` with the exact `test`, `lint`, `build`, and `govulncheck` jobs, Codecov upload wiring, and artifact upload behavior expected by later ruleset enforcement.
+- Added `.github/workflows/ci.yml` with the exact `test`, `lint`, `build`, and `govulncheck` jobs, GitHub-native coverage summary wiring, and artifact upload behavior expected by later ruleset enforcement.
 
 ## Task Commits
 
@@ -65,7 +65,7 @@ Each task was committed atomically:
 
 - `Makefile` - Pins `gotestsum` and adds the required `integration-test` and `security-scan` targets.
 - `.golangci.yml` - Enables the required linter set and preserves the existing v2 config structure.
-- `.github/workflows/ci.yml` - Defines the canonical PR/push CI workflow, matrix test job, artifact uploads, Codecov upload, lint job, build job, and blocking `govulncheck` job.
+- `.github/workflows/ci.yml` - Defines the canonical PR/push CI workflow, matrix test job, GitHub artifact uploads, GitHub-native coverage summary, lint job, build job, and blocking `govulncheck` job.
 - `cmd/gin-index/main.go` - Tightens file-permission and file-read handling to satisfy `gosec`.
 - `parquet.go`, `serialize.go`, `hyperloglog.go`, `gin_test.go`, `serialize_security_test.go` - Resolve core-library and test-suite findings from the expanded lint policy.
 - `examples/basic/main.go`, `examples/full/main.go`, `examples/fulltext/main.go`, `examples/nested/main.go`, `examples/null/main.go`, `examples/parquet/main.go`, `examples/range/main.go`, `examples/regex/main.go`, `examples/serialize/main.go`, `examples/transformers/main.go`, `examples/transformers-advanced/main.go` - Stop ignoring errors so sample entrypoints are clean under `gosec`.
@@ -113,7 +113,7 @@ None - no external service configuration is required to land this plan's reposit
 
 - Wave 1 now provides the exact CI workflow and check-context names that Plan 03 will later verify on a real PR and enforce through the GitHub ruleset.
 - README and SARIF reporting work from Plan 02 can build directly on this `ci.yml` contract.
-- The remaining Phase 3 work is external-enforcement verification and repository-service setup, not additional local CI wiring.
+- The remaining Phase 3 work is external-enforcement verification and GitHub Code Security setup, not additional local CI wiring.
 
 ## Self-Check: PASSED
 
