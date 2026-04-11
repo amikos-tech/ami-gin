@@ -206,7 +206,7 @@ func TestArtifactFileMode(t *testing.T) {
 		{name: "drop execute bits", in: 0o755, want: 0o644},
 		{name: "preserve group write and world read", in: 0o664, want: 0o664},
 		{name: "mask world writable and execute bits", in: 0o777, want: 0o666},
-		{name: "ignore high bits before masking", in: 0o4755, want: 0o644},
+		{name: "high bits do not affect rw mask", in: 0o4755, want: 0o644},
 	}
 
 	for _, tt := range tests {

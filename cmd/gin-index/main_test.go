@@ -167,12 +167,14 @@ func TestParsePredicateRegexRoundTrip(t *testing.T) {
 		t.Fatalf("AddDocument(1): %v", err)
 	}
 
+	idx := builder.Finalize()
+
 	pred, err := parsePredicate(`$.brand REGEX "Toy.*"`)
 	if err != nil {
 		t.Fatalf("parsePredicate: %v", err)
 	}
 
-	result := builder.Finalize().Evaluate([]gin.Predicate{pred})
+	result := idx.Evaluate([]gin.Predicate{pred})
 	if got := result.ToSlice(); !reflect.DeepEqual(got, []int{0}) {
 		t.Fatalf("regex round trip = %v, want [0]", got)
 	}
@@ -182,7 +184,7 @@ func TestParsePredicateRegexRoundTrip(t *testing.T) {
 		t.Fatalf("parsePredicate: %v", err)
 	}
 
-	result = builder.Finalize().Evaluate([]gin.Predicate{pred})
+	result = idx.Evaluate([]gin.Predicate{pred})
 	if got := result.ToSlice(); !reflect.DeepEqual(got, []int{1}) {
 		t.Fatalf("regex round trip = %v, want [1]", got)
 	}
@@ -200,7 +202,7 @@ func TestArtifactFileMode(t *testing.T) {
 		{name: "drop execute bits", in: 0o755, want: 0o644},
 		{name: "preserve group write and world read", in: 0o664, want: 0o664},
 		{name: "mask world writable and execute bits", in: 0o777, want: 0o666},
-		{name: "ignore high bits before masking", in: 0o4755, want: 0o644},
+		{name: "high bits do not affect rw mask", in: 0o4755, want: 0o644},
 	}
 
 	for _, tt := range tests {
