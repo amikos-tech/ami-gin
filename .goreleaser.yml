@@ -1,0 +1,50 @@
+version: 2
+project_name: ami-gin
+
+builds:
+  - skip: true
+
+release:
+  github:
+    owner: amikos-tech
+    name: ami-gin
+  draft: false
+  prerelease: auto
+  header: |
+    {{- if eq .Tag "v0.1.0" -}}
+    First public open-source release of GIN Index.
+
+    This `v0.1.0` cut publishes the library-first module surface and the current adopter guidance. See README for installation, examples, and the current known limitations.
+    {{- else -}}
+    GIN Index {{ .Tag }} release.
+
+    This release continues the library-first module surface and the current adopter guidance. See README for installation, examples, and known limitations.
+    {{- end }}
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^Merge pull request'
+      - '^Merge branch'
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?:'
+      order: 1
+    - title: Fixes
+      regexp: '^fix(\(.+\))?:'
+      order: 2
+    - title: Docs
+      regexp: '^docs(\(.+\))?:|^test:'
+      order: 3
+    - title: CI/Release
+      regexp: '^ci(\(.+\))?:'
+      order: 4
+    - title: Dependencies
+      regexp: '^build\(deps\):|^deps(\(.+\))?:'
+      order: 5
+    - title: Project
+      regexp: '^Phase 0?[0-9]+:|^\[WIP\]|^"Claude '
+      order: 6
+    - title: Other
+      order: 999
