@@ -1,6 +1,8 @@
 # GIN Index
 
-[![CI](https://github.com/amikos-tech/ami-gin/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/amikos-tech/ami-gin/actions/workflows/ci.yml)
+[![CI](https://github.com/amikos-tech/ami-gin/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/amikos-tech/ami-gin/actions/workflows/ci.yml) [![Go Reference](https://pkg.go.dev/badge/github.com/amikos-tech/ami-gin.svg)](https://pkg.go.dev/github.com/amikos-tech/ami-gin) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for local contributor workflows and [SECURITY.md](SECURITY.md) for disclosure guidance.
 
 A Generalized Inverted Index (GIN) for JSON data, designed for row-group pruning in columnar storage formats like Parquet.
 
