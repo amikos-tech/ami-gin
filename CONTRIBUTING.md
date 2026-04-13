@@ -6,6 +6,11 @@ Run `make help` first to see the local contributor workflow.
 
 You need Go installed locally, plus `golangci-lint` and `govulncheck`; `make test` installs `gotestsum` automatically through the existing `Makefile`.
 
+Install hints:
+
+- `golangci-lint`: https://golangci-lint.run/welcome/install/
+- `govulncheck`: `go install golang.org/x/vuln/cmd/govulncheck@latest`
+
 ```bash
 make help
 ```
