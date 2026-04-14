@@ -1,6 +1,7 @@
 package gin
 
 import (
+	stderrors "errors"
 	"fmt"
 	"testing"
 )
@@ -1012,6 +1013,78 @@ func TestWithFTSPathsOnNumericField(t *testing.T) {
 	result := idx.Evaluate([]Predicate{Contains("$.score", "100")})
 	if result.Count() != 2 {
 		t.Errorf("CONTAINS on numeric field should return all RGs, got %d", result.Count())
+	}
+}
+
+func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	builder.walkJSON("$['foo']", "alpha", 0)
+	builder.walkJSON(`$["foo"]`, "beta", 1)
+
+	idx := builder.Finalize()
+
+	if len(idx.PathDirectory) != 1 {
+		t.Fatalf("PathDirectory len = %d, want 1", len(idx.PathDirectory))
+	}
+
+	entry := idx.PathDirectory[0]
+	if entry.PathName != "$.foo" {
+		t.Fatalf("PathDirectory[0].PathName = %q, want $.foo", entry.PathName)
+	}
+
+	if len(idx.pathLookup) != 1 {
+		t.Fatalf("pathLookup len = %d, want 1", len(idx.pathLookup))
+	}
+
+	if got, ok := idx.pathLookup["$.foo"]; !ok || got != entry.PathID {
+		t.Fatalf("pathLookup[$.foo] = (%d, %v), want (%d, true)", got, ok, entry.PathID)
+	}
+}
+
+func TestRebuildPathLookupRejectsDuplicateCanonicalPaths(t *testing.T) {
+	idx := NewGINIndex()
+	idx.PathDirectory = []PathEntry{
+		{PathID: 0, PathName: "$.foo"},
+		{PathID: 1, PathName: "$['foo']"},
+	}
+
+	err := idx.rebuildPathLookup()
+	if err == nil {
+		t.Fatal("rebuildPathLookup() error = nil, want ErrInvalidFormat")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar"}`))
+	builder.AddDocument(1, []byte(`{"foo": "baz"}`))
+
+	idx := builder.Finalize()
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		pathID, entry := idx.findPath(path)
+		if pathID != 1 {
+			t.Fatalf("findPath(%q) pathID = %d, want 1", path, pathID)
+		}
+		if entry == nil || entry.PathName != "$.foo" {
+			t.Fatalf("findPath(%q) entry = %#v, want canonical $.foo entry", path, entry)
+		}
+	}
+
+	for _, path := range []string{"$.items[0]", "$.missing"} {
+		pathID, entry := idx.findPath(path)
+		if pathID != -1 || entry != nil {
+			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
+		}
+
+		result := idx.Evaluate([]Predicate{EQ(path, "bar")})
+		if result.Count() != int(idx.Header.NumRowGroups) {
+			t.Fatalf("Evaluate(EQ(%q, bar)) count = %d, want %d", path, result.Count(), idx.Header.NumRowGroups)
+		}
 	}
 }
 
