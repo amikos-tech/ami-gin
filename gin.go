@@ -290,7 +290,14 @@ func (idx *GINIndex) rebuildPathLookup() error {
 	lookup := make(map[string]uint16, len(idx.PathDirectory))
 	originals := make(map[string]string, len(idx.PathDirectory))
 
-	for _, entry := range idx.PathDirectory {
+	for i, entry := range idx.PathDirectory {
+		if int(entry.PathID) >= len(idx.PathDirectory) {
+			return errors.Wrapf(ErrInvalidFormat, "path id %d out of range for %q", entry.PathID, entry.PathName)
+		}
+		if entry.PathID != uint16(i) {
+			return errors.Wrapf(ErrInvalidFormat, "path id %d out of order at directory position %d for %q", entry.PathID, i, entry.PathName)
+		}
+
 		canonical := NormalizePath(entry.PathName)
 		if firstPath, exists := originals[canonical]; exists {
 			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, entry.PathName)

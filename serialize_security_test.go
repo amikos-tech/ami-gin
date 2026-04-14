@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	stderrors "errors"
+	"io"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -165,6 +166,60 @@ func TestDecodeBoundsPathDirectory(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
+	}
+}
+
+func TestDecodeRejectsOutOfOrderPathDirectoryIDs(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "x", "bar": "y"}`))
+	builder.AddDocument(1, []byte(`{"foo": "z", "bar": "w"}`))
+	idx := builder.Finalize()
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	body := data[4:]
+	reader := bytes.NewReader(body)
+	headerOnly := NewGINIndex()
+	if err := readHeader(reader, headerOnly); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+
+	pathIDOffsets := make([]int, 0, headerOnly.Header.NumPaths)
+	for i := uint32(0); i < headerOnly.Header.NumPaths; i++ {
+		pathIDOffsets = append(pathIDOffsets, len(body)-reader.Len())
+
+		var pathID uint16
+		if err := binary.Read(reader, binary.LittleEndian, &pathID); err != nil {
+			t.Fatalf("read pathID %d: %v", i, err)
+		}
+
+		var pathLen uint16
+		if err := binary.Read(reader, binary.LittleEndian, &pathLen); err != nil {
+			t.Fatalf("read pathLen %d: %v", i, err)
+		}
+		if _, err := reader.Seek(int64(pathLen)+1+4+1, io.SeekCurrent); err != nil {
+			t.Fatalf("seek path entry %d: %v", i, err)
+		}
+	}
+
+	if len(pathIDOffsets) < 2 {
+		t.Fatalf("need at least 2 path entries, got %d", len(pathIDOffsets))
+	}
+
+	firstID := binary.LittleEndian.Uint16(body[pathIDOffsets[0] : pathIDOffsets[0]+2])
+	secondID := binary.LittleEndian.Uint16(body[pathIDOffsets[1] : pathIDOffsets[1]+2])
+	binary.LittleEndian.PutUint16(body[pathIDOffsets[0]:pathIDOffsets[0]+2], secondID)
+	binary.LittleEndian.PutUint16(body[pathIDOffsets[1]:pathIDOffsets[1]+2], firstID)
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for out-of-order path ids, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
 }
 
