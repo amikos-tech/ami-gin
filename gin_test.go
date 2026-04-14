@@ -1088,6 +1088,62 @@ func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
 	}
 }
 
+func TestQueryEQCanonicalPathDecodeParity(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.AddDocument(0, []byte(`{"foo": "x"}`))
+	builder.AddDocument(1, []byte(`{"foo": "y"}`))
+	builder.AddDocument(2, []byte(`{"foo": "x"}`))
+
+	idx := builder.Finalize()
+
+	assertMatches := func(t *testing.T, current *GINIndex, path string, want []int) {
+		t.Helper()
+		result := current.Evaluate([]Predicate{EQ(path, "x")})
+		got := result.ToSlice()
+		if len(got) != len(want) {
+			t.Fatalf("Evaluate(EQ(%q, x)) = %v, want %v", path, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("Evaluate(EQ(%q, x)) = %v, want %v", path, got, want)
+			}
+		}
+	}
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		assertMatches(t, idx, path, []int{0, 2})
+	}
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		assertMatches(t, decoded, path, []int{0, 2})
+	}
+}
+
+func TestEvaluateUnsupportedPathsFallback(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"items": [{"foo": "x"}]}`))
+	builder.AddDocument(1, []byte(`{"items": [{"foo": "y"}]}`))
+
+	idx := builder.Finalize()
+
+	for _, path := range []string{"$.items[0]", "$..foo", "$.items[0:5]", "$.items[?(@.price > 10)]"} {
+		result := idx.Evaluate([]Predicate{EQ(path, "x")})
+		if result.Count() != int(idx.Header.NumRowGroups) {
+			t.Fatalf("Evaluate(EQ(%q, x)) count = %d, want %d", path, result.Count(), idx.Header.NumRowGroups)
+		}
+	}
+}
+
 func TestStringLengthIndex(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.AddDocument(0, []byte(`{"name": "ab"}`))
