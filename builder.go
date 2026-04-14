@@ -289,6 +289,7 @@ func (b *GINBuilder) Finalize() *GINIndex {
 			Flags:         flags,
 		}
 		idx.PathDirectory = append(idx.PathDirectory, entry)
+		idx.pathLookup[path] = pd.pathID
 
 		idx.PathCardinality[pd.pathID] = pd.hll
 
@@ -377,8 +378,5 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	}
 
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
-	if err := idx.rebuildPathLookup(); err != nil {
-		panic(err)
-	}
 	return idx
 }

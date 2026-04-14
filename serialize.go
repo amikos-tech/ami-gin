@@ -995,24 +995,34 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if len(sc.FTSPaths) > 0 {
-		cfg.ftsPaths = make([]string, len(sc.FTSPaths))
-		for i, path := range sc.FTSPaths {
+		cfg.ftsPaths = make([]string, 0, len(sc.FTSPaths))
+		seenFTSPaths := make(map[string]string, len(sc.FTSPaths))
+		for _, path := range sc.FTSPaths {
 			canonicalPath, err := canonicalizeSupportedPath(path)
 			if err != nil {
 				return nil, errors.Wrapf(err, "canonicalize FTS path %q", path)
 			}
-			cfg.ftsPaths[i] = canonicalPath
+			if firstPath, exists := seenFTSPaths[canonicalPath]; exists {
+				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
+			}
+			seenFTSPaths[canonicalPath] = path
+			cfg.ftsPaths = append(cfg.ftsPaths, canonicalPath)
 		}
 	}
 
 	if len(sc.Transformers) > 0 {
 		cfg.fieldTransformers = make(map[string]FieldTransformer)
 		cfg.transformerSpecs = make(map[string]TransformerSpec)
+		seenTransformerPaths := make(map[string]string, len(sc.Transformers))
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
 				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
 			}
+			if firstPath, exists := seenTransformerPaths[canonicalPath]; exists {
+				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical transformer path %q from %q and %q", canonicalPath, firstPath, spec.Path)
+			}
+			seenTransformerPaths[canonicalPath] = spec.Path
 			spec.Path = canonicalPath
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {

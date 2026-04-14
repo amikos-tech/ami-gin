@@ -290,7 +290,8 @@ func (idx *GINIndex) rebuildPathLookup() error {
 	lookup := make(map[string]uint16, len(idx.PathDirectory))
 	originals := make(map[string]string, len(idx.PathDirectory))
 
-	for i, entry := range idx.PathDirectory {
+	for i := range idx.PathDirectory {
+		entry := &idx.PathDirectory[i]
 		if int(entry.PathID) >= len(idx.PathDirectory) {
 			return errors.Wrapf(ErrInvalidFormat, "path id %d out of range for %q", entry.PathID, entry.PathName)
 		}
@@ -298,15 +299,61 @@ func (idx *GINIndex) rebuildPathLookup() error {
 			return errors.Wrapf(ErrInvalidFormat, "path id %d out of order at directory position %d for %q", entry.PathID, i, entry.PathName)
 		}
 
-		canonical := NormalizePath(entry.PathName)
-		if firstPath, exists := originals[canonical]; exists {
-			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, entry.PathName)
+		rawPath := entry.PathName
+		canonical, err := canonicalizeSupportedPath(rawPath)
+		if err != nil {
+			return errors.Wrapf(ErrInvalidFormat, "invalid path directory entry %q: %v", rawPath, err)
 		}
+		if firstPath, exists := originals[canonical]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, rawPath)
+		}
+		entry.PathName = canonical
 		lookup[canonical] = entry.PathID
-		originals[canonical] = entry.PathName
+		originals[canonical] = rawPath
 	}
 
 	idx.pathLookup = lookup
+	return idx.validatePathReferences()
+}
+
+func (idx *GINIndex) validatePathReferences() error {
+	for pathID := range idx.StringIndexes {
+		if err := idx.validatePathReference("string index", pathID); err != nil {
+			return err
+		}
+	}
+	for pathID := range idx.StringLengthIndexes {
+		if err := idx.validatePathReference("string length index", pathID); err != nil {
+			return err
+		}
+	}
+	for pathID := range idx.NumericIndexes {
+		if err := idx.validatePathReference("numeric index", pathID); err != nil {
+			return err
+		}
+	}
+	for pathID := range idx.NullIndexes {
+		if err := idx.validatePathReference("null index", pathID); err != nil {
+			return err
+		}
+	}
+	for pathID := range idx.TrigramIndexes {
+		if err := idx.validatePathReference("trigram index", pathID); err != nil {
+			return err
+		}
+	}
+	for pathID := range idx.PathCardinality {
+		if err := idx.validatePathReference("path cardinality", pathID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (idx *GINIndex) validatePathReference(kind string, pathID uint16) error {
+	if int(pathID) >= len(idx.PathDirectory) {
+		return errors.Wrapf(ErrInvalidFormat, "%s path id %d out of range", kind, pathID)
+	}
 	return nil
 }
 

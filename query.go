@@ -61,7 +61,7 @@ func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
 func (idx *GINIndex) findPath(path string) (int, *PathEntry) {
 	canonicalPath, err := canonicalizeSupportedPath(path)
 	if err != nil {
-		return -1, nil
+		panic(err)
 	}
 
 	pathID, ok := idx.pathLookup[canonicalPath]

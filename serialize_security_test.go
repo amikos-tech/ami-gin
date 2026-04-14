@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	stderrors "errors"
 	"io"
 	"testing"
@@ -223,6 +224,36 @@ func TestDecodeRejectsOutOfOrderPathDirectoryIDs(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsOutOfRangeNumericIndexPathID(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	builder.AddDocument(0, []byte(`{"age": 30}`))
+	idx := builder.Finalize()
+
+	var numeric *NumericIndex
+	for pathID, ni := range idx.NumericIndexes {
+		numeric = ni
+		delete(idx.NumericIndexes, pathID)
+		break
+	}
+	if numeric == nil {
+		t.Fatal("expected numeric index")
+	}
+	idx.NumericIndexes[0xFFFF] = numeric
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for out-of-range numeric index path id, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
 func TestDecodeBoundsStringIndexes(t *testing.T) {
 	var buf bytes.Buffer
 	// numPaths = 1
@@ -239,6 +270,63 @@ func TestDecodeBoundsStringIndexes(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
+	}
+}
+
+func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
+	sc := SerializedConfig{
+		FTSPaths: []string{"$.foo", "$['foo']"},
+	}
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err = readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected canonical FTS collision error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
+	sc := SerializedConfig{
+		Transformers: []TransformerSpec{
+			NewTransformerSpec("$.foo", TransformerToLower, nil),
+			NewTransformerSpec("$['foo']", TransformerEmailDomain, nil),
+		},
+	}
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err = readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected canonical transformer collision error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
 }
 
