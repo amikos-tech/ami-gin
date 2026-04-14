@@ -107,6 +107,9 @@ const (
 	phase06BenchmarkEQMatches    = 64
 	phase06BenchmarkTextMatches  = 256
 	phase06BenchmarkRegexMatches = 512
+	phase06BenchmarkEQLabel      = "64of4096"
+	phase06BenchmarkTextLabel    = "256of4096"
+	phase06BenchmarkRegexLabel   = "512of4096"
 )
 
 var (
@@ -304,11 +307,19 @@ func BenchmarkBuilderMemory(b *testing.B) {
 // =============================================================================
 
 func BenchmarkQueryEQ(b *testing.B) {
-	idx := setupTestIndex(1000)
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		idx.Evaluate([]Predicate{EQ("$.name", "user_42")})
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06ServicePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkEQLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					EQ(variant.path, phase06BenchmarkEQValue),
+					phase06BenchmarkEQMatches,
+				)
+			})
+		}
 	}
 }
 
@@ -377,17 +388,36 @@ func BenchmarkQueryIN(b *testing.B) {
 }
 
 func BenchmarkQueryContains(b *testing.B) {
-	patterns := []string{"quick", "hello world", "programming language"}
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06MessagePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkTextLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					Contains(variant.path, phase06BenchmarkContainsText),
+					phase06BenchmarkTextMatches,
+				)
+			})
+		}
+	}
+}
 
-	idx := setupTestIndexWithText(1000)
-
-	for _, pattern := range patterns {
-		b.Run(fmt.Sprintf("Len=%d", len(pattern)), func(b *testing.B) {
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				idx.Evaluate([]Predicate{Contains("$.description", pattern)})
-			}
-		})
+func BenchmarkQueryRegex(b *testing.B) {
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06MessagePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkRegexLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					Regex(variant.path, phase06BenchmarkRegexPattern),
+					phase06BenchmarkRegexMatches,
+				)
+			})
+		}
 	}
 }
 
