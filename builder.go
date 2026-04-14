@@ -377,5 +377,8 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	}
 
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
+	if err := idx.rebuildPathLookup(); err != nil {
+		panic(err)
+	}
 	return idx
 }

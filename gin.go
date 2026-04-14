@@ -1,6 +1,10 @@
 package gin
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/pkg/errors"
+)
 
 const (
 	MagicBytes = "GIN\x01"
@@ -25,6 +29,8 @@ const (
 )
 
 type GINIndex struct {
+	// GINIndex is immutable after `Finalize()` or `Decode()`; pathLookup is
+	// derived, non-serialized state rebuilt once and then treated as read-only.
 	Header              Header
 	PathDirectory       []PathEntry
 	GlobalBloom         *BloomFilter
@@ -36,6 +42,7 @@ type GINIndex struct {
 	PathCardinality     map[uint16]*HyperLogLog
 	DocIDMapping        []DocID
 	Config              *GINConfig
+	pathLookup          map[string]uint16
 }
 
 type Header struct {
@@ -275,7 +282,25 @@ func NewGINIndex() *GINIndex {
 		TrigramIndexes:      make(map[uint16]*TrigramIndex),
 		StringLengthIndexes: make(map[uint16]*StringLengthIndex),
 		PathCardinality:     make(map[uint16]*HyperLogLog),
+		pathLookup:          make(map[string]uint16),
 	}
+}
+
+func (idx *GINIndex) rebuildPathLookup() error {
+	lookup := make(map[string]uint16, len(idx.PathDirectory))
+	originals := make(map[string]string, len(idx.PathDirectory))
+
+	for _, entry := range idx.PathDirectory {
+		canonical := NormalizePath(entry.PathName)
+		if firstPath, exists := originals[canonical]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, entry.PathName)
+		}
+		lookup[canonical] = entry.PathID
+		originals[canonical] = entry.PathName
+	}
+
+	idx.pathLookup = lookup
+	return nil
 }
 
 func jsonMarshal(v any) ([]byte, error) {

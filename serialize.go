@@ -279,6 +279,10 @@ func Decode(data []byte) (*GINIndex, error) {
 	}
 	idx.Config = cfg
 
+	if err := idx.rebuildPathLookup(); err != nil {
+		return nil, errors.Wrap(err, "rebuild path lookup")
+	}
+
 	return idx, nil
 }
 
