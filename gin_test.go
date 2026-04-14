@@ -807,6 +807,43 @@ func TestJSONPathNormalize(t *testing.T) {
 	}
 }
 
+func TestJSONPathCanonicalizeSupportedPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "$.foo", want: "$.foo"},
+		{path: "$['foo']", want: "$.foo"},
+		{path: `$["foo"]`, want: "$.foo"},
+	}
+
+	for _, tc := range tests {
+		got, err := canonicalizeSupportedPath(tc.path)
+		if err != nil {
+			t.Fatalf("canonicalizeSupportedPath(%q) error = %v", tc.path, err)
+		}
+		if got != tc.want {
+			t.Errorf("canonicalizeSupportedPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathCanonicalizeUnsupportedPath(t *testing.T) {
+	unsupported := []string{
+		"$.items[0]",
+		"$..foo",
+		"$.items[0:5]",
+		"$.items[?(@.price > 10)]",
+	}
+
+	for _, path := range unsupported {
+		got, err := canonicalizeSupportedPath(path)
+		if err == nil {
+			t.Fatalf("canonicalizeSupportedPath(%q) = %q, want error", path, got)
+		}
+	}
+}
+
 func TestIsValidJSONPath(t *testing.T) {
 	if !IsValidJSONPath("$.foo.bar") {
 		t.Error("expected $.foo.bar to be valid")
@@ -881,6 +918,59 @@ func TestWithFTSPathsPrefix(t *testing.T) {
 	if result.Count() != 3 {
 		t.Errorf("CONTAINS on $.meta should return all RGs, got %d", result.Count())
 	}
+}
+
+func TestWithFTSPathsCanonicalizesEquivalentSupportedPaths(t *testing.T) {
+	config, err := NewConfig(WithFTSPaths("$['description']", `$["content"].*`))
+	if err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+	builder := mustNewBuilder(t, config, 3)
+
+	builder.AddDocument(0, []byte(`{"description": "hello world", "content": {"body": "hello body"}, "meta": "alpha"}`))
+	builder.AddDocument(1, []byte(`{"description": "goodbye world", "content": {"body": "goodbye body"}, "meta": "beta"}`))
+	builder.AddDocument(2, []byte(`{"description": "hello universe", "content": {"body": "hello again"}, "meta": "gamma"}`))
+
+	idx := builder.Finalize()
+
+	if got, want := idx.Config.ftsPaths, []string{"$.description", "$.content.*"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("fresh ftsPaths = %v, want %v", got, want)
+	}
+
+	assertContainsRGs := func(t *testing.T, queryPath string, value string, want []int) {
+		t.Helper()
+		result := idx.Evaluate([]Predicate{Contains(queryPath, value)})
+		if got := result.ToSlice(); len(got) != len(want) {
+			t.Fatalf("Contains(%q, %q) RGs = %v, want %v", queryPath, value, got, want)
+		} else {
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("Contains(%q, %q) RGs = %v, want %v", queryPath, value, got, want)
+				}
+			}
+		}
+	}
+
+	assertContainsRGs(t, "$.description", "hello", []int{0, 2})
+	assertContainsRGs(t, "$.content.body", "hello", []int{0, 2})
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if got, want := decoded.Config.ftsPaths, []string{"$.description", "$.content.*"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("decoded ftsPaths = %v, want %v", got, want)
+	}
+
+	idx = decoded
+	assertContainsRGs(t, "$.description", "hello", []int{0, 2})
+	assertContainsRGs(t, "$.content.body", "hello", []int{0, 2})
 }
 
 func TestWithFTSPathsBackwardCompatible(t *testing.T) {
