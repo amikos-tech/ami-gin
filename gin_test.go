@@ -1105,6 +1105,42 @@ func TestRebuildPathLookupMidDirectoryTruncationPreservesExistingLookupOnError(t
 	}
 }
 
+func TestRebuildPathLookupValidationErrorPreservesExistingLookupOnError(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar", "bar": "baz"}`))
+	builder.AddDocument(1, []byte(`{"foo": "qux", "bar": "zap"}`))
+
+	idx := builder.Finalize()
+
+	originalLookup := make(map[string]uint16, len(idx.pathLookup))
+	for path, pathID := range idx.pathLookup {
+		originalLookup[path] = pathID
+	}
+
+	idx.PathDirectory[1].PathName = "$.foo_renamed"
+	idx.StringIndexes[0xFFFF] = &StringIndex{}
+
+	err := idx.rebuildPathLookup()
+	if err == nil {
+		t.Fatal("rebuildPathLookup() error = nil, want ErrInvalidFormat")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+	if len(idx.pathLookup) != len(originalLookup) {
+		t.Fatalf("pathLookup len = %d, want %d", len(idx.pathLookup), len(originalLookup))
+	}
+	for path, wantPathID := range originalLookup {
+		gotPathID, ok := idx.pathLookup[path]
+		if !ok || gotPathID != wantPathID {
+			t.Fatalf("pathLookup[%q] = (%d, %v), want (%d, true)", path, gotPathID, ok, wantPathID)
+		}
+	}
+	if _, ok := idx.pathLookup["$.foo_renamed"]; ok {
+		t.Fatal("pathLookup unexpectedly contains rebuilt key after validation error")
+	}
+}
+
 func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 	builder.AddDocument(0, []byte(`{"foo": "bar"}`))
@@ -1135,31 +1171,19 @@ func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
 	}
 }
 
-func TestFindPathPanicsOnInvalidPath(t *testing.T) {
+func TestFindPathInvalidPathFallsBackToNoMatch(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 	builder.AddDocument(0, []byte(`{"foo": "bar"}`))
 	builder.AddDocument(1, []byte(`{"foo": "baz"}`))
 
 	idx := builder.Finalize()
 
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("findPath() did not panic for invalid path")
+	for _, path := range []string{"$.items[0]", "invalid"} {
+		pathID, entry := idx.findPath(path)
+		if pathID != -1 || entry != nil {
+			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
 		}
-
-		err, ok := r.(error)
-		if !ok {
-			t.Fatalf("findPath() panic = %T, want error", r)
-		}
-
-		var pathErr *JSONPathError
-		if !stderrors.As(err, &pathErr) {
-			t.Fatalf("findPath() panic = %v, want *JSONPathError", err)
-		}
-	}()
-
-	idx.findPath("$.items[0]")
+	}
 }
 
 func TestQueryEQCanonicalPathDecodeParity(t *testing.T) {
@@ -1203,34 +1227,18 @@ func TestQueryEQCanonicalPathDecodeParity(t *testing.T) {
 	}
 }
 
-func TestEvaluateUnsupportedPathsPanic(t *testing.T) {
+func TestEvaluateUnsupportedPathsReturnAllRowGroups(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 	builder.AddDocument(0, []byte(`{"items": [{"foo": "x"}]}`))
 	builder.AddDocument(1, []byte(`{"items": [{"foo": "y"}]}`))
 
 	idx := builder.Finalize()
 
-	for _, path := range []string{"$.items[0]", "$..foo", "$.items[0:5]", "$.items[?(@.price > 10)]"} {
-		func() {
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("Evaluate(EQ(%q, x)) did not panic", path)
-				}
-
-				err, ok := r.(error)
-				if !ok {
-					t.Fatalf("Evaluate(EQ(%q, x)) panic = %T, want error", path, r)
-				}
-
-				var pathErr *JSONPathError
-				if !stderrors.As(err, &pathErr) {
-					t.Fatalf("Evaluate(EQ(%q, x)) panic = %v, want *JSONPathError", path, err)
-				}
-			}()
-
-			_ = idx.Evaluate([]Predicate{EQ(path, "x")})
-		}()
+	for _, path := range []string{"$.items[0]", "$..foo", "$.items[0:5]", "$.items[?(@.price > 10)]", "invalid"} {
+		result := idx.Evaluate([]Predicate{EQ(path, "x")})
+		if result.Count() != int(idx.Header.NumRowGroups) {
+			t.Fatalf("Evaluate(EQ(%q, x)) count = %d, want %d", path, result.Count(), idx.Header.NumRowGroups)
+		}
 	}
 }
 

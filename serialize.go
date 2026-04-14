@@ -198,6 +198,9 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	return append([]byte(compressedMagic), compressed...), nil
 }
 
+// Decode deserializes an index, validates cross-structure path references, and
+// canonicalizes supported JSONPath spellings in PathDirectory while rebuilding
+// derived lookup state.
 func Decode(data []byte) (*GINIndex, error) {
 	if len(data) < 4 {
 		return nil, errors.Wrap(ErrInvalidFormat, "data too short")

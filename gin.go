@@ -2,6 +2,7 @@ package gin
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/pkg/errors"
 )
@@ -287,11 +288,15 @@ func NewGINIndex() *GINIndex {
 }
 
 func (idx *GINIndex) rebuildPathLookup() error {
+	canonicalDirectory := append([]PathEntry(nil), idx.PathDirectory...)
 	lookup := make(map[string]uint16, len(idx.PathDirectory))
 	originals := make(map[string]string, len(idx.PathDirectory))
 
-	for i := range idx.PathDirectory {
-		entry := &idx.PathDirectory[i]
+	for i := range canonicalDirectory {
+		entry := &canonicalDirectory[i]
+		// Keep the explicit range guard ahead of the ordering check so corrupt
+		// decodes report a precise out-of-range failure instead of a generic
+		// out-of-order error.
 		if int(entry.PathID) >= len(idx.PathDirectory) {
 			return errors.Wrapf(ErrInvalidFormat, "path id %d out of range for %q", entry.PathID, entry.PathName)
 		}
@@ -312,42 +317,58 @@ func (idx *GINIndex) rebuildPathLookup() error {
 		originals[canonical] = rawPath
 	}
 
+	if err := idx.validatePathReferences(); err != nil {
+		return err
+	}
+
+	idx.PathDirectory = canonicalDirectory
 	idx.pathLookup = lookup
-	return idx.validatePathReferences()
+	return nil
 }
 
 func (idx *GINIndex) validatePathReferences() error {
-	for pathID := range idx.StringIndexes {
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
 		if err := idx.validatePathReference("string index", pathID); err != nil {
 			return err
 		}
 	}
-	for pathID := range idx.StringLengthIndexes {
+	for _, pathID := range sortedPathIDs(idx.StringLengthIndexes) {
 		if err := idx.validatePathReference("string length index", pathID); err != nil {
 			return err
 		}
 	}
-	for pathID := range idx.NumericIndexes {
+	for _, pathID := range sortedPathIDs(idx.NumericIndexes) {
 		if err := idx.validatePathReference("numeric index", pathID); err != nil {
 			return err
 		}
 	}
-	for pathID := range idx.NullIndexes {
+	for _, pathID := range sortedPathIDs(idx.NullIndexes) {
 		if err := idx.validatePathReference("null index", pathID); err != nil {
 			return err
 		}
 	}
-	for pathID := range idx.TrigramIndexes {
+	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
 		if err := idx.validatePathReference("trigram index", pathID); err != nil {
 			return err
 		}
 	}
-	for pathID := range idx.PathCardinality {
+	for _, pathID := range sortedPathIDs(idx.PathCardinality) {
 		if err := idx.validatePathReference("path cardinality", pathID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func sortedPathIDs[T any](m map[uint16]T) []uint16 {
+	pathIDs := make([]uint16, 0, len(m))
+	for pathID := range m {
+		pathIDs = append(pathIDs, pathID)
+	}
+	sort.Slice(pathIDs, func(i, j int) bool {
+		return pathIDs[i] < pathIDs[j]
+	})
+	return pathIDs
 }
 
 func (idx *GINIndex) validatePathReference(kind string, pathID uint16) error {

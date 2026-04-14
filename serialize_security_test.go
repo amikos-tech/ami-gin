@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -252,6 +253,87 @@ func TestDecodeRejectsOutOfRangeNumericIndexPathID(t *testing.T) {
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
+}
+
+func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T) {
+	t.Run("all index maps", func(t *testing.T) {
+		numRGs := 1
+		cases := []struct {
+			name string
+			kind string
+			add  func(idx *GINIndex)
+		}{
+			{
+				name: "string index",
+				kind: "string index",
+				add: func(idx *GINIndex) {
+					idx.StringIndexes[0xFFFF] = &StringIndex{}
+				},
+			},
+			{
+				name: "string length index",
+				kind: "string length index",
+				add: func(idx *GINIndex) {
+					idx.StringLengthIndexes[0xFFFF] = &StringLengthIndex{}
+				},
+			},
+			{
+				name: "numeric index",
+				kind: "numeric index",
+				add: func(idx *GINIndex) {
+					idx.NumericIndexes[0xFFFF] = &NumericIndex{}
+				},
+			},
+			{
+				name: "null index",
+				kind: "null index",
+				add: func(idx *GINIndex) {
+					idx.NullIndexes[0xFFFF] = &NullIndex{
+						NullRGBitmap:    MustNewRGSet(numRGs),
+						PresentRGBitmap: MustNewRGSet(numRGs),
+					}
+				},
+			},
+			{
+				name: "trigram index",
+				kind: "trigram index",
+				add: func(idx *GINIndex) {
+					idx.TrigramIndexes[0xFFFF] = &TrigramIndex{
+						Trigrams:  make(map[string]*RGSet),
+						NumRGs:    numRGs,
+						N:         3,
+						MinLength: 3,
+					}
+				},
+			},
+			{
+				name: "path cardinality",
+				kind: "path cardinality",
+				add: func(idx *GINIndex) {
+					idx.PathCardinality[0xFFFF] = MustNewHyperLogLog(4)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$"}}
+				tc.add(idx)
+
+				err := idx.validatePathReferences()
+				if err == nil {
+					t.Fatalf("validatePathReferences() error = nil, want ErrInvalidFormat for %s", tc.kind)
+				}
+				if !stderrors.Is(err, ErrInvalidFormat) {
+					t.Fatalf("validatePathReferences() error = %v, want ErrInvalidFormat for %s", err, tc.kind)
+				}
+				if !strings.Contains(err.Error(), tc.kind) {
+					t.Fatalf("validatePathReferences() error = %v, want kind %q in error", err, tc.kind)
+				}
+			})
+		}
+	})
 }
 
 func TestDecodeBoundsStringIndexes(t *testing.T) {
