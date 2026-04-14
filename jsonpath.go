@@ -111,6 +111,13 @@ func ParseJSONPath(path string) (jp.Expr, error) {
 	return jp.ParseString(path)
 }
 
+func canonicalizeSupportedPath(path string) (string, error) {
+	if err := ValidateJSONPath(path); err != nil {
+		return "", err
+	}
+	return NormalizePath(path), nil
+}
+
 // NormalizePath converts a JSONPath to a canonical dot-notation form.
 func NormalizePath(path string) string {
 	expr, err := jp.ParseString(path)

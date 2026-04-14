@@ -135,23 +135,39 @@ type ConfigOption func(*GINConfig) error
 
 func WithFTSPaths(paths ...string) ConfigOption {
 	return func(c *GINConfig) error {
-		c.ftsPaths = paths
+		canonicalPaths := make([]string, len(paths))
+		for i, path := range paths {
+			canonicalPath, err := canonicalizeSupportedPath(path)
+			if err != nil {
+				return err
+			}
+			canonicalPaths[i] = canonicalPath
+		}
+		c.ftsPaths = canonicalPaths
 		return nil
 	}
 }
 
 func WithFieldTransformer(path string, fn FieldTransformer) ConfigOption {
 	return func(c *GINConfig) error {
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return err
+		}
 		if c.fieldTransformers == nil {
 			c.fieldTransformers = make(map[string]FieldTransformer)
 		}
-		c.fieldTransformers[path] = fn
+		c.fieldTransformers[canonicalPath] = fn
 		return nil
 	}
 }
 
 func WithRegisteredTransformer(path string, id TransformerID, params []byte) ConfigOption {
 	return func(c *GINConfig) error {
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return err
+		}
 		if c.fieldTransformers == nil {
 			c.fieldTransformers = make(map[string]FieldTransformer)
 		}
@@ -162,8 +178,8 @@ func WithRegisteredTransformer(path string, id TransformerID, params []byte) Con
 		if err != nil {
 			return err
 		}
-		c.fieldTransformers[path] = fn
-		c.transformerSpecs[path] = NewTransformerSpec(path, id, params)
+		c.fieldTransformers[canonicalPath] = fn
+		c.transformerSpecs[canonicalPath] = NewTransformerSpec(canonicalPath, id, params)
 		return nil
 	}
 }

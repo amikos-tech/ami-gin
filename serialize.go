@@ -988,19 +988,34 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		TrigramMinLength:  sc.TrigramMinLength,
 		HLLPrecision:      sc.HLLPrecision,
 		PrefixBlockSize:   sc.PrefixBlockSize,
-		ftsPaths:          sc.FTSPaths,
+	}
+
+	if len(sc.FTSPaths) > 0 {
+		cfg.ftsPaths = make([]string, len(sc.FTSPaths))
+		for i, path := range sc.FTSPaths {
+			canonicalPath, err := canonicalizeSupportedPath(path)
+			if err != nil {
+				return nil, errors.Wrapf(err, "canonicalize FTS path %q", path)
+			}
+			cfg.ftsPaths[i] = canonicalPath
+		}
 	}
 
 	if len(sc.Transformers) > 0 {
 		cfg.fieldTransformers = make(map[string]FieldTransformer)
 		cfg.transformerSpecs = make(map[string]TransformerSpec)
 		for _, spec := range sc.Transformers {
+			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
+			if err != nil {
+				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
+			}
+			spec.Path = canonicalPath
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
 				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
 			}
-			cfg.fieldTransformers[spec.Path] = fn
-			cfg.transformerSpecs[spec.Path] = spec
+			cfg.fieldTransformers[canonicalPath] = fn
+			cfg.transformerSpecs[canonicalPath] = spec
 		}
 	}
 

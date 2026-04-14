@@ -145,15 +145,17 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 }
 
 func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
+	canonicalPath := NormalizePath(path)
+
 	if b.config.fieldTransformers != nil {
-		if transformer, ok := b.config.fieldTransformers[path]; ok {
+		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
 			if transformed, ok := transformer(value); ok {
 				value = transformed
 			}
 		}
 	}
 
-	pd := b.getOrCreatePath(path)
+	pd := b.getOrCreatePath(canonicalPath)
 	pd.presentRGs.Set(rgID)
 
 	switch v := value.(type) {
@@ -164,7 +166,7 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
 	case bool:
 		pd.observedTypes |= TypeBool
 		term := strconv.FormatBool(v)
-		b.addStringTerm(pd, term, rgID, path)
+		b.addStringTerm(pd, term, rgID, canonicalPath)
 
 	case float64:
 		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
@@ -173,11 +175,11 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
 			pd.observedTypes |= TypeFloat
 		}
 		b.addNumericValue(pd, v, rgID)
-		b.bloom.AddString(path + "=" + strconv.FormatFloat(v, 'f', -1, 64))
+		b.bloom.AddString(canonicalPath + "=" + strconv.FormatFloat(v, 'f', -1, 64))
 
 	case string:
 		pd.observedTypes |= TypeString
-		b.addStringTerm(pd, v, rgID, path)
+		b.addStringTerm(pd, v, rgID, canonicalPath)
 
 	case []any:
 		for i, item := range v {
