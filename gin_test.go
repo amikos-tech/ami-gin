@@ -15,6 +15,14 @@ func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 	return builder
 }
 
+func outOfRangePathID(t *testing.T, idx *GINIndex) uint16 {
+	t.Helper()
+	if len(idx.PathDirectory) > int(^uint16(0)) {
+		t.Fatalf("PathDirectory len = %d exceeds uint16 range", len(idx.PathDirectory))
+	}
+	return uint16(len(idx.PathDirectory))
+}
+
 func TestBloomFilter(t *testing.T) {
 	bf := MustNewBloomFilter(1024, 3)
 	bf.AddString("hello")
@@ -1118,7 +1126,7 @@ func TestRebuildPathLookupValidationErrorPreservesExistingLookupOnError(t *testi
 	}
 
 	idx.PathDirectory[1].PathName = "$.foo_renamed"
-	idx.StringIndexes[0xFFFF] = &StringIndex{}
+	idx.StringIndexes[outOfRangePathID(t, idx)] = &StringIndex{}
 
 	err := idx.rebuildPathLookup()
 	if err == nil {
@@ -1158,7 +1166,7 @@ func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
 		}
 	}
 
-	for _, path := range []string{"$.missing"} {
+	for _, path := range []string{"$.missing", "$.nonexistent"} {
 		pathID, entry := idx.findPath(path)
 		if pathID != -1 || entry != nil {
 			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
@@ -1183,6 +1191,64 @@ func TestFindPathInvalidPathFallsBackToNoMatch(t *testing.T) {
 		if pathID != -1 || entry != nil {
 			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
 		}
+	}
+}
+
+func TestEvaluateMixedPredicatesPreservesValidPathPruning(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.AddDocument(0, []byte(`{"foo": "x"}`))
+	builder.AddDocument(1, []byte(`{"foo": "y"}`))
+	builder.AddDocument(2, []byte(`{"foo": "x"}`))
+
+	idx := builder.Finalize()
+
+	cases := []struct {
+		name       string
+		predicates []Predicate
+	}{
+		{
+			name: "missing path after valid predicate",
+			predicates: []Predicate{
+				EQ("$.foo", "x"),
+				EQ("$.nonexistent", "ignored"),
+			},
+		},
+		{
+			name: "missing path before valid predicate",
+			predicates: []Predicate{
+				EQ("$.nonexistent", "ignored"),
+				EQ("$.foo", "x"),
+			},
+		},
+		{
+			name: "unsupported path after valid predicate",
+			predicates: []Predicate{
+				EQ("$.foo", "x"),
+				EQ("$.items[0]", "ignored"),
+			},
+		},
+		{
+			name: "unsupported path before valid predicate",
+			predicates: []Predicate{
+				EQ("$.items[0]", "ignored"),
+				EQ("$.foo", "x"),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := idx.Evaluate(tc.predicates).ToSlice()
+			want := []int{0, 2}
+			if len(got) != len(want) {
+				t.Fatalf("Evaluate(%v) = %v, want %v", tc.predicates, got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("Evaluate(%v) = %v, want %v", tc.predicates, got, want)
+				}
+			}
+		})
 	}
 }
 

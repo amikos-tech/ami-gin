@@ -239,7 +239,7 @@ func TestDecodeRejectsOutOfRangeNumericIndexPathID(t *testing.T) {
 	if numeric == nil {
 		t.Fatal("expected numeric index")
 	}
-	idx.NumericIndexes[0xFFFF] = numeric
+	idx.NumericIndexes[outOfRangePathID(t, idx)] = numeric
 
 	data, err := EncodeWithLevel(idx, CompressionNone)
 	if err != nil {
@@ -261,34 +261,34 @@ func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T
 		cases := []struct {
 			name string
 			kind string
-			add  func(idx *GINIndex)
+			add  func(t *testing.T, idx *GINIndex)
 		}{
 			{
 				name: "string index",
 				kind: "string index",
-				add: func(idx *GINIndex) {
-					idx.StringIndexes[0xFFFF] = &StringIndex{}
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.StringIndexes[outOfRangePathID(t, idx)] = &StringIndex{}
 				},
 			},
 			{
 				name: "string length index",
 				kind: "string length index",
-				add: func(idx *GINIndex) {
-					idx.StringLengthIndexes[0xFFFF] = &StringLengthIndex{}
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.StringLengthIndexes[outOfRangePathID(t, idx)] = &StringLengthIndex{}
 				},
 			},
 			{
 				name: "numeric index",
 				kind: "numeric index",
-				add: func(idx *GINIndex) {
-					idx.NumericIndexes[0xFFFF] = &NumericIndex{}
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.NumericIndexes[outOfRangePathID(t, idx)] = &NumericIndex{}
 				},
 			},
 			{
 				name: "null index",
 				kind: "null index",
-				add: func(idx *GINIndex) {
-					idx.NullIndexes[0xFFFF] = &NullIndex{
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.NullIndexes[outOfRangePathID(t, idx)] = &NullIndex{
 						NullRGBitmap:    MustNewRGSet(numRGs),
 						PresentRGBitmap: MustNewRGSet(numRGs),
 					}
@@ -297,8 +297,8 @@ func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T
 			{
 				name: "trigram index",
 				kind: "trigram index",
-				add: func(idx *GINIndex) {
-					idx.TrigramIndexes[0xFFFF] = &TrigramIndex{
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.TrigramIndexes[outOfRangePathID(t, idx)] = &TrigramIndex{
 						Trigrams:  make(map[string]*RGSet),
 						NumRGs:    numRGs,
 						N:         3,
@@ -309,8 +309,8 @@ func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T
 			{
 				name: "path cardinality",
 				kind: "path cardinality",
-				add: func(idx *GINIndex) {
-					idx.PathCardinality[0xFFFF] = MustNewHyperLogLog(4)
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.PathCardinality[outOfRangePathID(t, idx)] = MustNewHyperLogLog(4)
 				},
 			},
 		}
@@ -319,7 +319,7 @@ func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T
 			t.Run(tc.name, func(t *testing.T) {
 				idx := NewGINIndex()
 				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$"}}
-				tc.add(idx)
+				tc.add(t, idx)
 
 				err := idx.validatePathReferences()
 				if err == nil {
