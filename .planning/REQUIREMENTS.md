@@ -7,9 +7,9 @@
 
 ### Query Hot Path
 
-- [ ] **PATH-01**: Predicate evaluation resolves indexed paths without linearly scanning `PathDirectory`
-- [ ] **PATH-02**: Equivalent supported JSONPath spellings resolve through a canonical path form
-- [ ] **PATH-03**: Benchmarks cover EQ, CONTAINS, and REGEX queries across wide path counts and guard against regression
+- [x] **PATH-01**: Predicate evaluation resolves indexed paths without linearly scanning `PathDirectory` — validated in Phase 06
+- [x] **PATH-02**: Equivalent supported JSONPath spellings resolve through a canonical path form — validated in Phase 06
+- [x] **PATH-03**: Benchmarks cover EQ, CONTAINS, and REGEX queries across wide path counts and guard against regression — validated in Phase 06
 
 ### Builder Parsing & Numeric Fidelity
 
@@ -54,9 +54,9 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PATH-01 | Phase 06 | Pending |
-| PATH-02 | Phase 06 | Pending |
-| PATH-03 | Phase 06 | Pending |
+| PATH-01 | Phase 06 | Complete |
+| PATH-02 | Phase 06 | Complete |
+| PATH-03 | Phase 06 | Complete |
 | BUILD-01 | Phase 07 | Pending |
 | BUILD-02 | Phase 07 | Pending |
 | BUILD-03 | Phase 07 | Pending |
@@ -82,4 +82,4 @@
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after milestone initialization*
+*Last updated: 2026-04-14 after Phase 06 completion*

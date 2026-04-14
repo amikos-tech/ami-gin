@@ -11,7 +11,7 @@
 - Phases `01` through `05` are complete and archived
 - This milestone starts at `Phase 06`
 
-- [ ] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup
+- [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
 - [ ] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe
 - [ ] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size
 - [ ] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers
@@ -28,7 +28,10 @@
   2. Equivalent supported paths such as `$.foo` and `$['foo']` resolve through the same canonical lookup path
   3. EQ, CONTAINS, and REGEX benchmarks include high path-count fixtures and show measurable lookup improvement or no regression
   4. Existing query, JSONPath, and serialization tests continue to pass
-**Plans:** TBD
+**Plans:** 2/2 plans complete
+Plans:
+- [x] `06-01-PLAN.md` — Canonical path storage, constant-time lookup, decode rebuild, and regression coverage
+- [x] `06-02-PLAN.md` — Wide-path log-style benchmark family for EQ, CONTAINS, REGEX, and equivalent spellings
 
 ### Phase 07: Builder Parsing & Numeric Fidelity
 **Goal**: Build-time ingest gets cheaper and numeric semantics stop depending on generic `float64` JSON decoding
@@ -83,7 +86,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 06. Query Path Hot Path | 0/0 | Not started | - |
+| 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
 | 07. Builder Parsing & Numeric Fidelity | 0/0 | Not started | - |
 | 08. Adaptive High-Cardinality Indexing | 0/0 | Not started | - |
 | 09. Derived Representations | 0/0 | Not started | - |
