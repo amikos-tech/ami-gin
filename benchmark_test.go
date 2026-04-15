@@ -89,14 +89,6 @@ func setupTestIndex(numRGs int) *GINIndex {
 	return builder.Finalize()
 }
 
-func setupTestIndexWithText(numRGs int) *GINIndex {
-	builder, _ := NewBuilder(DefaultConfig(), numRGs)
-	for i := 0; i < numRGs; i++ {
-		builder.AddDocument(DocID(i), generateTestDocWithText(i))
-	}
-	return builder.Finalize()
-}
-
 const (
 	phase06BenchmarkDocs         = 4096
 	phase06BenchmarkRowGroups    = 4096
