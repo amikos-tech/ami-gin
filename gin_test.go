@@ -187,6 +187,77 @@ func TestQueryIN(t *testing.T) {
 	}
 }
 
+func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
+	config := DefaultConfig()
+	if config.AdaptiveMinRGCoverage != 2 {
+		t.Fatalf("AdaptiveMinRGCoverage = %d, want 2", config.AdaptiveMinRGCoverage)
+	}
+	if config.AdaptivePromotedTermCap != 64 {
+		t.Fatalf("AdaptivePromotedTermCap = %d, want 64", config.AdaptivePromotedTermCap)
+	}
+	if config.AdaptiveCoverageCeiling != 0.80 {
+		t.Fatalf("AdaptiveCoverageCeiling = %v, want 0.80", config.AdaptiveCoverageCeiling)
+	}
+	if config.AdaptiveBucketCount != 128 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 128", config.AdaptiveBucketCount)
+	}
+	config.CardinalityThreshold = 4
+
+	builder := mustNewBuilder(t, config, 8)
+	for rgID := 0; rgID < 4; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 0; rgID < 8; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.field")
+	if entry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if entry.Flags&FlagAdaptiveHybrid == 0 {
+		t.Fatalf("Flags = %08b, want adaptive hybrid set", entry.Flags)
+	}
+	if entry.Flags&FlagBloomOnly != 0 {
+		t.Fatalf("Flags = %08b, bloom-only should be unset for adaptive path", entry.Flags)
+	}
+	if entry.AdaptivePromotedTerms != 1 {
+		t.Fatalf("AdaptivePromotedTerms = %d, want 1", entry.AdaptivePromotedTerms)
+	}
+	if entry.AdaptiveBucketCount != 128 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 128", entry.AdaptiveBucketCount)
+	}
+	if _, ok := idx.StringIndexes[entry.PathID]; ok {
+		t.Fatal("full StringIndex should be omitted for adaptive path")
+	}
+
+	adaptive, ok := idx.AdaptiveStringIndexes[entry.PathID]
+	if !ok {
+		t.Fatal("expected adaptive string index for high-cardinality path")
+	}
+	if adaptive.BucketCount != 128 {
+		t.Fatalf("BucketCount = %d, want 128", adaptive.BucketCount)
+	}
+	if len(adaptive.Terms) != 1 || adaptive.Terms[0] != "hot" {
+		t.Fatalf("promoted terms = %v, want [hot]", adaptive.Terms)
+	}
+	if len(adaptive.RGBitmaps) != 1 {
+		t.Fatalf("len(RGBitmaps) = %d, want 1", len(adaptive.RGBitmaps))
+	}
+	if got := adaptive.RGBitmaps[0].ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3}) {
+		t.Fatalf("promoted bitmap = %v, want [0 1 2 3]", got)
+	}
+	if len(adaptive.BucketRGBitmaps) != 128 {
+		t.Fatalf("len(BucketRGBitmaps) = %d, want 128", len(adaptive.BucketRGBitmaps))
+	}
+}
+
 func TestQueryNIN(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 4)
 
