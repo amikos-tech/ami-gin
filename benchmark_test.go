@@ -188,6 +188,14 @@ type phase08AdaptiveBenchmarkMode struct {
 	config GINConfig
 }
 
+type phase08PreparedAdaptiveBenchmarkMode struct {
+	mode             phase08AdaptiveBenchmarkMode
+	idx              *GINIndex
+	encodedBytes     int
+	hotCandidateRGs  int
+	tailCandidateRGs int
+}
+
 func phase08AdaptiveModeMatrix() []phase08AdaptiveBenchmarkMode {
 	exactConfig := DefaultConfig()
 	exactConfig.CardinalityThreshold = phase08ExactModeThreshold
@@ -295,6 +303,28 @@ func benchmarkPhase08BuildAdaptiveIndex(b *testing.B, fixture phase08AdaptiveBen
 		}
 	}
 	return builder.Finalize()
+}
+
+func benchmarkPhase08PrepareModes(b *testing.B, fixture phase08AdaptiveBenchmarkFixture) []phase08PreparedAdaptiveBenchmarkMode {
+	b.Helper()
+
+	prepared := make([]phase08PreparedAdaptiveBenchmarkMode, 0, len(phase08AdaptiveModeMatrix()))
+	for _, mode := range phase08AdaptiveModeMatrix() {
+		idx := benchmarkPhase08BuildAdaptiveIndex(b, fixture, mode.config)
+		encoded, err := Encode(idx)
+		if err != nil {
+			b.Fatalf("Encode(%s) error = %v", mode.name, err)
+		}
+		prepared = append(prepared, phase08PreparedAdaptiveBenchmarkMode{
+			mode:             mode,
+			idx:              idx,
+			encodedBytes:     len(encoded),
+			hotCandidateRGs:  idx.Evaluate([]Predicate{EQ(phase08AdaptiveBenchmarkPath, fixture.hotProbe)}).Count(),
+			tailCandidateRGs: idx.Evaluate([]Predicate{EQ(phase08AdaptiveBenchmarkPath, fixture.tailProbe)}).Count(),
+		})
+	}
+
+	return prepared
 }
 
 func generatePhase06WideLogDoc(i int, width int) []byte {
@@ -1668,27 +1698,53 @@ func BenchmarkAdaptiveHighCardinality(b *testing.B) {
 		b.Fatalf("fixture cardinality %d must stay below exact threshold %d", fixture.observedCardinality, phase08ExactModeThreshold)
 	}
 
-	probes := []struct {
-		name  string
-		value string
-	}{
-		{name: "probe=hot-value", value: fixture.hotProbe},
-		{name: "probe=tail-value", value: fixture.tailProbe},
+	preparedModes := benchmarkPhase08PrepareModes(b, fixture)
+	hotCandidateByMode := make(map[string]int, len(preparedModes))
+	for _, preparedMode := range preparedModes {
+		hotCandidateByMode[preparedMode.mode.name] = preparedMode.hotCandidateRGs
+	}
+	if hotCandidateByMode["mode=adaptive-hybrid"] >= hotCandidateByMode["mode=bloom-only"] {
+		b.Fatalf(
+			"adaptive hot probe candidate_rgs=%d must be strictly lower than bloom-only candidate_rgs=%d",
+			hotCandidateByMode["mode=adaptive-hybrid"],
+			hotCandidateByMode["mode=bloom-only"],
+		)
 	}
 
-	for _, mode := range phase08AdaptiveModeMatrix() {
-		mode := mode
-		idx := benchmarkPhase08BuildAdaptiveIndex(b, fixture, mode.config)
+	probes := []struct {
+		name      string
+		value     string
+		candidate func(phase08PreparedAdaptiveBenchmarkMode) int
+	}{
+		{
+			name:  "probe=hot-value",
+			value: fixture.hotProbe,
+			candidate: func(preparedMode phase08PreparedAdaptiveBenchmarkMode) int {
+				return preparedMode.hotCandidateRGs
+			},
+		},
+		{
+			name:  "probe=tail-value",
+			value: fixture.tailProbe,
+			candidate: func(preparedMode phase08PreparedAdaptiveBenchmarkMode) int {
+				return preparedMode.tailCandidateRGs
+			},
+		},
+	}
 
+	for _, preparedMode := range preparedModes {
+		preparedMode := preparedMode
 		for _, probe := range probes {
 			probe := probe
-			name := fmt.Sprintf("%s/shape=%s/%s", mode.name, phase08AdaptiveBenchmarkShape, probe.name)
+			name := fmt.Sprintf("%s/shape=%s/%s", preparedMode.mode.name, phase08AdaptiveBenchmarkShape, probe.name)
 			b.Run(name, func(b *testing.B) {
 				pred := EQ(phase08AdaptiveBenchmarkPath, probe.value)
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
-					idx.Evaluate([]Predicate{pred})
+					preparedMode.idx.Evaluate([]Predicate{pred})
 				}
+				b.ReportMetric(float64(probe.candidate(preparedMode)), "candidate_rgs")
+				b.ReportMetric(float64(preparedMode.encodedBytes), "encoded_bytes")
 			})
 		}
 	}
