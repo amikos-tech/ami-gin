@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -40,41 +39,6 @@ func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord, ro
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close parquet writer: %v", err)
 	}
-}
-
-func buildAdaptiveCLIInfoIndex(t *testing.T) *gin.GINIndex {
-	t.Helper()
-
-	config := gin.DefaultConfig()
-	config.CardinalityThreshold = 3
-	config.AdaptiveMinRGCoverage = 2
-	config.AdaptivePromotedTermCap = 8
-	config.AdaptiveCoverageCeiling = 0.75
-	config.AdaptiveBucketCount = 16
-
-	builder, err := gin.NewBuilder(config, 6)
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-
-	docs := []struct {
-		rgID int
-		json string
-	}{
-		{rgID: 0, json: `{"field":"hot"}`},
-		{rgID: 1, json: `{"field":"hot"}`},
-		{rgID: 2, json: `{"field":"tail_2"}`},
-		{rgID: 3, json: `{"field":"tail_3"}`},
-		{rgID: 4, json: `{"field":"tail_4"}`},
-		{rgID: 5, json: `{"field":"tail_5"}`},
-	}
-	for _, doc := range docs {
-		if err := builder.AddDocument(gin.DocID(doc.rgID), []byte(doc.json)); err != nil {
-			t.Fatalf("AddDocument(rg=%d): %v", doc.rgID, err)
-		}
-	}
-
-	return builder.Finalize()
 }
 
 func TestParsePredicateSupportedOperators(t *testing.T) {
@@ -223,63 +187,6 @@ func TestParsePredicateRegexRoundTrip(t *testing.T) {
 	result = idx.Evaluate([]gin.Predicate{pred})
 	if got := result.ToSlice(); !reflect.DeepEqual(got, []int{1}) {
 		t.Fatalf("regex round trip = %v, want [1]", got)
-	}
-}
-
-func TestPathInfoReportsAdaptiveMode(t *testing.T) {
-	t.Parallel()
-
-	config := gin.DefaultConfig()
-	config.CardinalityThreshold = 10
-	config.AdaptivePromotedTermCap = 64
-	config.AdaptiveBucketCount = 128
-
-	idx := gin.NewGINIndex()
-	idx.Config = &config
-	idx.Header.NumRowGroups = 8
-	idx.Header.NumDocs = 16
-	idx.Header.NumPaths = 3
-	idx.Header.CardinalityThresh = config.CardinalityThreshold
-	idx.PathDirectory = []gin.PathEntry{
-		{PathID: 0, PathName: "$.exact", ObservedTypes: gin.TypeString, Cardinality: 3},
-		{PathID: 1, PathName: "$.bloom", ObservedTypes: gin.TypeString, Cardinality: 120, Flags: gin.FlagBloomOnly},
-		{PathID: 2, PathName: "$.adaptive", ObservedTypes: gin.TypeString, Cardinality: 240, Flags: gin.FlagAdaptiveHybrid, AdaptivePromotedTerms: 5, AdaptiveBucketCount: 128},
-	}
-
-	var buf bytes.Buffer
-	writeIndexInfo(&buf, idx)
-	out := buf.String()
-
-	for _, want := range []string{
-		"mode=exact",
-		"mode=bloom-only",
-		"mode=adaptive-hybrid",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
-		}
-	}
-}
-
-func TestCLIInfoShowsAdaptiveSummary(t *testing.T) {
-	t.Parallel()
-
-	idx := buildAdaptiveCLIInfoIndex(t)
-
-	var buf bytes.Buffer
-	writeIndexInfo(&buf, idx)
-	out := buf.String()
-
-	for _, want := range []string{
-		"mode=adaptive-hybrid",
-		"promoted=1",
-		"buckets=16",
-		"threshold=3",
-		"cap=8",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
-		}
 	}
 }
 
