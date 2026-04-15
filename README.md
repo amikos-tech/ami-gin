@@ -58,7 +58,7 @@ Querying large data lakes is expensive. When you search for `trace_id=abc123` ac
 |-----------|---------------|---------------|----------------|
 | **Deployment** | Database cluster | Search cluster | **Just bytes** - cache anywhere |
 | **Query latency** | ~1ms | ~5-10ms | **~1µs** - client-side |
-| **High cardinality** | Index bloat | Shard overhead | **Bloom filter fast-path** |
+| **High cardinality** | Index bloat | Shard overhead | **adaptive-hybrid hot-value pruning** |
 | **Index size** | MB-GB | GB | **~30KB per 1K row groups** |
 | **Arbitrary JSON** | Schema required | Mapping required | **Auto-discovered paths** |
 
@@ -538,17 +538,31 @@ gin-index query './data/*.gin' '$.level = "error"'
 
 ```go
 config := gin.GINConfig{
-    CardinalityThreshold: 10000,  // Use bloom-only for high-cardinality paths
-    BloomFilterSize:      65536,
-    BloomFilterHashes:    5,
-    EnableTrigrams:       true,   // Enable CONTAINS queries
-    TrigramMinLength:     3,
-    HLLPrecision:         12,     // HyperLogLog precision (4-16)
-    PrefixBlockSize:      16,
+    CardinalityThreshold:    10000, // Exact below threshold, adaptive above it
+    BloomFilterSize:         65536,
+    BloomFilterHashes:       5,
+    EnableTrigrams:          true,  // Enable CONTAINS queries
+    TrigramMinLength:        3,
+    HLLPrecision:            12,    // HyperLogLog precision (4-16)
+    PrefixBlockSize:         16,
+    AdaptiveMinRGCoverage:   2,     // Promote values seen in at least 2 row groups
+    AdaptivePromotedTermCap: 64,    // Keep at most 64 exact hot terms per path
+    AdaptiveCoverageCeiling: 0.80,  // Skip terms that cover more than 80% of row groups
+    AdaptiveBucketCount:     128,   // Fixed bucket count for long-tail fallback
 }
 
 builder := gin.NewBuilder(config, numRowGroups)
 ```
+
+### High-Cardinality String Modes
+
+GIN Index uses three string-path modes:
+
+- `exact` - path cardinality stays under `CardinalityThreshold`, so every observed value keeps an exact row-group bitmap.
+- `adaptive-hybrid` - path exceeds `CardinalityThreshold`, but hot values still retain exact row-group pruning while the long tail falls back to fixed hash buckets.
+- `bloom-only` - adaptive promotion is disabled, so high-cardinality paths keep only the bloom filter fast-path.
+
+The additive adaptive knobs above control when a hot value is promoted (`AdaptiveMinRGCoverage`), how many promoted values are kept (`AdaptivePromotedTermCap`), how broad a promoted value is allowed to be (`AdaptiveCoverageCeiling`), and how much compact fallback space is reserved for the long tail (`AdaptiveBucketCount`). This means hot values on a high-cardinality path can still retain exact row-group pruning instead of degrading immediately to bloom-only behavior.
 
 ## Examples
 
@@ -647,7 +661,7 @@ Simulating a log storage scenario:
 
 | Query | Latency | Notes |
 |-------|---------|-------|
-| `trace_id=X` (high cardinality) | **950ns** | Bloom filter fast-path |
+| `trace_id=X` (high cardinality) | **950ns** | adaptive-hybrid hot-term prune or compact tail fallback |
 | `service=api` (low cardinality) | 6.5µs | ~10K RGs match |
 | `trace_id=X AND level=error` | 6µs | High card + low card |
 | `duration_ms > 5000` | 244µs | Range scan over 50K RGs |
@@ -699,12 +713,12 @@ Parquet's [built-in bloom filters](https://parquet.apache.org/docs/file-format/b
 | Aspect | This GIN Index | Delta Lake | Apache Iceberg |
 |--------|----------------|------------|----------------|
 | **Statistics** | Per-path term index + min/max | First 32 columns min/max | Partition-level + column stats |
-| **High Cardinality** | Bloom filter fallback | Requires Z-ordering | Requires sorting |
+| **High Cardinality** | adaptive-hybrid + bloom tail fallback | Requires Z-ordering | Requires sorting |
 | **JSON Support** | Native path extraction | Requires schema | Requires schema |
 | **Query Planning** | Client-side, cacheable | Spark/engine dependent | Engine dependent |
 | **Deployment** | Standalone bytes | Delta transaction log | Metadata tables |
 
-Delta Lake's [data skipping](https://docs.databricks.com/en/delta/data-skipping.html) relies on Z-ordering for effectiveness with high-cardinality columns. This GIN index handles high cardinality natively via bloom filters.
+Delta Lake's [data skipping](https://docs.databricks.com/en/delta/data-skipping.html) relies on Z-ordering for effectiveness with high-cardinality columns. This GIN index handles high-cardinality paths natively with adaptive-hybrid hot-value recovery plus compact fallback for the tail.
 
 ### vs Elasticsearch
 
@@ -730,7 +744,7 @@ Traditional solutions struggle here:
 
 | Challenge | PostgreSQL GIN | Parquet Stats | This GIN Index |
 |-----------|---------------|---------------|----------------|
-| `trace_id` (millions unique) | Index bloat, slow writes | Min/max useless | Bloom filter fast-path |
+| `trace_id` (millions unique) | Index bloat, slow writes | Min/max useless | adaptive-hybrid exact hot values + compact tail fallback |
 | `user.email` (arbitrary path) | Requires schema | Column must exist | Auto-discovered paths |
 | `labels["env"]` (dynamic keys) | JSONB @> operator (~1ms) | Not supported | Native path indexing (~1µs) |
 | Mixed types per path | Type coercion issues | Single type per column | Tracks observed types |
@@ -749,7 +763,7 @@ Traditional solutions struggle here:
 
 Query: `trace_id=abc123def456 AND labels.env=prod AND level=error`
 - Bloom filter rejects non-matching row groups instantly
-- High-cardinality `trace_id` doesn't degrade performance
+- High-cardinality `trace_id` can retain exact row-group pruning for hot values via `adaptive-hybrid`
 - Arbitrary `labels.*` paths indexed automatically
 
 **Vector database metadata filtering:**
