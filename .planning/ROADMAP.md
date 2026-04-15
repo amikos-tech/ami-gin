@@ -13,7 +13,7 @@
 
 - [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
 - [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
-- [ ] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size
+- [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
 - [ ] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers
 - [ ] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes
 
@@ -55,7 +55,7 @@ Plans:
   3. Query evaluation uses exact bitmaps for promoted terms and conservative compact fallback for non-hot terms with no false negatives
   4. Path metadata and CLI/info output distinguish exact, bloom-only, and adaptive-hybrid paths
   5. Benchmarks and fixtures show improved pruning effectiveness on realistic high-cardinality datasets with bounded size growth
-**Plans:** TBD
+**Plans:** 3/3 plans complete
 
 ### Phase 09: Derived Representations
 **Goal**: Raw values remain queryable while derived representations become first-class indexed companions
@@ -88,7 +88,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 |-------|----------------|--------|-----------|
 | 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
 | 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
-| 08. Adaptive High-Cardinality Indexing | 0/0 | Not started | - |
+| 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
 | 09. Derived Representations | 0/0 | Not started | - |
 | 10. Serialization Compaction | 0/0 | Not started | - |
 
