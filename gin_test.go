@@ -3,6 +3,7 @@ package gin
 import (
 	stderrors "errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -1420,5 +1421,78 @@ func TestStringLengthIndexSerialization(t *testing.T) {
 	result := idx2.Evaluate([]Predicate{EQ("$.name", "ab")})
 	if !result.IsEmpty() {
 		t.Error("len=2 query should return empty after round-trip (min=5)")
+	}
+}
+
+func TestAddDocumentUsesExplicitParser(t *testing.T) {
+	src, err := os.ReadFile("builder.go")
+	if err != nil {
+		t.Fatalf("read builder.go: %v", err)
+	}
+
+	text := string(src)
+	if strings.Contains(text, "json.Unmarshal(jsonDoc, &doc)") {
+		t.Fatal("AddDocument still uses eager generic unmarshal")
+	}
+	if !strings.Contains(text, "json.NewDecoder(") {
+		t.Fatal("AddDocument should use json.NewDecoder for streaming parse")
+	}
+	if !strings.Contains(text, ".UseNumber()") {
+		t.Fatal("AddDocument should enable UseNumber on the decoder")
+	}
+}
+
+func TestAddDocumentRejectsUnsupportedNumberWithoutPartialMutation(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 4)
+
+	if err := builder.AddDocument(0, []byte(`{"name":"stable","score":10}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"name":"leak","nested":{"label":"should-not-stick"},"score":9223372036854775808}`))
+	if err == nil {
+		t.Fatal("expected unsupported numeric literal to fail")
+	}
+	if !strings.Contains(err.Error(), "$.score") {
+		t.Fatalf("error should contain path context, got %v", err)
+	}
+
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+	if _, exists := builder.docIDToPos[DocID(1)]; exists {
+		t.Fatalf("docIDToPos contains rejected document: %+v", builder.docIDToPos)
+	}
+	if len(builder.posToDocID) != 1 {
+		t.Fatalf("posToDocID len = %d, want 1", len(builder.posToDocID))
+	}
+	if builder.nextPos != 1 {
+		t.Fatalf("nextPos = %d, want 1", builder.nextPos)
+	}
+	if _, exists := builder.pathData["$.nested.label"]; exists {
+		t.Fatal("rejected document leaked nested path into builder state")
+	}
+
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 1 {
+		t.Fatalf("finalized NumDocs = %d, want 1", idx.Header.NumDocs)
+	}
+
+	namePathID, ok := idx.pathLookup["$.name"]
+	if !ok {
+		t.Fatal("$.name missing from pathLookup")
+	}
+	stringIndex, ok := idx.StringIndexes[namePathID]
+	if !ok {
+		t.Fatal("$.name string index missing")
+	}
+	for _, term := range stringIndex.Terms {
+		if term == "leak" {
+			t.Fatal("rejected document term was indexed")
+		}
+	}
+
+	if _, exists := idx.pathLookup["$.nested.label"]; exists {
+		t.Fatal("rejected document path was added to finalized index")
 	}
 }

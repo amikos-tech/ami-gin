@@ -1050,3 +1050,52 @@ func TestInSubnetIntegration(t *testing.T) {
 		t.Errorf("expected 3 matches in 192.168.0.0/16, got %d", result.Count())
 	}
 }
+
+func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
+	config, err := NewConfig(
+		WithFieldTransformer("$['metrics']", func(value any) (any, bool) {
+			metrics, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			cpu, ok := metrics["cpu"].(float64)
+			if !ok {
+				return nil, false
+			}
+			return cpu * 100, true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"metrics":{"cpu":1.5,"cores":4}}`},
+		{1, `{"metrics":{"cpu":2.5,"cores":8}}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	if _, exists := idx.pathLookup["$.metrics.cpu"]; exists {
+		t.Fatal("transform-before-dispatch should not index child paths for transformed objects")
+	}
+
+	result := idx.Evaluate([]Predicate{EQ("$.metrics", float64(150))})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("EQ($.metrics, 150) = %v, want [0]", result.ToSlice())
+	}
+}
