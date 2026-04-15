@@ -158,6 +158,145 @@ type phase07BenchmarkShape struct {
 	newConfig func() GINConfig
 }
 
+const (
+	phase08AdaptiveBenchmarkPath          = "$.user_id"
+	phase08AdaptiveBenchmarkShape         = "skewed-head-tail"
+	phase08SkewedRowGroups                = 96
+	phase08SkewedDocsPerRG                = 256
+	phase08SkewedHotDocsPerRG             = 147
+	phase08SkewedTailDocsPerRG            = phase08SkewedDocsPerRG - phase08SkewedHotDocsPerRG
+	phase08SkewedHotValueCount            = 32
+	phase08SkewedHotValuesPerActiveRG     = 16
+	phase08SkewedHotCoverageRGs           = 48
+	phase08SkewedHotBaselineDocsPerValue  = 9
+	phase08SkewedHotExtraDocsPerRG        = 3
+	phase08SkewedTailPairCount            = 48
+	phase08ExactModeThreshold             = 20_000
+	phase08BloomOnlyThreshold             = 10_000
+	phase08AdaptiveObservedTailUniqueVals = phase08SkewedTailPairCount + phase08SkewedRowGroups*(phase08SkewedTailDocsPerRG-1)
+)
+
+type phase08AdaptiveBenchmarkFixture struct {
+	docs                [][]byte
+	hotProbe            string
+	tailProbe           string
+	observedCardinality int
+}
+
+type phase08AdaptiveBenchmarkMode struct {
+	name   string
+	config GINConfig
+}
+
+func phase08AdaptiveModeMatrix() []phase08AdaptiveBenchmarkMode {
+	exactConfig := DefaultConfig()
+	exactConfig.CardinalityThreshold = phase08ExactModeThreshold
+
+	bloomOnlyConfig := DefaultConfig()
+	bloomOnlyConfig.CardinalityThreshold = phase08BloomOnlyThreshold
+	bloomOnlyConfig.AdaptivePromotedTermCap = 0
+
+	adaptiveConfig := DefaultConfig()
+	adaptiveConfig.CardinalityThreshold = phase08BloomOnlyThreshold
+	adaptiveConfig.AdaptiveMinRGCoverage = 2
+	adaptiveConfig.AdaptivePromotedTermCap = 64
+	adaptiveConfig.AdaptiveCoverageCeiling = 0.80
+	adaptiveConfig.AdaptiveBucketCount = 128
+
+	return []phase08AdaptiveBenchmarkMode{
+		{name: "mode=exact", config: exactConfig},
+		{name: "mode=bloom-only", config: bloomOnlyConfig},
+		{name: "mode=adaptive-hybrid", config: adaptiveConfig},
+	}
+}
+
+func phase08HotValue(id int) string {
+	return fmt.Sprintf("hot-user-%02d", id)
+}
+
+func phase08TailPairValue(id int) string {
+	return fmt.Sprintf("tail-pair-%05d", id)
+}
+
+func phase08TailUniqueValue(rgID int, slot int) string {
+	return fmt.Sprintf("tail-unique-rg-%02d-slot-%03d", rgID, slot)
+}
+
+func phase08AdaptiveDoc(userID string) []byte {
+	doc := map[string]any{
+		"user_id": userID,
+	}
+	data, _ := json.Marshal(doc)
+	return data
+}
+
+// generatePhase08SkewedHighCardinalityFixture builds a deterministic head-tail
+// distribution: 32 hot values account for ~57% of documents and each spans 48
+// row groups, while the tail contributes 10k+ unique values that appear in one
+// or two row groups only.
+func generatePhase08SkewedHighCardinalityFixture() phase08AdaptiveBenchmarkFixture {
+	docs := make([][]byte, 0, phase08SkewedRowGroups*phase08SkewedDocsPerRG)
+
+	for rgID := 0; rgID < phase08SkewedRowGroups; rgID++ {
+		cohortStart := 0
+		if rgID >= phase08SkewedHotCoverageRGs {
+			cohortStart = phase08SkewedHotValuesPerActiveRG
+		}
+
+		hotCounts := [phase08SkewedHotValuesPerActiveRG]int{}
+		for hotIdx := range hotCounts {
+			hotCounts[hotIdx] = phase08SkewedHotBaselineDocsPerValue
+		}
+		extraStart := (rgID * phase08SkewedHotExtraDocsPerRG) % phase08SkewedHotValuesPerActiveRG
+		for extra := 0; extra < phase08SkewedHotExtraDocsPerRG; extra++ {
+			hotCounts[(extraStart+extra)%phase08SkewedHotValuesPerActiveRG]++
+		}
+
+		for hotIdx, count := range hotCounts {
+			for repeat := 0; repeat < count; repeat++ {
+				docs = append(docs, phase08AdaptiveDoc(phase08HotValue(cohortStart+hotIdx)))
+			}
+		}
+
+		pairID := rgID
+		if rgID >= phase08SkewedTailPairCount {
+			pairID = rgID - phase08SkewedTailPairCount
+		}
+		docs = append(docs, phase08AdaptiveDoc(phase08TailPairValue(pairID)))
+
+		for tailSlot := 0; tailSlot < phase08SkewedTailDocsPerRG-1; tailSlot++ {
+			docs = append(docs, phase08AdaptiveDoc(phase08TailUniqueValue(rgID, tailSlot)))
+		}
+
+		if got, want := len(docs), (rgID+1)*phase08SkewedDocsPerRG; got != want {
+			panic(fmt.Sprintf("phase 08 skewed fixture row group %d has %d docs, want %d", rgID, got-rgID*phase08SkewedDocsPerRG, phase08SkewedDocsPerRG))
+		}
+	}
+
+	return phase08AdaptiveBenchmarkFixture{
+		docs:                docs,
+		hotProbe:            phase08HotValue(0),
+		tailProbe:           phase08TailPairValue(0),
+		observedCardinality: phase08SkewedHotValueCount + phase08AdaptiveObservedTailUniqueVals,
+	}
+}
+
+func benchmarkPhase08BuildAdaptiveIndex(b *testing.B, fixture phase08AdaptiveBenchmarkFixture, config GINConfig) *GINIndex {
+	b.Helper()
+
+	builder, err := NewBuilder(config, phase08SkewedRowGroups)
+	if err != nil {
+		b.Fatalf("NewBuilder() error = %v", err)
+	}
+	for docIdx, doc := range fixture.docs {
+		rgID := DocID(docIdx / phase08SkewedDocsPerRG)
+		if err := builder.AddDocument(rgID, doc); err != nil {
+			b.Fatalf("AddDocument(rg=%d) error = %v", rgID, err)
+		}
+	}
+	return builder.Finalize()
+}
+
 func generatePhase06WideLogDoc(i int, width int) []byte {
 	if width < phase06BenchmarkBasePaths {
 		panic(fmt.Sprintf("phase 06 width %d must be >= %d", width, phase06BenchmarkBasePaths))
@@ -1520,6 +1659,38 @@ func BenchmarkScaleCardinality(b *testing.B) {
 				_ = builder.Finalize()
 			}
 		})
+	}
+}
+
+func BenchmarkAdaptiveHighCardinality(b *testing.B) {
+	fixture := generatePhase08SkewedHighCardinalityFixture()
+	if fixture.observedCardinality >= phase08ExactModeThreshold {
+		b.Fatalf("fixture cardinality %d must stay below exact threshold %d", fixture.observedCardinality, phase08ExactModeThreshold)
+	}
+
+	probes := []struct {
+		name  string
+		value string
+	}{
+		{name: "probe=hot-value", value: fixture.hotProbe},
+		{name: "probe=tail-value", value: fixture.tailProbe},
+	}
+
+	for _, mode := range phase08AdaptiveModeMatrix() {
+		mode := mode
+		idx := benchmarkPhase08BuildAdaptiveIndex(b, fixture, mode.config)
+
+		for _, probe := range probes {
+			probe := probe
+			name := fmt.Sprintf("%s/shape=%s/%s", mode.name, phase08AdaptiveBenchmarkShape, probe.name)
+			b.Run(name, func(b *testing.B) {
+				pred := EQ(phase08AdaptiveBenchmarkPath, probe.value)
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					idx.Evaluate([]Predicate{pred})
+				}
+			})
+		}
 	}
 }
 
