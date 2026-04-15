@@ -69,9 +69,16 @@ type StringIndex struct {
 	RGBitmaps []*RGSet
 }
 
+type NumericValueType uint8
+
+const (
+	NumericValueTypeIntOnly NumericValueType = iota
+	NumericValueTypeFloatMixed
+)
+
 type NumericIndex struct {
-	// ValueType is the numeric storage mode: 0 = int-only, 1 = float-or-mixed.
-	ValueType    uint8
+	// ValueType is the numeric storage mode: int-only or float/mixed.
+	ValueType    NumericValueType
 	IntGlobalMin int64
 	IntGlobalMax int64
 	GlobalMin    float64

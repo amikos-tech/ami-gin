@@ -105,7 +105,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 
 	case float64:
 		if ni, ok := idx.NumericIndexes[uint16(pathID)]; ok {
-			if ni.ValueType == 0 {
+			if ni.ValueType == NumericValueTypeIntOnly {
 				if queryInt, ok := toExactInt64(v); ok {
 					return idx.evaluateIntOnlyEQ(ni, numRGs, queryInt)
 				}
@@ -127,7 +127,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 		return idx.evaluateEQ(pathID, entry, int64(v))
 
 	case int64:
-		if ni, ok := idx.NumericIndexes[uint16(pathID)]; ok && ni.ValueType == 0 {
+		if ni, ok := idx.NumericIndexes[uint16(pathID)]; ok && ni.ValueType == NumericValueTypeIntOnly {
 			return idx.evaluateIntOnlyEQ(ni, numRGs, v)
 		}
 		return idx.evaluateEQ(pathID, entry, float64(v))
@@ -153,7 +153,7 @@ func (idx *GINIndex) evaluateGT(pathID int, value any) *RGSet {
 		return AllRGs(numRGs)
 	}
 
-	if ni.ValueType == 0 {
+	if ni.ValueType == NumericValueTypeIntOnly {
 		queryInt, ok := toRoundedInt64(value, math.Floor)
 		if !ok {
 			return AllRGs(numRGs)
@@ -195,7 +195,7 @@ func (idx *GINIndex) evaluateGTE(pathID int, value any) *RGSet {
 		return AllRGs(numRGs)
 	}
 
-	if ni.ValueType == 0 {
+	if ni.ValueType == NumericValueTypeIntOnly {
 		queryInt, ok := toRoundedInt64(value, math.Ceil)
 		if !ok {
 			return AllRGs(numRGs)
@@ -237,7 +237,7 @@ func (idx *GINIndex) evaluateLT(pathID int, value any) *RGSet {
 		return AllRGs(numRGs)
 	}
 
-	if ni.ValueType == 0 {
+	if ni.ValueType == NumericValueTypeIntOnly {
 		queryInt, ok := toRoundedInt64(value, math.Ceil)
 		if !ok {
 			return AllRGs(numRGs)
@@ -279,7 +279,7 @@ func (idx *GINIndex) evaluateLTE(pathID int, value any) *RGSet {
 		return AllRGs(numRGs)
 	}
 
-	if ni.ValueType == 0 {
+	if ni.ValueType == NumericValueTypeIntOnly {
 		queryInt, ok := toRoundedInt64(value, math.Floor)
 		if !ok {
 			return AllRGs(numRGs)

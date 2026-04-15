@@ -245,7 +245,7 @@ func generatePhase07IntDocs(n int) [][]byte {
 	docs := make([][]byte, n)
 	for i := 0; i < n; i++ {
 		doc := map[string]any{
-			"id":           int64(9223372036854775807 - int64(i%32)),
+			"id":           9223372036854775807 - int64(i%32),
 			"account_id":   int64(900000000000000000 + i),
 			"count":        int64(i),
 			"score_bucket": int64((i % 16) * 10),
@@ -274,7 +274,7 @@ func generatePhase07WideDocs(n int) [][]byte {
 	docs := make([][]byte, n)
 	for i := 0; i < n; i++ {
 		doc := make(map[string]any, 514)
-		doc["id"] = int64(9223372036854775807 - int64(i%32))
+		doc["id"] = 9223372036854775807 - int64(i%32)
 		doc["account_id"] = int64(900000000000000000 + i)
 		for field := 0; field < 512; field++ {
 			doc[fmt.Sprintf("field_%04d", field)] = fmt.Sprintf("value_%04d_%04d", field, i%17)
@@ -366,11 +366,10 @@ func benchmarkWalkJSONLegacy(builder *GINBuilder, path string, value any, rgID i
 	case float64:
 		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
 			pd.observedTypes |= TypeInt
-			builder.mergeNumericObservation(pd, stagedNumericValue{isInt: true, intVal: int64(v)}, rgID, canonicalPath)
 		} else {
 			pd.observedTypes |= TypeFloat
-			builder.mergeNumericObservation(pd, stagedNumericValue{floatVal: v}, rgID, canonicalPath)
 		}
+		benchmarkAddNumericValueLegacy(builder, pd, v, rgID, canonicalPath)
 	case string:
 		pd.observedTypes |= TypeString
 		builder.addStringTerm(pd, v, rgID, canonicalPath)
@@ -388,6 +387,145 @@ func benchmarkWalkJSONLegacy(builder *GINBuilder, path string, value any, rgID i
 	}
 }
 
+func benchmarkAddNumericValueLegacy(builder *GINBuilder, pd *pathBuildData, val float64, rgID int, path string) {
+	if !pd.hasNumericValues {
+		pd.hasNumericValues = true
+		pd.numericValueType = NumericValueTypeFloatMixed
+		pd.floatGlobalMin = val
+		pd.floatGlobalMax = val
+	} else {
+		if val < pd.floatGlobalMin {
+			pd.floatGlobalMin = val
+		}
+		if val > pd.floatGlobalMax {
+			pd.floatGlobalMax = val
+		}
+	}
+
+	stat, ok := pd.numericStats[rgID]
+	if !ok {
+		pd.numericStats[rgID] = &RGNumericStat{
+			Min:      val,
+			Max:      val,
+			HasValue: true,
+		}
+	} else {
+		if val < stat.Min {
+			stat.Min = val
+		}
+		if val > stat.Max {
+			stat.Max = val
+		}
+	}
+
+	builder.bloom.AddString(path + "=" + strconv.FormatFloat(val, 'f', -1, 64))
+}
+
+func benchmarkAddDocumentLegacyReference(builder *GINBuilder, docID DocID, jsonDoc []byte) error {
+	pos, exists := builder.docIDToPos[docID]
+	if !exists {
+		pos = builder.nextPos
+		if pos >= builder.numRGs {
+			return fmt.Errorf("position %d exceeds numRGs %d", pos, builder.numRGs)
+		}
+		builder.docIDToPos[docID] = pos
+		builder.posToDocID = append(builder.posToDocID, docID)
+		builder.nextPos++
+	}
+
+	if pos > builder.maxRGID {
+		builder.maxRGID = pos
+	}
+	builder.numDocs++
+
+	var doc any
+	if err := json.Unmarshal(jsonDoc, &doc); err != nil {
+		return err
+	}
+
+	benchmarkWalkJSONLegacyReference(builder, "$", doc, pos)
+	return nil
+}
+
+func benchmarkWalkJSONLegacyReference(builder *GINBuilder, path string, value any, rgID int) {
+	canonicalPath := normalizeWalkPath(path)
+
+	if builder.config.fieldTransformers != nil {
+		if transformer, ok := builder.config.fieldTransformers[canonicalPath]; ok {
+			if transformed, ok := transformer(value); ok {
+				value = transformed
+			}
+		}
+	}
+
+	pd := builder.getOrCreatePath(canonicalPath)
+	pd.presentRGs.Set(rgID)
+
+	switch v := value.(type) {
+	case nil:
+		pd.observedTypes |= TypeNull
+		pd.nullRGs.Set(rgID)
+	case bool:
+		pd.observedTypes |= TypeBool
+		builder.addStringTerm(pd, strconv.FormatBool(v), rgID, canonicalPath)
+	case float64:
+		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
+			pd.observedTypes |= TypeInt
+		} else {
+			pd.observedTypes |= TypeFloat
+		}
+		benchmarkAddNumericValueLegacyReference(builder, pd, v, rgID, canonicalPath)
+	case string:
+		pd.observedTypes |= TypeString
+		builder.addStringTerm(pd, v, rgID, canonicalPath)
+	case []any:
+		for i, item := range v {
+			benchmarkWalkJSONLegacyReference(builder, fmt.Sprintf("%s[%d]", path, i), item, rgID)
+		}
+		for _, item := range v {
+			benchmarkWalkJSONLegacyReference(builder, path+"[*]", item, rgID)
+		}
+	case map[string]any:
+		for key, item := range v {
+			benchmarkWalkJSONLegacyReference(builder, path+"."+key, item, rgID)
+		}
+	}
+}
+
+func benchmarkAddNumericValueLegacyReference(builder *GINBuilder, pd *pathBuildData, val float64, rgID int, path string) {
+	if !pd.hasNumericValues {
+		pd.hasNumericValues = true
+		pd.numericValueType = NumericValueTypeFloatMixed
+		pd.floatGlobalMin = val
+		pd.floatGlobalMax = val
+	} else {
+		if val < pd.floatGlobalMin {
+			pd.floatGlobalMin = val
+		}
+		if val > pd.floatGlobalMax {
+			pd.floatGlobalMax = val
+		}
+	}
+
+	stat, ok := pd.numericStats[rgID]
+	if !ok {
+		pd.numericStats[rgID] = &RGNumericStat{
+			Min:      val,
+			Max:      val,
+			HasValue: true,
+		}
+	} else {
+		if val < stat.Min {
+			stat.Min = val
+		}
+		if val > stat.Max {
+			stat.Max = val
+		}
+	}
+
+	builder.bloom.AddString(path + "=" + strconv.FormatFloat(val, 'f', -1, 64))
+}
+
 func benchmarkAddDocumentExplicit(builder *GINBuilder, docID DocID, jsonDoc []byte) error {
 	return builder.AddDocument(docID, jsonDoc)
 }
@@ -402,6 +540,94 @@ func benchmarkPhase07BuildIndex(docs [][]byte, config GINConfig, useLegacy bool)
 		_ = benchmarkAddDocumentExplicit(builder, DocID(i), doc)
 	}
 	return builder.Finalize()
+}
+
+func TestBenchmarkAddDocumentLegacyMatchesReferenceNumericPath(t *testing.T) {
+	tests := []struct {
+		name       string
+		docs       [][]byte
+		config     GINConfig
+		targetPath string
+	}{
+		{
+			name:       "int-only",
+			docs:       generatePhase07IntDocs(4),
+			config:     DefaultConfig(),
+			targetPath: "$.count",
+		},
+		{
+			name:       "transformer-heavy",
+			docs:       generatePhase07TransformerDocs(4),
+			config:     newPhase07TransformerBenchmarkConfig(),
+			targetPath: "$.build_ref",
+		},
+	}
+
+	assertNumericIndexEqual := func(t *testing.T, label string, got, want *NumericIndex) {
+		t.Helper()
+
+		if got == nil || want == nil {
+			t.Fatalf("%s: numeric index presence mismatch: got=%v want=%v", label, got != nil, want != nil)
+		}
+		if got.ValueType != want.ValueType {
+			t.Fatalf("%s: ValueType = %v, want %v", label, got.ValueType, want.ValueType)
+		}
+		if got.IntGlobalMin != want.IntGlobalMin || got.IntGlobalMax != want.IntGlobalMax {
+			t.Fatalf("%s: int globals = [%d,%d], want [%d,%d]", label, got.IntGlobalMin, got.IntGlobalMax, want.IntGlobalMin, want.IntGlobalMax)
+		}
+		if got.GlobalMin != want.GlobalMin || got.GlobalMax != want.GlobalMax {
+			t.Fatalf("%s: float globals = [%v,%v], want [%v,%v]", label, got.GlobalMin, got.GlobalMax, want.GlobalMin, want.GlobalMax)
+		}
+		if len(got.RGStats) != len(want.RGStats) {
+			t.Fatalf("%s: len(RGStats) = %d, want %d", label, len(got.RGStats), len(want.RGStats))
+		}
+		for i := range got.RGStats {
+			if got.RGStats[i] != want.RGStats[i] {
+				t.Fatalf("%s: RGStats[%d] = %+v, want %+v", label, i, got.RGStats[i], want.RGStats[i])
+			}
+		}
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			legacyBuilder, err := NewBuilder(tt.config, len(tt.docs))
+			if err != nil {
+				t.Fatalf("NewBuilder() error = %v", err)
+			}
+			referenceBuilder, err := NewBuilder(tt.config, len(tt.docs))
+			if err != nil {
+				t.Fatalf("NewBuilder() error = %v", err)
+			}
+
+			for i, doc := range tt.docs {
+				if err := benchmarkAddDocumentLegacy(legacyBuilder, DocID(i), doc); err != nil {
+					t.Fatalf("benchmarkAddDocumentLegacy(%d) error = %v", i, err)
+				}
+				if err := benchmarkAddDocumentLegacyReference(referenceBuilder, DocID(i), doc); err != nil {
+					t.Fatalf("benchmarkAddDocumentLegacyReference(%d) error = %v", i, err)
+				}
+			}
+
+			legacyIdx := legacyBuilder.Finalize()
+			referenceIdx := referenceBuilder.Finalize()
+
+			legacyPathID, ok := legacyIdx.pathLookup[tt.targetPath]
+			if !ok {
+				t.Fatalf("legacy pathLookup missing %s", tt.targetPath)
+			}
+			referencePathID, ok := referenceIdx.pathLookup[tt.targetPath]
+			if !ok {
+				t.Fatalf("reference pathLookup missing %s", tt.targetPath)
+			}
+
+			assertNumericIndexEqual(
+				t,
+				tt.targetPath,
+				legacyIdx.NumericIndexes[legacyPathID],
+				referenceIdx.NumericIndexes[referencePathID],
+			)
+		})
+	}
 }
 
 // =============================================================================

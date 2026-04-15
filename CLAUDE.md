@@ -105,7 +105,7 @@ Transform values before indexing via `GINConfig.fieldTransformers`. Use cases: d
 - `gin.go` - `FieldTransformer` type, `GINConfig.fieldTransformers`, `WithFieldTransformer` option
 - `transformers.go` - All built-in transformers
 - `transformers_test.go` - Unit and integration tests
-- `builder.go:147` - Transformer application in `walkJSON` before type switch
+- `builder.go` - Transformer application in `decodeTransformedValue()` and `stageMaterializedValue()` before type switch
 
 ## Go Conventions
 

@@ -1075,8 +1075,12 @@ func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
 func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 
-	builder.walkJSON("$['foo']", "alpha", 0)
-	builder.walkJSON(`$["foo"]`, "beta", 1)
+	if err := builder.walkJSON("$['foo']", "alpha", 0); err != nil {
+		t.Fatalf("walkJSON() error = %v", err)
+	}
+	if err := builder.walkJSON(`$["foo"]`, "beta", 1); err != nil {
+		t.Fatalf("walkJSON() error = %v", err)
+	}
 
 	idx := builder.Finalize()
 
@@ -1530,6 +1534,98 @@ func TestNumericIndexPreservesInt64Exactness(t *testing.T) {
 	if lower.Count() != 1 || !lower.IsSet(0) || lower.IsSet(1) {
 		t.Fatalf("exact int64 LT result = %v, want [0]", lower.ToSlice())
 	}
+}
+
+func TestAddDocumentDuplicateObjectKeysUseLastValue(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+
+	if err := builder.AddDocument(0, []byte(`{"name":"old","name":"new"}`)); err != nil {
+		t.Fatalf("AddDocument() failed: %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	oldResult := idx.Evaluate([]Predicate{EQ("$.name", "old")})
+	if oldResult.Count() != 0 {
+		t.Fatalf(`EQ("$.name", "old") = %v, want []`, oldResult.ToSlice())
+	}
+
+	newResult := idx.Evaluate([]Predicate{EQ("$.name", "new")})
+	if newResult.Count() != 1 || !newResult.IsSet(0) {
+		t.Fatalf(`EQ("$.name", "new") = %v, want [0]`, newResult.ToSlice())
+	}
+}
+
+func TestIntOnlyNumericIndexExportsPerRGFloatBounds(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":10}`},
+		{1, `{"score":20}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	assertNumericBounds := func(t *testing.T, label string, idx *GINIndex) {
+		t.Helper()
+
+		scorePathID, ok := idx.pathLookup["$.score"]
+		if !ok {
+			t.Fatalf("%s: $.score missing from pathLookup", label)
+		}
+
+		ni, ok := idx.NumericIndexes[scorePathID]
+		if !ok {
+			t.Fatalf("%s: $.score missing numeric index", label)
+		}
+		if ni.ValueType != NumericValueTypeIntOnly {
+			t.Fatalf("%s: ValueType = %v, want %v", label, ni.ValueType, NumericValueTypeIntOnly)
+		}
+
+		want := []struct {
+			intMin int64
+			intMax int64
+			min    float64
+			max    float64
+		}{
+			{intMin: 10, intMax: 10, min: 10, max: 10},
+			{intMin: 20, intMax: 20, min: 20, max: 20},
+		}
+
+		for rgID, expected := range want {
+			stat := ni.RGStats[rgID]
+			if !stat.HasValue {
+				t.Fatalf("%s: RGStats[%d].HasValue = false, want true", label, rgID)
+			}
+			if stat.IntMin != expected.intMin || stat.IntMax != expected.intMax {
+				t.Fatalf("%s: RGStats[%d] int bounds = [%d,%d], want [%d,%d]", label, rgID, stat.IntMin, stat.IntMax, expected.intMin, expected.intMax)
+			}
+			if stat.Min != expected.min || stat.Max != expected.max {
+				t.Fatalf("%s: RGStats[%d] float bounds = [%v,%v], want [%v,%v]", label, rgID, stat.Min, stat.Max, expected.min, expected.max)
+			}
+		}
+	}
+
+	idx := builder.Finalize()
+	assertNumericBounds(t, "finalized", idx)
+
+	data, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	assertNumericBounds(t, "decoded", decoded)
 }
 
 func TestIntOnlyRangeQueriesWithFractionalBounds(t *testing.T) {

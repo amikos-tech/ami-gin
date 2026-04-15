@@ -41,7 +41,7 @@ type pathBuildData struct {
 	trigrams          *TrigramIndex
 
 	hasNumericValues bool
-	numericValueType uint8
+	numericValueType NumericValueType
 	intGlobalMin     int64
 	intGlobalMax     int64
 	floatGlobalMin   float64
@@ -63,7 +63,7 @@ type stagedPathData struct {
 
 	numericSeeded       bool
 	numericSimHasValue  bool
-	numericSimValueType uint8
+	numericSimValueType NumericValueType
 	numericSimIntMin    int64
 	numericSimIntMax    int64
 	numericSimFloatMin  float64
@@ -188,8 +188,7 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		return err
 	}
 
-	b.mergeDocumentState(docID, pos, exists, state)
-	return nil
+	return b.mergeDocumentState(docID, pos, exists, state)
 }
 
 func normalizeWalkPath(path string) string {
@@ -199,12 +198,12 @@ func normalizeWalkPath(path string) string {
 	return NormalizePath(path)
 }
 
-func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
+func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
 	state := newDocumentBuildState(rgID)
 	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
-		panic(err)
+		return err
 	}
-	b.mergeStagedPaths(state)
+	return b.mergeStagedPaths(state)
 }
 
 func (b *GINBuilder) parseAndStageDocument(jsonDoc []byte, rgID int) (*documentBuildState, error) {
@@ -248,6 +247,7 @@ func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state 
 		state.getOrCreatePath(canonicalPath).present = true
 		switch tok {
 		case '{':
+			objectValues := make(map[string]any)
 			for decoder.More() {
 				keyToken, err := decoder.Token()
 				if err != nil {
@@ -257,7 +257,14 @@ func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state 
 				if !ok {
 					return errors.Errorf("non-string object key at %s", canonicalPath)
 				}
-				if err := b.stageStreamValue(decoder, path+"."+key, state); err != nil {
+				value, err := decodeAny(decoder)
+				if err != nil {
+					return errors.Wrapf(err, "parse object value at %s.%s", canonicalPath, key)
+				}
+				objectValues[key] = value
+			}
+			for key, value := range objectValues {
+				if err := b.stageMaterializedValue(path+"."+key, value, state, true); err != nil {
 					return err
 				}
 			}
@@ -478,7 +485,7 @@ func parseJSONNumberLiteral(raw string) (bool, int64, float64, error) {
 
 	intVal, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return false, 0, 0, errors.New("unsupported integer literal")
+		return false, 0, 0, errors.Wrap(err, "unsupported integer literal")
 	}
 	return true, intVal, 0, nil
 }
@@ -515,12 +522,12 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 	if !pathState.numericSimHasValue {
 		pathState.numericSimHasValue = true
 		if observation.isInt {
-			pathState.numericSimValueType = 0
+			pathState.numericSimValueType = NumericValueTypeIntOnly
 			pathState.numericSimIntMin = observation.intVal
 			pathState.numericSimIntMax = observation.intVal
 			pathState.observedTypes |= TypeInt
 		} else {
-			pathState.numericSimValueType = 1
+			pathState.numericSimValueType = NumericValueTypeFloatMixed
 			pathState.numericSimFloatMin = observation.floatVal
 			pathState.numericSimFloatMax = observation.floatVal
 			pathState.observedTypes |= TypeFloat
@@ -529,7 +536,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 		return nil
 	}
 
-	if pathState.numericSimValueType == 0 {
+	if pathState.numericSimValueType == NumericValueTypeIntOnly {
 		if observation.isInt {
 			if observation.intVal < pathState.numericSimIntMin {
 				pathState.numericSimIntMin = observation.intVal
@@ -546,7 +553,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
 
-		pathState.numericSimValueType = 1
+		pathState.numericSimValueType = NumericValueTypeFloatMixed
 		pathState.numericSimFloatMin = math.Min(float64(pathState.numericSimIntMin), observation.floatVal)
 		pathState.numericSimFloatMax = math.Max(float64(pathState.numericSimIntMax), observation.floatVal)
 		pathState.observedTypes |= TypeFloat
@@ -594,7 +601,7 @@ func (b *GINBuilder) seedNumericSimulation(path string, pathState *stagedPathDat
 
 	pathState.numericSimHasValue = true
 	pathState.numericSimValueType = pd.numericValueType
-	if pd.numericValueType == 0 {
+	if pd.numericValueType == NumericValueTypeIntOnly {
 		pathState.numericSimIntMin = pd.intGlobalMin
 		pathState.numericSimIntMax = pd.intGlobalMax
 		return
@@ -607,8 +614,10 @@ func canRepresentIntAsExactFloat(value int64) bool {
 	return value >= -maxExactFloatInt && value <= maxExactFloatInt
 }
 
-func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) {
-	b.mergeStagedPaths(state)
+func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
+	if err := b.mergeStagedPaths(state); err != nil {
+		return err
+	}
 
 	if !exists {
 		b.docIDToPos[docID] = pos
@@ -620,9 +629,10 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		b.maxRGID = pos
 	}
 	b.numDocs++
+	return nil
 }
 
-func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
+func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
 	paths := make([]string, 0, len(state.paths))
 	for path := range state.paths {
 		paths = append(paths, path)
@@ -652,9 +662,12 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 		}
 
 		for _, observation := range staged.numericValues {
-			b.mergeNumericObservation(pd, observation, state.rgID, path)
+			if err := b.mergeNumericObservation(pd, observation, state.rgID, path); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, path string) {
@@ -675,30 +688,32 @@ func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, pat
 	}
 }
 
-func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) {
+func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) error {
 	if !pd.hasNumericValues {
 		pd.hasNumericValues = true
 		if observation.isInt {
-			pd.numericValueType = 0
+			pd.numericValueType = NumericValueTypeIntOnly
 			pd.intGlobalMin = observation.intVal
 			pd.intGlobalMax = observation.intVal
 			b.addIntNumericValue(pd, observation.intVal, rgID)
 			b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-			return
+			return nil
 		}
-		pd.numericValueType = 1
+		pd.numericValueType = NumericValueTypeFloatMixed
 		pd.floatGlobalMin = observation.floatVal
 		pd.floatGlobalMax = observation.floatVal
 		b.addFloatNumericValue(pd, observation.floatVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatFloat(observation.floatVal, 'f', -1, 64))
-		return
+		return nil
 	}
 
-	if pd.numericValueType == 0 && !observation.isInt {
-		b.promoteNumericPathToFloat(pd)
+	if pd.numericValueType == NumericValueTypeIntOnly && !observation.isInt {
+		if err := b.promoteNumericPathToFloat(pd); err != nil {
+			return errors.Wrapf(err, "promote numeric path %s", path)
+		}
 	}
 
-	if pd.numericValueType == 0 {
+	if pd.numericValueType == NumericValueTypeIntOnly {
 		if observation.intVal < pd.intGlobalMin {
 			pd.intGlobalMin = observation.intVal
 		}
@@ -707,11 +722,14 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 		}
 		b.addIntNumericValue(pd, observation.intVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-		return
+		return nil
 	}
 
 	floatVal := observation.floatVal
 	if observation.isInt {
+		if !canRepresentIntAsExactFloat(observation.intVal) {
+			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+		}
 		floatVal = float64(observation.intVal)
 	}
 
@@ -723,13 +741,25 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 	}
 	b.addFloatNumericValue(pd, floatVal, rgID)
 	b.bloom.AddString(path + "=" + strconv.FormatFloat(floatVal, 'f', -1, 64))
+	return nil
 }
 
-func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
-	if pd.numericValueType == 1 {
-		return
+func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) error {
+	if pd.numericValueType == NumericValueTypeFloatMixed {
+		return nil
 	}
-	pd.numericValueType = 1
+	if !canRepresentIntAsExactFloat(pd.intGlobalMin) || !canRepresentIntAsExactFloat(pd.intGlobalMax) {
+		return errors.New("unsupported mixed numeric promotion")
+	}
+	for _, stat := range pd.numericStats {
+		if !stat.HasValue {
+			continue
+		}
+		if !canRepresentIntAsExactFloat(stat.IntMin) || !canRepresentIntAsExactFloat(stat.IntMax) {
+			return errors.New("unsupported mixed numeric promotion")
+		}
+	}
+	pd.numericValueType = NumericValueTypeFloatMixed
 	pd.floatGlobalMin = float64(pd.intGlobalMin)
 	pd.floatGlobalMax = float64(pd.intGlobalMax)
 	for _, stat := range pd.numericStats {
@@ -739,6 +769,7 @@ func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
 		stat.Min = float64(stat.IntMin)
 		stat.Max = float64(stat.IntMax)
 	}
+	return nil
 }
 
 func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) {
@@ -747,15 +778,19 @@ func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) 
 		pd.numericStats[rgID] = &RGNumericStat{
 			IntMin:   val,
 			IntMax:   val,
+			Min:      float64(val),
+			Max:      float64(val),
 			HasValue: true,
 		}
 		return
 	}
 	if val < stat.IntMin {
 		stat.IntMin = val
+		stat.Min = float64(val)
 	}
 	if val > stat.IntMax {
 		stat.IntMax = val
+		stat.Max = float64(val)
 	}
 }
 
@@ -884,7 +919,7 @@ func (b *GINBuilder) Finalize() *GINIndex {
 				ValueType: pd.numericValueType,
 				RGStats:   make([]RGNumericStat, b.numRGs),
 			}
-			if pd.numericValueType == 0 {
+			if pd.numericValueType == NumericValueTypeIntOnly {
 				ni.IntGlobalMin = pd.intGlobalMin
 				ni.IntGlobalMax = pd.intGlobalMax
 				ni.GlobalMin = float64(pd.intGlobalMin)
