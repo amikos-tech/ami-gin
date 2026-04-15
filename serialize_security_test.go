@@ -139,7 +139,7 @@ func TestDecodeRoundTripRegression(t *testing.T) {
 
 func TestAdaptiveConfigRoundTrip(t *testing.T) {
 	config := DefaultConfig()
-	config.CardinalityThreshold = 4
+	config.CardinalityThreshold = 3
 	config.AdaptiveMinRGCoverage = 3
 	config.AdaptivePromotedTermCap = 11
 	config.AdaptiveCoverageCeiling = 0.75
@@ -176,7 +176,7 @@ func TestAdaptiveConfigRoundTrip(t *testing.T) {
 
 func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 	config := DefaultConfig()
-	config.CardinalityThreshold = 4
+	config.CardinalityThreshold = 3
 	config.AdaptiveMinRGCoverage = 2
 	config.AdaptivePromotedTermCap = 8
 	config.AdaptiveCoverageCeiling = 0.75

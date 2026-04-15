@@ -9,7 +9,7 @@ import (
 
 const (
 	MagicBytes = "GIN\x01"
-	Version    = uint16(4)
+	Version    = uint16(5)
 )
 
 const (

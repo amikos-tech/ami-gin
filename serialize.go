@@ -38,6 +38,17 @@ const (
 	// maxHLLRegisters caps HyperLogLog register count.
 	// Max precision 16 needs 2^16 = 65536 registers.
 	maxHLLRegisters = 1 << 16
+
+	// maxAdaptivePaths caps the number of adaptive path sections.
+	maxAdaptivePaths = maxNumPaths
+
+	// maxAdaptiveTermsPerPath caps promoted exact terms persisted per path.
+	// PathEntry summary counters are uint16-backed, so larger values would be ambiguous.
+	maxAdaptiveTermsPerPath = 1<<16 - 1
+
+	// maxAdaptiveBucketsPerPath caps fixed bucket fan-out for adaptive paths.
+	// Default is 128; 4096 preserves headroom without allowing pathological allocations.
+	maxAdaptiveBucketsPerPath = 1 << 12
 )
 
 var (
@@ -68,14 +79,18 @@ const (
 )
 
 type SerializedConfig struct {
-	BloomFilterSize   uint32            `json:"bloom_filter_size"`
-	BloomFilterHashes uint8             `json:"bloom_filter_hashes"`
-	EnableTrigrams    bool              `json:"enable_trigrams"`
-	TrigramMinLength  int               `json:"trigram_min_length"`
-	HLLPrecision      uint8             `json:"hll_precision"`
-	PrefixBlockSize   int               `json:"prefix_block_size"`
-	FTSPaths          []string          `json:"fts_paths,omitempty"`
-	Transformers      []TransformerSpec `json:"transformers,omitempty"`
+	BloomFilterSize         uint32            `json:"bloom_filter_size"`
+	BloomFilterHashes       uint8             `json:"bloom_filter_hashes"`
+	EnableTrigrams          bool              `json:"enable_trigrams"`
+	TrigramMinLength        int               `json:"trigram_min_length"`
+	HLLPrecision            uint8             `json:"hll_precision"`
+	PrefixBlockSize         int               `json:"prefix_block_size"`
+	AdaptiveMinRGCoverage   int               `json:"adaptive_min_rg_coverage"`
+	AdaptivePromotedTermCap int               `json:"adaptive_promoted_term_cap"`
+	AdaptiveCoverageCeiling float64           `json:"adaptive_coverage_ceiling"`
+	AdaptiveBucketCount     int               `json:"adaptive_bucket_count"`
+	FTSPaths                []string          `json:"fts_paths,omitempty"`
+	Transformers            []TransformerSpec `json:"transformers,omitempty"`
 }
 
 func writeRGSet(w io.Writer, rs *RGSet) error {
@@ -151,6 +166,10 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 
 	if err := writeStringIndexes(&buf, idx); err != nil {
 		return nil, errors.Wrap(err, "write string indexes")
+	}
+
+	if err := writeAdaptiveStringIndexes(&buf, idx); err != nil {
+		return nil, errors.Wrap(err, "write adaptive string indexes")
 	}
 
 	if err := writeStringLengthIndexes(&buf, idx); err != nil {
@@ -246,6 +265,10 @@ func Decode(data []byte) (*GINIndex, error) {
 
 	if err := readStringIndexes(buf, idx); err != nil {
 		return nil, errors.Wrap(err, "read string indexes")
+	}
+
+	if err := readAdaptiveStringIndexes(buf, idx); err != nil {
+		return nil, errors.Wrap(err, "read adaptive string indexes")
 	}
 
 	if err := readStringLengthIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
@@ -510,6 +533,159 @@ func readStringIndexes(r io.Reader, idx *GINIndex) error {
 		}
 		idx.StringIndexes[pathID] = si
 	}
+	return nil
+}
+
+func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.AdaptiveStringIndexes))); err != nil {
+		return err
+	}
+	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
+		adaptive := idx.AdaptiveStringIndexes[pathID]
+		if adaptive == nil {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive string index for path %d is nil", pathID)
+		}
+		if len(adaptive.Terms) > maxAdaptiveTermsPerPath {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive term count %d for path %d exceeds max %d", len(adaptive.Terms), pathID, maxAdaptiveTermsPerPath)
+		}
+		if len(adaptive.RGBitmaps) != len(adaptive.Terms) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive rgbitmap count %d does not match term count %d for path %d", len(adaptive.RGBitmaps), len(adaptive.Terms), pathID)
+		}
+		if adaptive.BucketCount <= 0 {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be greater than 0", adaptive.BucketCount, pathID)
+		}
+		if adaptive.BucketCount > maxAdaptiveBucketsPerPath {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d exceeds max %d", adaptive.BucketCount, pathID, maxAdaptiveBucketsPerPath)
+		}
+		if !isPowerOfTwo(adaptive.BucketCount) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", adaptive.BucketCount, pathID)
+		}
+		if len(adaptive.BucketRGBitmaps) != adaptive.BucketCount {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket rgbitmap count %d does not match bucket count %d for path %d", len(adaptive.BucketRGBitmaps), adaptive.BucketCount, pathID)
+		}
+
+		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, uint32(len(adaptive.Terms))); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, uint32(adaptive.BucketCount)); err != nil {
+			return err
+		}
+		for i, term := range adaptive.Terms {
+			termBytes := []byte(term)
+			if err := binary.Write(w, binary.LittleEndian, uint16(len(termBytes))); err != nil {
+				return err
+			}
+			if _, err := w.Write(termBytes); err != nil {
+				return err
+			}
+			if err := writeRGSet(w, adaptive.RGBitmaps[i]); err != nil {
+				return err
+			}
+		}
+		for bucketID, rgSet := range adaptive.BucketRGBitmaps {
+			if rgSet == nil {
+				return errors.Wrapf(ErrInvalidFormat, "adaptive bucket %d for path %d is nil", bucketID, pathID)
+			}
+			if err := writeRGSet(w, rgSet); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
+	var numPaths uint32
+	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
+		return err
+	}
+	if numPaths > maxAdaptivePaths {
+		return errors.Wrapf(ErrInvalidFormat, "adaptive path count %d exceeds max %d", numPaths, maxAdaptivePaths)
+	}
+
+	for i := uint32(0); i < numPaths; i++ {
+		var pathID uint16
+		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
+			return err
+		}
+		if int(pathID) >= len(idx.PathDirectory) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive string index path id %d out of range", pathID)
+		}
+		if idx.PathDirectory[pathID].Flags&FlagAdaptiveHybrid == 0 {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive section path %d is missing adaptive flag", pathID)
+		}
+
+		var numTerms uint32
+		if err := binary.Read(r, binary.LittleEndian, &numTerms); err != nil {
+			return err
+		}
+		if numTerms > maxAdaptiveTermsPerPath {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive term count %d for path %d exceeds max %d", numTerms, pathID, maxAdaptiveTermsPerPath)
+		}
+
+		var bucketCount uint32
+		if err := binary.Read(r, binary.LittleEndian, &bucketCount); err != nil {
+			return err
+		}
+		if bucketCount == 0 {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count for path %d must be greater than 0", pathID)
+		}
+		if bucketCount > maxAdaptiveBucketsPerPath {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d exceeds max %d", bucketCount, pathID, maxAdaptiveBucketsPerPath)
+		}
+		if !isPowerOfTwo(int(bucketCount)) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", bucketCount, pathID)
+		}
+
+		adaptive := &AdaptiveStringIndex{
+			Terms:           make([]string, numTerms),
+			RGBitmaps:       make([]*RGSet, numTerms),
+			BucketCount:     int(bucketCount),
+			BucketRGBitmaps: make([]*RGSet, bucketCount),
+		}
+		for j := uint32(0); j < numTerms; j++ {
+			var termLen uint16
+			if err := binary.Read(r, binary.LittleEndian, &termLen); err != nil {
+				return err
+			}
+			termBytes := make([]byte, termLen)
+			if _, err := io.ReadFull(r, termBytes); err != nil {
+				return err
+			}
+			adaptive.Terms[j] = string(termBytes)
+
+			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
+			if err != nil {
+				return err
+			}
+			adaptive.RGBitmaps[j] = rgSet
+		}
+		for bucketID := uint32(0); bucketID < bucketCount; bucketID++ {
+			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
+			if err != nil {
+				return err
+			}
+			adaptive.BucketRGBitmaps[bucketID] = rgSet
+		}
+
+		idx.AdaptiveStringIndexes[pathID] = adaptive
+		idx.PathDirectory[pathID].AdaptivePromotedTerms = uint16(numTerms)
+		idx.PathDirectory[pathID].AdaptiveBucketCount = uint16(bucketCount)
+	}
+
+	for i := range idx.PathDirectory {
+		entry := &idx.PathDirectory[i]
+		if entry.Flags&FlagAdaptiveHybrid == 0 {
+			continue
+		}
+		if _, ok := idx.AdaptiveStringIndexes[entry.PathID]; !ok {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d missing adaptive section", entry.PathID)
+		}
+	}
+
 	return nil
 }
 
@@ -958,13 +1134,17 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 	}
 
 	sc := SerializedConfig{
-		BloomFilterSize:   cfg.BloomFilterSize,
-		BloomFilterHashes: cfg.BloomFilterHashes,
-		EnableTrigrams:    cfg.EnableTrigrams,
-		TrigramMinLength:  cfg.TrigramMinLength,
-		HLLPrecision:      cfg.HLLPrecision,
-		PrefixBlockSize:   cfg.PrefixBlockSize,
-		FTSPaths:          cfg.ftsPaths,
+		BloomFilterSize:         cfg.BloomFilterSize,
+		BloomFilterHashes:       cfg.BloomFilterHashes,
+		EnableTrigrams:          cfg.EnableTrigrams,
+		TrigramMinLength:        cfg.TrigramMinLength,
+		HLLPrecision:            cfg.HLLPrecision,
+		PrefixBlockSize:         cfg.PrefixBlockSize,
+		AdaptiveMinRGCoverage:   cfg.AdaptiveMinRGCoverage,
+		AdaptivePromotedTermCap: cfg.AdaptivePromotedTermCap,
+		AdaptiveCoverageCeiling: cfg.AdaptiveCoverageCeiling,
+		AdaptiveBucketCount:     cfg.AdaptiveBucketCount,
+		FTSPaths:                cfg.ftsPaths,
 	}
 
 	for _, spec := range cfg.transformerSpecs {
@@ -1011,12 +1191,16 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	cfg := &GINConfig{
-		BloomFilterSize:   sc.BloomFilterSize,
-		BloomFilterHashes: sc.BloomFilterHashes,
-		EnableTrigrams:    sc.EnableTrigrams,
-		TrigramMinLength:  sc.TrigramMinLength,
-		HLLPrecision:      sc.HLLPrecision,
-		PrefixBlockSize:   sc.PrefixBlockSize,
+		BloomFilterSize:         sc.BloomFilterSize,
+		BloomFilterHashes:       sc.BloomFilterHashes,
+		EnableTrigrams:          sc.EnableTrigrams,
+		TrigramMinLength:        sc.TrigramMinLength,
+		HLLPrecision:            sc.HLLPrecision,
+		PrefixBlockSize:         sc.PrefixBlockSize,
+		AdaptiveMinRGCoverage:   sc.AdaptiveMinRGCoverage,
+		AdaptivePromotedTermCap: sc.AdaptivePromotedTermCap,
+		AdaptiveCoverageCeiling: sc.AdaptiveCoverageCeiling,
+		AdaptiveBucketCount:     sc.AdaptiveBucketCount,
 	}
 
 	if len(sc.FTSPaths) > 0 {
@@ -1056,6 +1240,10 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 			cfg.fieldTransformers[canonicalPath] = fn
 			cfg.transformerSpecs[canonicalPath] = spec
 		}
+	}
+
+	if err := cfg.validate(); err != nil {
+		return nil, errors.Wrap(err, "validate config")
 	}
 
 	return cfg, nil
