@@ -2,6 +2,7 @@ package gin
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -163,9 +164,9 @@ func TestPropertyIntegrationNullPresentConsistency(t *testing.T) {
 func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 	properties := gopter.NewProperties(propertyTestParameters())
 
-	properties.Property("cardinality threshold controls index type", prop.ForAll(
-		func(values []string, threshold uint32) bool {
-			if len(values) == 0 || threshold == 0 {
+	properties.Property("cardinality threshold controls exact, adaptive, and bloom-only modes", prop.ForAll(
+		func(values []string) bool {
+			if len(values) < 3 {
 				return true
 			}
 
@@ -175,41 +176,119 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 					validValues = append(validValues, v)
 				}
 			}
-			if len(validValues) == 0 {
+			if len(validValues) < 3 {
 				return true
 			}
-
-			config := DefaultConfig()
-			config.CardinalityThreshold = threshold
 
 			numRGs := len(validValues)
-			if numRGs > 100 {
-				numRGs = 100
-			}
-			builder, _ := NewBuilder(config, numRGs)
-			for i := 0; i < numRGs; i++ {
-				doc := []byte(`{"field": "` + validValues[i] + `"}`)
-				_ = builder.AddDocument(DocID(i), doc)
-			}
-			idx := builder.Finalize()
-
-			entry := findPathEntry(idx, "$.field")
-			if entry == nil {
-				return true
+			if numRGs > 32 {
+				numRGs = 32
 			}
 
-			// Use the stored HLL-estimated cardinality (which is what the builder uses)
-			// rather than actual unique count since HLL is approximate
-			estimatedCardinality := entry.Cardinality
-
-			if estimatedCardinality > threshold {
-				return entry.Flags&FlagBloomOnly != 0
+			fixtureValues := make([]string, numRGs)
+			fixtureValues[0] = "hot"
+			fixtureValues[1] = "hot"
+			for i := 2; i < numRGs; i++ {
+				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
 			}
-			_, hasStringIdx := idx.StringIndexes[entry.PathID]
-			return hasStringIdx && entry.Flags&FlagBloomOnly == 0
+
+			expectedMatches := make(map[string][]int)
+			for rgID, value := range fixtureValues {
+				expectedMatches[value] = append(expectedMatches[value], rgID)
+			}
+
+			exactConfig := DefaultConfig()
+			exactConfig.CardinalityThreshold = uint32(len(expectedMatches) + 1)
+
+			adaptiveConfig := DefaultConfig()
+			adaptiveConfig.CardinalityThreshold = 1
+			adaptiveConfig.AdaptiveMinRGCoverage = 2
+			adaptiveConfig.AdaptivePromotedTermCap = 64
+			adaptiveConfig.AdaptiveCoverageCeiling = 0.80
+			adaptiveConfig.AdaptiveBucketCount = 128
+
+			bloomOnlyConfig := adaptiveConfig
+			bloomOnlyConfig.AdaptivePromotedTermCap = 0
+
+			cases := []struct {
+				config GINConfig
+				check  func(*PathEntry, *GINIndex) bool
+			}{
+				{
+					config: exactConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasStringIdx := idx.StringIndexes[entry.PathID]
+						return hasStringIdx && entry.Flags&FlagBloomOnly == 0 && entry.Flags&FlagAdaptiveHybrid == 0
+					},
+				},
+				{
+					config: adaptiveConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
+						return hasAdaptiveIdx && entry.Flags&FlagAdaptiveHybrid != 0 && entry.Flags&FlagBloomOnly == 0
+					},
+				},
+				{
+					config: bloomOnlyConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasStringIdx := idx.StringIndexes[entry.PathID]
+						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
+						return entry.Flags&FlagBloomOnly != 0 && entry.Flags&FlagAdaptiveHybrid == 0 && !hasStringIdx && !hasAdaptiveIdx
+					},
+				},
+			}
+
+			for _, tc := range cases {
+				builder, err := NewBuilder(tc.config, numRGs)
+				if err != nil {
+					return false
+				}
+				for rgID, value := range fixtureValues {
+					doc := []byte(`{"field": "` + value + `"}`)
+					if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+						return false
+					}
+				}
+				idx := builder.Finalize()
+				entry := findPathEntry(idx, "$.field")
+				if entry == nil {
+					return false
+				}
+				if !tc.check(entry, idx) {
+					return false
+				}
+
+				for term, matches := range expectedMatches {
+					result := idx.Evaluate([]Predicate{EQ("$.field", term)})
+					for _, rgID := range matches {
+						if !result.IsSet(rgID) {
+							return false
+						}
+					}
+				}
+			}
+
+			adaptiveBuilder, err := NewBuilder(adaptiveConfig, numRGs)
+			if err != nil {
+				return false
+			}
+			for rgID, value := range fixtureValues {
+				doc := []byte(`{"field": "` + value + `"}`)
+				if err := adaptiveBuilder.AddDocument(DocID(rgID), doc); err != nil {
+					return false
+				}
+			}
+			adaptiveIdx := adaptiveBuilder.Finalize()
+			adaptiveEntry := findPathEntry(adaptiveIdx, "$.field")
+			if adaptiveEntry == nil {
+				return false
+			}
+			if adaptiveEntry.Cardinality <= adaptiveConfig.CardinalityThreshold {
+				return false
+			}
+			return true
 		},
 		gen.SliceOfN(100, gen.Identifier()),
-		gen.UInt32Range(10, 1000),
 	))
 
 	properties.TestingRun(t)
