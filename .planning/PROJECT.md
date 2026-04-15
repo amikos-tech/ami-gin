@@ -21,11 +21,11 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 - ✓ MIT LICENSE, public module path, and release automation — completed in `v0.1.0`
 - ✓ Deserialization hardening and CI/security workflows — completed in `v0.1.0`
 - ✓ Canonical supported JSONPath lookup and constant-time path resolution — validated in Phase 06
+- ✓ Reduce builder ingest cost and preserve numeric intent during parsing/indexing — validated in Phase 07: builder-parsing-numeric-fidelity
+- ✓ Replace all-or-nothing bloom-only fallback with adaptive high-cardinality hybrid indexing — validated in Phase 08: adaptive-high-cardinality-indexing
 
 ### Active
 
-- [ ] Reduce builder ingest cost and preserve numeric intent during parsing/indexing
-- [ ] Replace all-or-nothing bloom-only fallback with adaptive high-cardinality hybrid indexing
 - [ ] Support raw-plus-derived index representations instead of transformer replacement only
 - [ ] Compact serialized path and term dictionaries using the existing prefix-compression direction
 
@@ -41,8 +41,8 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 
 - `v0.1.0` is tagged on `main`; the OSS launch milestone is complete enough to move on
 - Phase 06 completed canonical path lookup, decode parity guards, and fixed-width benchmark coverage for EQ, CONTAINS, REGEX, and direct path lookup
-- Builder ingest still uses `json.Unmarshal(..., &any)` and classifies numbers after generic decoding
-- High-cardinality string paths currently fall back to bloom-only behavior, which preserves correctness but gives up pruning power for hot values
+- Phase 07 completed the streaming JSON ingest path and explicit numeric-fidelity handling
+- Phase 08 completed adaptive high-cardinality string indexing with exact hot-term pruning, bounded tail fallback, and benchmark evidence
 - Field transformers currently replace the raw indexed value rather than adding a derived representation alongside it
 - `PrefixCompressor` exists, but path and term serialization still write raw repeated strings
 
@@ -80,4 +80,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-14 after Phase 06 completion*
+*Last updated: 2026-04-15 after Phase 08 completion*
