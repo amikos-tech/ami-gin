@@ -376,7 +376,7 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	canonicalPath := normalizeWalkPath(path)
 	if allowTransform && b.config.fieldTransformers != nil {
 		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
-			if transformed, ok := transformer(value); ok {
+			if transformed, ok := transformer(prepareTransformerValue(value)); ok {
 				value = transformed
 			}
 		}

@@ -410,6 +410,56 @@ func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
 	}
 }
 
+func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
+	config, err := NewConfig(
+		WithFieldTransformer("$.items[*].metrics", func(value any) (any, bool) {
+			metrics, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+
+			count, ok := metrics["count"].(float64)
+			if !ok {
+				return nil, false
+			}
+
+			ratio, ok := metrics["ratio"].(float64)
+			if !ok {
+				return nil, false
+			}
+
+			return count + ratio, true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"items":[{"metrics":{"count":10,"ratio":0.25}}]}`},
+		{1, `{"items":[{"metrics":{"count":20,"ratio":0.75}}]}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	got := builder.Finalize().Evaluate([]Predicate{GTE("$.items[*].metrics", 20.5)}).ToSlice()
+	if len(got) != 1 || got[0] != 1 {
+		t.Fatalf("GTE($.items[*].metrics, 20.5) = %v, want [1]", got)
+	}
+}
+
 func TestToLower(t *testing.T) {
 	tests := []struct {
 		name    string
