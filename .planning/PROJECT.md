@@ -20,10 +20,10 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 - ✓ Property-based tests and benchmarks — existing
 - ✓ MIT LICENSE, public module path, and release automation — completed in `v0.1.0`
 - ✓ Deserialization hardening and CI/security workflows — completed in `v0.1.0`
+- ✓ Canonical supported JSONPath lookup and constant-time path resolution — validated in Phase 06
 
 ### Active
 
-- [ ] Remove linear path scans from query evaluation and canonicalize supported JSONPath lookup
 - [ ] Reduce builder ingest cost and preserve numeric intent during parsing/indexing
 - [ ] Replace all-or-nothing bloom-only fallback with adaptive high-cardinality hybrid indexing
 - [ ] Support raw-plus-derived index representations instead of transformer replacement only
@@ -40,7 +40,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 ## Context
 
 - `v0.1.0` is tagged on `main`; the OSS launch milestone is complete enough to move on
-- Query evaluation still resolves paths by linearly scanning `PathDirectory`
+- Phase 06 completed canonical path lookup, decode parity guards, and fixed-width benchmark coverage for EQ, CONTAINS, REGEX, and direct path lookup
 - Builder ingest still uses `json.Unmarshal(..., &any)` and classifies numbers after generic decoding
 - High-cardinality string paths currently fall back to bloom-only behavior, which preserves correctness but gives up pruning power for hot values
 - Field transformers currently replace the raw indexed value rather than adding a derived representation alongside it
@@ -80,4 +80,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-14 after initializing the v1.0 Query & Index Quality milestone*
+*Last updated: 2026-04-14 after Phase 06 completion*

@@ -308,6 +308,107 @@ func TestDateTransformerRangeQuery(t *testing.T) {
 	}
 }
 
+func TestDateTransformerCanonicalConfigPath(t *testing.T) {
+	config, err := NewConfig(
+		WithFieldTransformer("$['created_at']", ISODateToEpochMs),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"created_at": "2024-01-15T10:30:00Z"}`},
+		{1, `{"created_at": "2024-01-16T14:00:00Z"}`},
+		{2, `{"created_at": "2024-01-17T09:15:00Z"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	var pathEntry *PathEntry
+	for i := range idx.PathDirectory {
+		if idx.PathDirectory[i].PathName == "$.created_at" {
+			pathEntry = &idx.PathDirectory[i]
+			break
+		}
+	}
+	if pathEntry == nil {
+		t.Fatal("expected canonical $.created_at path to be present")
+	}
+	if pathEntry.ObservedTypes&(TypeInt|TypeFloat) == 0 {
+		t.Fatalf("$.created_at should have numeric type after transform, got %v", pathEntry.ObservedTypes)
+	}
+
+	threshold := float64(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC).UnixMilli())
+	result := idx.Evaluate([]Predicate{GTE("$.created_at", threshold)})
+	if got := result.ToSlice(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
+		t.Fatalf("GTE($.created_at, threshold) = %v, want [1 2]", got)
+	}
+}
+
+func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
+	config, err := NewConfig(
+		WithFieldTransformer("$['timestamp']", ISODateToEpochMs),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"timestamp": "2024-01-01T00:00:00Z"}`},
+		{1, `{"timestamp": "2024-06-15T12:00:00Z"}`},
+		{2, `{"timestamp": "2024-12-31T23:59:59Z"}`},
+	}
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	threshold := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+	canonical := decoded.Evaluate([]Predicate{GTE("$.timestamp", threshold)}).ToSlice()
+	bracket := decoded.Evaluate([]Predicate{GTE("$['timestamp']", threshold)}).ToSlice()
+
+	if len(canonical) != 1 || canonical[0] != 2 {
+		t.Fatalf("GTE($.timestamp, threshold) = %v, want [2]", canonical)
+	}
+	if len(bracket) != len(canonical) || bracket[0] != canonical[0] {
+		t.Fatalf("GTE($['timestamp'], threshold) = %v, want %v", bracket, canonical)
+	}
+}
+
 func TestToLower(t *testing.T) {
 	tests := []struct {
 		name    string

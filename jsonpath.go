@@ -111,7 +111,17 @@ func ParseJSONPath(path string) (jp.Expr, error) {
 	return jp.ParseString(path)
 }
 
-// NormalizePath converts a JSONPath to a canonical dot-notation form.
+func canonicalizeSupportedPath(path string) (string, error) {
+	if err := ValidateJSONPath(path); err != nil {
+		return "", err
+	}
+	return NormalizePath(path), nil
+}
+
+// NormalizePath converts a JSONPath to a canonical dot-notation form without
+// validating that the path uses only GIN-supported JSONPath features.
+// Callers handling untrusted input should use ValidateJSONPath or
+// canonicalizeSupportedPath first.
 func NormalizePath(path string) string {
 	expr, err := jp.ParseString(path)
 	if err != nil {

@@ -1,7 +1,9 @@
 package gin
 
 import (
+	stderrors "errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -12,6 +14,14 @@ func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 		t.Fatalf("failed to create builder: %v", err)
 	}
 	return builder
+}
+
+func outOfRangePathID(t *testing.T, idx *GINIndex) uint16 {
+	t.Helper()
+	if len(idx.PathDirectory) > int(^uint16(0)) {
+		t.Fatalf("PathDirectory len = %d exceeds uint16 range", len(idx.PathDirectory))
+	}
+	return uint16(len(idx.PathDirectory))
 }
 
 func TestBloomFilter(t *testing.T) {
@@ -250,6 +260,42 @@ func TestSerializeRoundTrip(t *testing.T) {
 	result := decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
 	if !result.IsSet(0) {
 		t.Error("query on decoded index failed")
+	}
+}
+
+func TestSerializeRoundTripWithArrays(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	builder.AddDocument(0, []byte(`{"items": ["x", "y"], "name": "alice"}`))
+	builder.AddDocument(1, []byte(`{"items": ["z"], "nested": [{"a": 1}]}`))
+
+	idx := builder.Finalize()
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if decoded.Header.NumDocs != idx.Header.NumDocs {
+		t.Errorf("NumDocs mismatch: %d vs %d", decoded.Header.NumDocs, idx.Header.NumDocs)
+	}
+	if len(decoded.PathDirectory) != len(idx.PathDirectory) {
+		t.Errorf("PathDirectory length mismatch: %d vs %d", len(decoded.PathDirectory), len(idx.PathDirectory))
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.items[*]", "x")})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Errorf("array query on decoded index failed: got %v", result.ToSlice())
+	}
+
+	result = decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Errorf("flat field query on decoded index failed: got %v", result.ToSlice())
 	}
 }
 
@@ -807,6 +853,43 @@ func TestJSONPathNormalize(t *testing.T) {
 	}
 }
 
+func TestJSONPathCanonicalizeSupportedPath(t *testing.T) {
+	tests := []struct {
+		path string
+		want string
+	}{
+		{path: "$.foo", want: "$.foo"},
+		{path: "$['foo']", want: "$.foo"},
+		{path: `$["foo"]`, want: "$.foo"},
+	}
+
+	for _, tc := range tests {
+		got, err := canonicalizeSupportedPath(tc.path)
+		if err != nil {
+			t.Fatalf("canonicalizeSupportedPath(%q) error = %v", tc.path, err)
+		}
+		if got != tc.want {
+			t.Errorf("canonicalizeSupportedPath(%q) = %q, want %q", tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestJSONPathCanonicalizeUnsupportedPath(t *testing.T) {
+	unsupported := []string{
+		"$.items[0]",
+		"$..foo",
+		"$.items[0:5]",
+		"$.items[?(@.price > 10)]",
+	}
+
+	for _, path := range unsupported {
+		got, err := canonicalizeSupportedPath(path)
+		if err == nil {
+			t.Fatalf("canonicalizeSupportedPath(%q) = %q, want error", path, got)
+		}
+	}
+}
+
 func TestIsValidJSONPath(t *testing.T) {
 	if !IsValidJSONPath("$.foo.bar") {
 		t.Error("expected $.foo.bar to be valid")
@@ -883,6 +966,59 @@ func TestWithFTSPathsPrefix(t *testing.T) {
 	}
 }
 
+func TestWithFTSPathsCanonicalizesEquivalentSupportedPaths(t *testing.T) {
+	config, err := NewConfig(WithFTSPaths("$['description']", `$["content"].*`))
+	if err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+	builder := mustNewBuilder(t, config, 3)
+
+	builder.AddDocument(0, []byte(`{"description": "hello world", "content": {"body": "hello body"}, "meta": "alpha"}`))
+	builder.AddDocument(1, []byte(`{"description": "goodbye world", "content": {"body": "goodbye body"}, "meta": "beta"}`))
+	builder.AddDocument(2, []byte(`{"description": "hello universe", "content": {"body": "hello again"}, "meta": "gamma"}`))
+
+	idx := builder.Finalize()
+
+	if got, want := idx.Config.ftsPaths, []string{"$.description", "$.content.*"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("fresh ftsPaths = %v, want %v", got, want)
+	}
+
+	assertContainsRGs := func(t *testing.T, queryPath string, value string, want []int) {
+		t.Helper()
+		result := idx.Evaluate([]Predicate{Contains(queryPath, value)})
+		if got := result.ToSlice(); len(got) != len(want) {
+			t.Fatalf("Contains(%q, %q) RGs = %v, want %v", queryPath, value, got, want)
+		} else {
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("Contains(%q, %q) RGs = %v, want %v", queryPath, value, got, want)
+				}
+			}
+		}
+	}
+
+	assertContainsRGs(t, "$.description", "hello", []int{0, 2})
+	assertContainsRGs(t, "$.content.body", "hello", []int{0, 2})
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if got, want := decoded.Config.ftsPaths, []string{"$.description", "$.content.*"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("decoded ftsPaths = %v, want %v", got, want)
+	}
+
+	idx = decoded
+	assertContainsRGs(t, "$.description", "hello", []int{0, 2})
+	assertContainsRGs(t, "$.content.body", "hello", []int{0, 2})
+}
+
 func TestWithFTSPathsBackwardCompatible(t *testing.T) {
 	// Without WithFTSPaths, all string paths should have trigrams
 	config := DefaultConfig()
@@ -922,6 +1058,300 @@ func TestWithFTSPathsOnNumericField(t *testing.T) {
 	result := idx.Evaluate([]Predicate{Contains("$.score", "100")})
 	if result.Count() != 2 {
 		t.Errorf("CONTAINS on numeric field should return all RGs, got %d", result.Count())
+	}
+}
+
+func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
+	_, err := NewConfig(WithFTSPaths("$.foo", "$['foo']"))
+	if err == nil {
+		t.Fatal("expected error for duplicate canonical FTS paths, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate canonical FTS path") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	builder.walkJSON("$['foo']", "alpha", 0)
+	builder.walkJSON(`$["foo"]`, "beta", 1)
+
+	idx := builder.Finalize()
+
+	if len(idx.PathDirectory) != 1 {
+		t.Fatalf("PathDirectory len = %d, want 1", len(idx.PathDirectory))
+	}
+
+	entry := idx.PathDirectory[0]
+	if entry.PathName != "$.foo" {
+		t.Fatalf("PathDirectory[0].PathName = %q, want $.foo", entry.PathName)
+	}
+
+	if len(idx.pathLookup) != 1 {
+		t.Fatalf("pathLookup len = %d, want 1", len(idx.pathLookup))
+	}
+
+	if got, ok := idx.pathLookup["$.foo"]; !ok || got != entry.PathID {
+		t.Fatalf("pathLookup[$.foo] = (%d, %v), want (%d, true)", got, ok, entry.PathID)
+	}
+}
+
+func TestRebuildPathLookupRejectsDuplicateCanonicalPaths(t *testing.T) {
+	idx := NewGINIndex()
+	idx.PathDirectory = []PathEntry{
+		{PathID: 0, PathName: "$.foo"},
+		{PathID: 1, PathName: "$['foo']"},
+	}
+
+	err := idx.rebuildPathLookup()
+	if err == nil {
+		t.Fatal("rebuildPathLookup() error = nil, want ErrInvalidFormat")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestRebuildPathLookupEmptyDirectory(t *testing.T) {
+	idx := NewGINIndex()
+	idx.pathLookup = nil
+
+	if err := idx.rebuildPathLookup(); err != nil {
+		t.Fatalf("rebuildPathLookup() error = %v", err)
+	}
+	if idx.pathLookup == nil {
+		t.Fatal("pathLookup = nil, want empty map")
+	}
+	if len(idx.pathLookup) != 0 {
+		t.Fatalf("len(pathLookup) = %d, want 0", len(idx.pathLookup))
+	}
+}
+
+func TestRebuildPathLookupMidDirectoryTruncationPreservesExistingLookupOnError(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar", "bar": "baz"}`))
+	builder.AddDocument(1, []byte(`{"foo": "qux", "bar": "zap"}`))
+
+	idx := builder.Finalize()
+
+	originalLookup := make(map[string]uint16, len(idx.pathLookup))
+	for path, pathID := range idx.pathLookup {
+		originalLookup[path] = pathID
+	}
+
+	idx.PathDirectory = append(idx.PathDirectory[:1], idx.PathDirectory[2:]...)
+
+	err := idx.rebuildPathLookup()
+	if err == nil {
+		t.Fatal("rebuildPathLookup() error = nil, want ErrInvalidFormat")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+	if len(idx.pathLookup) != len(originalLookup) {
+		t.Fatalf("pathLookup len = %d, want %d", len(idx.pathLookup), len(originalLookup))
+	}
+	for path, wantPathID := range originalLookup {
+		gotPathID, ok := idx.pathLookup[path]
+		if !ok || gotPathID != wantPathID {
+			t.Fatalf("pathLookup[%q] = (%d, %v), want (%d, true)", path, gotPathID, ok, wantPathID)
+		}
+	}
+}
+
+func TestRebuildPathLookupValidationErrorPreservesExistingLookupOnError(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar", "bar": "baz"}`))
+	builder.AddDocument(1, []byte(`{"foo": "qux", "bar": "zap"}`))
+
+	idx := builder.Finalize()
+
+	originalLookup := make(map[string]uint16, len(idx.pathLookup))
+	for path, pathID := range idx.pathLookup {
+		originalLookup[path] = pathID
+	}
+
+	idx.PathDirectory[1].PathName = "$.foo_renamed"
+	idx.StringIndexes[outOfRangePathID(t, idx)] = &StringIndex{}
+
+	err := idx.rebuildPathLookup()
+	if err == nil {
+		t.Fatal("rebuildPathLookup() error = nil, want ErrInvalidFormat")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+	if len(idx.pathLookup) != len(originalLookup) {
+		t.Fatalf("pathLookup len = %d, want %d", len(idx.pathLookup), len(originalLookup))
+	}
+	for path, wantPathID := range originalLookup {
+		gotPathID, ok := idx.pathLookup[path]
+		if !ok || gotPathID != wantPathID {
+			t.Fatalf("pathLookup[%q] = (%d, %v), want (%d, true)", path, gotPathID, ok, wantPathID)
+		}
+	}
+	if _, ok := idx.pathLookup["$.foo_renamed"]; ok {
+		t.Fatal("pathLookup unexpectedly contains rebuilt key after validation error")
+	}
+}
+
+func TestFindPathCanonicalLookupAndFallback(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar"}`))
+	builder.AddDocument(1, []byte(`{"foo": "baz"}`))
+
+	idx := builder.Finalize()
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		pathID, entry := idx.findPath(path)
+		if pathID != 1 {
+			t.Fatalf("findPath(%q) pathID = %d, want 1", path, pathID)
+		}
+		if entry == nil || entry.PathName != "$.foo" {
+			t.Fatalf("findPath(%q) entry = %#v, want canonical $.foo entry", path, entry)
+		}
+	}
+
+	for _, path := range []string{"$.missing", "$.nonexistent"} {
+		pathID, entry := idx.findPath(path)
+		if pathID != -1 || entry != nil {
+			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
+		}
+
+		result := idx.Evaluate([]Predicate{EQ(path, "bar")})
+		if result.Count() != int(idx.Header.NumRowGroups) {
+			t.Fatalf("Evaluate(EQ(%q, bar)) count = %d, want %d", path, result.Count(), idx.Header.NumRowGroups)
+		}
+	}
+}
+
+func TestFindPathInvalidPathFallsBackToNoMatch(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "bar"}`))
+	builder.AddDocument(1, []byte(`{"foo": "baz"}`))
+
+	idx := builder.Finalize()
+
+	for _, path := range []string{"$.items[0]", "invalid"} {
+		pathID, entry := idx.findPath(path)
+		if pathID != -1 || entry != nil {
+			t.Fatalf("findPath(%q) = (%d, %#v), want (-1, nil)", path, pathID, entry)
+		}
+	}
+}
+
+func TestEvaluateMixedPredicatesPreservesValidPathPruning(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.AddDocument(0, []byte(`{"foo": "x"}`))
+	builder.AddDocument(1, []byte(`{"foo": "y"}`))
+	builder.AddDocument(2, []byte(`{"foo": "x"}`))
+
+	idx := builder.Finalize()
+
+	cases := []struct {
+		name       string
+		predicates []Predicate
+	}{
+		{
+			name: "missing path after valid predicate",
+			predicates: []Predicate{
+				EQ("$.foo", "x"),
+				EQ("$.nonexistent", "ignored"),
+			},
+		},
+		{
+			name: "missing path before valid predicate",
+			predicates: []Predicate{
+				EQ("$.nonexistent", "ignored"),
+				EQ("$.foo", "x"),
+			},
+		},
+		{
+			name: "unsupported path after valid predicate",
+			predicates: []Predicate{
+				EQ("$.foo", "x"),
+				EQ("$.items[0]", "ignored"),
+			},
+		},
+		{
+			name: "unsupported path before valid predicate",
+			predicates: []Predicate{
+				EQ("$.items[0]", "ignored"),
+				EQ("$.foo", "x"),
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := idx.Evaluate(tc.predicates).ToSlice()
+			want := []int{0, 2}
+			if len(got) != len(want) {
+				t.Fatalf("Evaluate(%v) = %v, want %v", tc.predicates, got, want)
+			}
+			for i := range want {
+				if got[i] != want[i] {
+					t.Fatalf("Evaluate(%v) = %v, want %v", tc.predicates, got, want)
+				}
+			}
+		})
+	}
+}
+
+func TestQueryEQCanonicalPathDecodeParity(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.AddDocument(0, []byte(`{"foo": "x"}`))
+	builder.AddDocument(1, []byte(`{"foo": "y"}`))
+	builder.AddDocument(2, []byte(`{"foo": "x"}`))
+
+	idx := builder.Finalize()
+
+	assertMatches := func(t *testing.T, current *GINIndex, path string, want []int) {
+		t.Helper()
+		result := current.Evaluate([]Predicate{EQ(path, "x")})
+		got := result.ToSlice()
+		if len(got) != len(want) {
+			t.Fatalf("Evaluate(EQ(%q, x)) = %v, want %v", path, got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("Evaluate(EQ(%q, x)) = %v, want %v", path, got, want)
+			}
+		}
+	}
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		assertMatches(t, idx, path, []int{0, 2})
+	}
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	for _, path := range []string{"$.foo", "$['foo']", `$["foo"]`} {
+		assertMatches(t, decoded, path, []int{0, 2})
+	}
+}
+
+func TestEvaluateUnsupportedPathsReturnAllRowGroups(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"items": [{"foo": "x"}]}`))
+	builder.AddDocument(1, []byte(`{"items": [{"foo": "y"}]}`))
+
+	idx := builder.Finalize()
+
+	for _, path := range []string{"$.items[0]", "$..foo", "$.items[0:5]", "$.items[?(@.price > 10)]", "invalid"} {
+		result := idx.Evaluate([]Predicate{EQ(path, "x")})
+		if result.Count() != int(idx.Header.NumRowGroups) {
+			t.Fatalf("Evaluate(EQ(%q, x)) count = %d, want %d", path, result.Count(), idx.Header.NumRowGroups)
+		}
 	}
 }
 

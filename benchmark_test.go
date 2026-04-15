@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 )
 
@@ -88,12 +89,124 @@ func setupTestIndex(numRGs int) *GINIndex {
 	return builder.Finalize()
 }
 
-func setupTestIndexWithText(numRGs int) *GINIndex {
-	builder, _ := NewBuilder(DefaultConfig(), numRGs)
-	for i := 0; i < numRGs; i++ {
-		builder.AddDocument(DocID(i), generateTestDocWithText(i))
+const (
+	phase06BenchmarkDocs         = 4096
+	phase06BenchmarkRowGroups    = 4096
+	phase06BenchmarkBasePaths    = 14
+	phase06BenchmarkEQValue      = "svc-07"
+	phase06BenchmarkContainsText = "timeout shard-03"
+	phase06BenchmarkRegexPattern = "timeout shard-(03|17)"
+	phase06BenchmarkEQMatches    = 64
+	phase06BenchmarkTextMatches  = 256
+	phase06BenchmarkRegexMatches = 512
+	phase06BenchmarkEQLabel      = "64of4096"
+	phase06BenchmarkTextLabel    = "256of4096"
+	phase06BenchmarkRegexLabel   = "512of4096"
+)
+
+var (
+	phase06BenchmarkWidthTiers = []int{16, 128, 512, 2048}
+	phase06ServicePathVariants = []struct {
+		name string
+		path string
+	}{
+		{name: "canonical", path: "$.service"},
+		{name: "single-quoted", path: "$['service']"},
+		{name: "double-quoted", path: "$[\"service\"]"},
 	}
-	return builder.Finalize()
+	phase06MessagePathVariants = []struct {
+		name string
+		path string
+	}{
+		{name: "canonical", path: "$.message"},
+		{name: "single-quoted", path: "$['message']"},
+		{name: "double-quoted", path: "$[\"message\"]"},
+	}
+	phase06WideIndexCache   = make(map[int]*GINIndex)
+	phase06WideIndexCacheMu sync.Mutex
+)
+
+func generatePhase06WideLogDoc(i int, width int) []byte {
+	if width < phase06BenchmarkBasePaths {
+		panic(fmt.Sprintf("phase 06 width %d must be >= %d", width, phase06BenchmarkBasePaths))
+	}
+
+	service := fmt.Sprintf("svc-%02d", i%64)
+	if i%64 == 7 {
+		service = phase06BenchmarkEQValue
+	}
+
+	message := fmt.Sprintf("ok request shard-%02d", i%64)
+	switch i % 16 {
+	case 3:
+		message = "timeout shard-03 during downstream read"
+	case 7:
+		message = "timeout shard-17 during downstream read"
+	}
+
+	doc := map[string]any{
+		"service":    service,
+		"method":     []string{"GET", "POST", "PUT", "DELETE"}[i%4],
+		"status":     []string{"ok", "warn", "error"}[i%3],
+		"message":    message,
+		"request_id": fmt.Sprintf("req-%04d", i),
+		"host":       fmt.Sprintf("api-%02d.internal", i%32),
+		"region":     []string{"eu-central-1", "us-east-1", "ap-southeast-1"}[i%3],
+		"http": map[string]any{
+			"path":   fmt.Sprintf("/v1/resource/%02d", i%32),
+			"status": 200 + (i % 5),
+		},
+		"labels": map[string]any{
+			"env":  []string{"prod", "staging", "dev"}[i%3],
+			"team": []string{"core", "search", "platform", "data"}[i%4],
+		},
+	}
+
+	for extra := 0; extra < width-phase06BenchmarkBasePaths; extra++ {
+		doc[fmt.Sprintf("extra_%04d", extra)] = fmt.Sprintf("extra-value-%02d", extra%8)
+	}
+
+	data, _ := json.Marshal(doc)
+	return data
+}
+
+func setupPhase06WideIndex(width int) *GINIndex {
+	phase06WideIndexCacheMu.Lock()
+	if idx, ok := phase06WideIndexCache[width]; ok {
+		phase06WideIndexCacheMu.Unlock()
+		return idx
+	}
+	phase06WideIndexCacheMu.Unlock()
+
+	builder, _ := NewBuilder(DefaultConfig(), phase06BenchmarkRowGroups)
+	for i := 0; i < phase06BenchmarkDocs; i++ {
+		builder.AddDocument(DocID(i), generatePhase06WideLogDoc(i, width))
+	}
+	idx := builder.Finalize()
+	if len(idx.PathDirectory) != width {
+		panic(fmt.Sprintf("phase 06 fixture width mismatch: got %d paths, want %d", len(idx.PathDirectory), width))
+	}
+
+	phase06WideIndexCacheMu.Lock()
+	defer phase06WideIndexCacheMu.Unlock()
+	if cached, ok := phase06WideIndexCache[width]; ok {
+		return cached
+	}
+	phase06WideIndexCache[width] = idx
+	return idx
+}
+
+func benchmarkPhase06Predicate(b *testing.B, width int, spelling string, pred Predicate, expectedMatches int) {
+	idx := setupPhase06WideIndex(width)
+	result := idx.Evaluate([]Predicate{pred})
+	if result.Count() != expectedMatches {
+		b.Fatalf("unexpected selectivity for %s: got %d want %d", spelling, result.Count(), expectedMatches)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		idx.Evaluate([]Predicate{pred})
+	}
 }
 
 // =============================================================================
@@ -186,11 +299,19 @@ func BenchmarkBuilderMemory(b *testing.B) {
 // =============================================================================
 
 func BenchmarkQueryEQ(b *testing.B) {
-	idx := setupTestIndex(1000)
-	b.ResetTimer()
-
-	for i := 0; i < b.N; i++ {
-		idx.Evaluate([]Predicate{EQ("$.name", "user_42")})
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06ServicePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkEQLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					EQ(variant.path, phase06BenchmarkEQValue),
+					phase06BenchmarkEQMatches,
+				)
+			})
+		}
 	}
 }
 
@@ -259,17 +380,59 @@ func BenchmarkQueryIN(b *testing.B) {
 }
 
 func BenchmarkQueryContains(b *testing.B) {
-	patterns := []string{"quick", "hello world", "programming language"}
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06MessagePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkTextLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					Contains(variant.path, phase06BenchmarkContainsText),
+					phase06BenchmarkTextMatches,
+				)
+			})
+		}
+	}
+}
 
-	idx := setupTestIndexWithText(1000)
+func BenchmarkQueryRegex(b *testing.B) {
+	for _, width := range phase06BenchmarkWidthTiers {
+		for _, variant := range phase06MessagePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s/selectivity=%s", width, variant.name, phase06BenchmarkRegexLabel)
+			b.Run(name, func(b *testing.B) {
+				benchmarkPhase06Predicate(
+					b,
+					width,
+					variant.path,
+					Regex(variant.path, phase06BenchmarkRegexPattern),
+					phase06BenchmarkRegexMatches,
+				)
+			})
+		}
+	}
+}
 
-	for _, pattern := range patterns {
-		b.Run(fmt.Sprintf("Len=%d", len(pattern)), func(b *testing.B) {
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				idx.Evaluate([]Predicate{Contains("$.description", pattern)})
-			}
-		})
+func BenchmarkPathLookup(b *testing.B) {
+	for _, width := range phase06BenchmarkWidthTiers {
+		idx := setupPhase06WideIndex(width)
+		for _, variant := range phase06ServicePathVariants {
+			name := fmt.Sprintf("paths=%d/spelling=%s", width, variant.name)
+			b.Run(name, func(b *testing.B) {
+				pathID, entry := idx.findPath(variant.path)
+				if pathID < 0 || entry == nil {
+					b.Fatalf("path lookup failed for %s", variant.path)
+				}
+
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					pathID, entry = idx.findPath(variant.path)
+					if pathID < 0 || entry == nil {
+						b.Fatalf("path lookup failed for %s", variant.path)
+					}
+				}
+			})
+		}
 	}
 }
 

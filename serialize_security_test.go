@@ -3,7 +3,10 @@ package gin
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	stderrors "errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
@@ -168,6 +171,171 @@ func TestDecodeBoundsPathDirectory(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsOutOfOrderPathDirectoryIDs(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.AddDocument(0, []byte(`{"foo": "x", "bar": "y"}`))
+	builder.AddDocument(1, []byte(`{"foo": "z", "bar": "w"}`))
+	idx := builder.Finalize()
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	body := data[4:]
+	reader := bytes.NewReader(body)
+	headerOnly := NewGINIndex()
+	if err := readHeader(reader, headerOnly); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+
+	pathIDOffsets := make([]int, 0, headerOnly.Header.NumPaths)
+	for i := uint32(0); i < headerOnly.Header.NumPaths; i++ {
+		pathIDOffsets = append(pathIDOffsets, len(body)-reader.Len())
+
+		var pathID uint16
+		if err := binary.Read(reader, binary.LittleEndian, &pathID); err != nil {
+			t.Fatalf("read pathID %d: %v", i, err)
+		}
+
+		var pathLen uint16
+		if err := binary.Read(reader, binary.LittleEndian, &pathLen); err != nil {
+			t.Fatalf("read pathLen %d: %v", i, err)
+		}
+		if _, err := reader.Seek(int64(pathLen)+1+4+1, io.SeekCurrent); err != nil {
+			t.Fatalf("seek path entry %d: %v", i, err)
+		}
+	}
+
+	if len(pathIDOffsets) < 2 {
+		t.Fatalf("need at least 2 path entries, got %d", len(pathIDOffsets))
+	}
+
+	firstID := binary.LittleEndian.Uint16(body[pathIDOffsets[0] : pathIDOffsets[0]+2])
+	secondID := binary.LittleEndian.Uint16(body[pathIDOffsets[1] : pathIDOffsets[1]+2])
+	binary.LittleEndian.PutUint16(body[pathIDOffsets[0]:pathIDOffsets[0]+2], secondID)
+	binary.LittleEndian.PutUint16(body[pathIDOffsets[1]:pathIDOffsets[1]+2], firstID)
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for out-of-order path ids, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsOutOfRangeNumericIndexPathID(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	builder.AddDocument(0, []byte(`{"age": 30}`))
+	idx := builder.Finalize()
+
+	var numeric *NumericIndex
+	for pathID, ni := range idx.NumericIndexes {
+		numeric = ni
+		delete(idx.NumericIndexes, pathID)
+		break
+	}
+	if numeric == nil {
+		t.Fatal("expected numeric index")
+	}
+	idx.NumericIndexes[outOfRangePathID(t, idx)] = numeric
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for out-of-range numeric index path id, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestValidatePathReferencesRejectsOutOfRangeIDsForAllIndexKinds(t *testing.T) {
+	t.Run("all index maps", func(t *testing.T) {
+		numRGs := 1
+		cases := []struct {
+			name string
+			kind string
+			add  func(t *testing.T, idx *GINIndex)
+		}{
+			{
+				name: "string index",
+				kind: "string index",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.StringIndexes[outOfRangePathID(t, idx)] = &StringIndex{}
+				},
+			},
+			{
+				name: "string length index",
+				kind: "string length index",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.StringLengthIndexes[outOfRangePathID(t, idx)] = &StringLengthIndex{}
+				},
+			},
+			{
+				name: "numeric index",
+				kind: "numeric index",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.NumericIndexes[outOfRangePathID(t, idx)] = &NumericIndex{}
+				},
+			},
+			{
+				name: "null index",
+				kind: "null index",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.NullIndexes[outOfRangePathID(t, idx)] = &NullIndex{
+						NullRGBitmap:    MustNewRGSet(numRGs),
+						PresentRGBitmap: MustNewRGSet(numRGs),
+					}
+				},
+			},
+			{
+				name: "trigram index",
+				kind: "trigram index",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.TrigramIndexes[outOfRangePathID(t, idx)] = &TrigramIndex{
+						Trigrams:  make(map[string]*RGSet),
+						NumRGs:    numRGs,
+						N:         3,
+						MinLength: 3,
+					}
+				},
+			},
+			{
+				name: "path cardinality",
+				kind: "path cardinality",
+				add: func(t *testing.T, idx *GINIndex) {
+					idx.PathCardinality[outOfRangePathID(t, idx)] = MustNewHyperLogLog(4)
+				},
+			},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$"}}
+				tc.add(t, idx)
+
+				err := idx.validatePathReferences()
+				if err == nil {
+					t.Fatalf("validatePathReferences() error = nil, want ErrInvalidFormat for %s", tc.kind)
+				}
+				if !stderrors.Is(err, ErrInvalidFormat) {
+					t.Fatalf("validatePathReferences() error = %v, want ErrInvalidFormat for %s", err, tc.kind)
+				}
+				if !strings.Contains(err.Error(), tc.kind) {
+					t.Fatalf("validatePathReferences() error = %v, want kind %q in error", err, tc.kind)
+				}
+			})
+		}
+	})
+}
+
 func TestDecodeBoundsStringIndexes(t *testing.T) {
 	var buf bytes.Buffer
 	// numPaths = 1
@@ -184,6 +352,63 @@ func TestDecodeBoundsStringIndexes(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
+	}
+}
+
+func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
+	sc := SerializedConfig{
+		FTSPaths: []string{"$.foo", "$['foo']"},
+	}
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err = readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected canonical FTS collision error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
+	sc := SerializedConfig{
+		Transformers: []TransformerSpec{
+			NewTransformerSpec("$.foo", TransformerToLower, nil),
+			NewTransformerSpec("$['foo']", TransformerEmailDomain, nil),
+		},
+	}
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err = readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected canonical transformer collision error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
 }
 

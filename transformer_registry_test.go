@@ -215,6 +215,107 @@ func TestConfigSerialization(t *testing.T) {
 	}
 }
 
+func TestConfigSerializationCanonicalPaths(t *testing.T) {
+	cfg, err := NewConfig(
+		WithISODateTransformer("$['timestamp']"),
+		WithFTSPaths("$['description']", `$["title"]`),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder, err := NewBuilder(cfg, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder() error = %v", err)
+	}
+
+	docs := []string{
+		`{"timestamp": "2024-01-15T10:30:00Z", "description": "test doc", "title": "Hello"}`,
+		`{"timestamp": "2024-01-16T12:00:00Z", "description": "another test", "title": "World"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument() error = %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if got, want := decoded.Config.ftsPaths, []string{"$.description", "$.title"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("decoded ftsPaths = %v, want %v", got, want)
+	}
+
+	if _, ok := decoded.Config.fieldTransformers["$.timestamp"]; !ok {
+		t.Fatalf("expected decoded fieldTransformers to contain canonical key $.timestamp, got %v", decoded.Config.fieldTransformers)
+	}
+
+	spec, ok := decoded.Config.transformerSpecs["$.timestamp"]
+	if !ok {
+		t.Fatalf("expected decoded transformerSpecs to contain canonical key $.timestamp, got %v", decoded.Config.transformerSpecs)
+	}
+	if spec.Path != "$.timestamp" {
+		t.Fatalf("decoded transformer spec path = %q, want %.12s", spec.Path, "$.timestamp")
+	}
+}
+
+func TestConfigSerializationCanonicalQueryBehavior(t *testing.T) {
+	cfg, err := NewConfig(
+		WithISODateTransformer("$['timestamp']"),
+		WithFTSPaths("$['description']", `$["title"]`),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder, err := NewBuilder(cfg, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder() error = %v", err)
+	}
+
+	docs := []string{
+		`{"timestamp": "2024-01-15T10:30:00Z", "description": "test doc", "title": "Hello"}`,
+		`{"timestamp": "2024-01-16T12:00:00Z", "description": "another test", "title": "World"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument() error = %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	if got, want := decoded.Config.ftsPaths, []string{"$.description", "$.title"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("decoded ftsPaths = %v, want %v", got, want)
+	}
+
+	canonicalContains := decoded.Evaluate([]Predicate{Contains("$.description", "test")}).ToSlice()
+	bracketContains := decoded.Evaluate([]Predicate{Contains("$['description']", "test")}).ToSlice()
+	if len(canonicalContains) != 2 || canonicalContains[0] != 0 || canonicalContains[1] != 1 {
+		t.Fatalf("Contains($.description, test) = %v, want [0 1]", canonicalContains)
+	}
+	if len(bracketContains) != len(canonicalContains) || bracketContains[0] != canonicalContains[0] || bracketContains[1] != canonicalContains[1] {
+		t.Fatalf("Contains($['description'], test) = %v, want %v", bracketContains, canonicalContains)
+	}
+}
+
 func TestTransformerRoundTrip(t *testing.T) {
 	cfg, err := NewConfig(
 		WithISODateTransformer("$.created_at"),

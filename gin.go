@@ -1,6 +1,11 @@
 package gin
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+
+	"github.com/pkg/errors"
+)
 
 const (
 	MagicBytes = "GIN\x01"
@@ -25,6 +30,8 @@ const (
 )
 
 type GINIndex struct {
+	// GINIndex is immutable after `Finalize()` or `Decode()`; pathLookup is
+	// derived, non-serialized state rebuilt once and then treated as read-only.
 	Header              Header
 	PathDirectory       []PathEntry
 	GlobalBloom         *BloomFilter
@@ -36,6 +43,7 @@ type GINIndex struct {
 	PathCardinality     map[uint16]*HyperLogLog
 	DocIDMapping        []DocID
 	Config              *GINConfig
+	pathLookup          map[string]uint16
 }
 
 type Header struct {
@@ -135,23 +143,44 @@ type ConfigOption func(*GINConfig) error
 
 func WithFTSPaths(paths ...string) ConfigOption {
 	return func(c *GINConfig) error {
-		c.ftsPaths = paths
+		seen := make(map[string]string, len(paths))
+		canonicalPaths := make([]string, 0, len(paths))
+		for _, path := range paths {
+			canonicalPath, err := canonicalizeSupportedPath(path)
+			if err != nil {
+				return err
+			}
+			if firstPath, exists := seen[canonicalPath]; exists {
+				return errors.Errorf("duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
+			}
+			seen[canonicalPath] = path
+			canonicalPaths = append(canonicalPaths, canonicalPath)
+		}
+		c.ftsPaths = canonicalPaths
 		return nil
 	}
 }
 
 func WithFieldTransformer(path string, fn FieldTransformer) ConfigOption {
 	return func(c *GINConfig) error {
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return err
+		}
 		if c.fieldTransformers == nil {
 			c.fieldTransformers = make(map[string]FieldTransformer)
 		}
-		c.fieldTransformers[path] = fn
+		c.fieldTransformers[canonicalPath] = fn
 		return nil
 	}
 }
 
 func WithRegisteredTransformer(path string, id TransformerID, params []byte) ConfigOption {
 	return func(c *GINConfig) error {
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return err
+		}
 		if c.fieldTransformers == nil {
 			c.fieldTransformers = make(map[string]FieldTransformer)
 		}
@@ -162,8 +191,8 @@ func WithRegisteredTransformer(path string, id TransformerID, params []byte) Con
 		if err != nil {
 			return err
 		}
-		c.fieldTransformers[path] = fn
-		c.transformerSpecs[path] = NewTransformerSpec(path, id, params)
+		c.fieldTransformers[canonicalPath] = fn
+		c.transformerSpecs[canonicalPath] = NewTransformerSpec(canonicalPath, id, params)
 		return nil
 	}
 }
@@ -259,7 +288,96 @@ func NewGINIndex() *GINIndex {
 		TrigramIndexes:      make(map[uint16]*TrigramIndex),
 		StringLengthIndexes: make(map[uint16]*StringLengthIndex),
 		PathCardinality:     make(map[uint16]*HyperLogLog),
+		pathLookup:          make(map[string]uint16),
 	}
+}
+
+func (idx *GINIndex) rebuildPathLookup() error {
+	canonicalDirectory := append([]PathEntry(nil), idx.PathDirectory...)
+	lookup := make(map[string]uint16, len(idx.PathDirectory))
+	originals := make(map[string]string, len(idx.PathDirectory))
+
+	for i := range canonicalDirectory {
+		entry := &canonicalDirectory[i]
+		// Keep the explicit range guard ahead of the ordering check so corrupt
+		// decodes report a precise out-of-range failure instead of a generic
+		// out-of-order error.
+		if int(entry.PathID) >= len(idx.PathDirectory) {
+			return errors.Wrapf(ErrInvalidFormat, "path id %d out of range for %q", entry.PathID, entry.PathName)
+		}
+		if entry.PathID != uint16(i) {
+			return errors.Wrapf(ErrInvalidFormat, "path id %d out of order at directory position %d for %q", entry.PathID, i, entry.PathName)
+		}
+
+		rawPath := entry.PathName
+		canonical := NormalizePath(rawPath)
+		if firstPath, exists := originals[canonical]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, rawPath)
+		}
+		entry.PathName = canonical
+		lookup[canonical] = entry.PathID
+		originals[canonical] = rawPath
+	}
+
+	if err := idx.validatePathReferences(); err != nil {
+		return err
+	}
+
+	idx.PathDirectory = canonicalDirectory
+	idx.pathLookup = lookup
+	return nil
+}
+
+func (idx *GINIndex) validatePathReferences() error {
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		if err := idx.validatePathReference("string index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.StringLengthIndexes) {
+		if err := idx.validatePathReference("string length index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.NumericIndexes) {
+		if err := idx.validatePathReference("numeric index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.NullIndexes) {
+		if err := idx.validatePathReference("null index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
+		if err := idx.validatePathReference("trigram index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.PathCardinality) {
+		if err := idx.validatePathReference("path cardinality", pathID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sortedPathIDs[T any](m map[uint16]T) []uint16 {
+	pathIDs := make([]uint16, 0, len(m))
+	for pathID := range m {
+		pathIDs = append(pathIDs, pathID)
+	}
+	sort.Slice(pathIDs, func(i, j int) bool {
+		return pathIDs[i] < pathIDs[j]
+	})
+	return pathIDs
+}
+
+func (idx *GINIndex) validatePathReference(kind string, pathID uint16) error {
+	if int(pathID) >= len(idx.PathDirectory) {
+		return errors.Wrapf(ErrInvalidFormat, "%s path id %d out of range", kind, pathID)
+	}
+	return nil
 }
 
 func jsonMarshal(v any) ([]byte, error) {

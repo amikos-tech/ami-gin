@@ -59,12 +59,19 @@ func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
 }
 
 func (idx *GINIndex) findPath(path string) (int, *PathEntry) {
-	for i := range idx.PathDirectory {
-		if idx.PathDirectory[i].PathName == path {
-			return i, &idx.PathDirectory[i]
-		}
+	canonicalPath, err := canonicalizeSupportedPath(path)
+	if err != nil {
+		return -1, nil
 	}
-	return -1, nil
+
+	pathID, ok := idx.pathLookup[canonicalPath]
+	if !ok {
+		return -1, nil
+	}
+	if int(pathID) >= len(idx.PathDirectory) {
+		return -1, nil
+	}
+	return int(pathID), &idx.PathDirectory[pathID]
 }
 
 func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet {

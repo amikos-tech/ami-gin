@@ -198,6 +198,9 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	return append([]byte(compressedMagic), compressed...), nil
 }
 
+// Decode deserializes an index, validates cross-structure path references, and
+// canonicalizes supported JSONPath spellings in PathDirectory while rebuilding
+// derived lookup state.
 func Decode(data []byte) (*GINIndex, error) {
 	if len(data) < 4 {
 		return nil, errors.Wrap(ErrInvalidFormat, "data too short")
@@ -278,6 +281,10 @@ func Decode(data []byte) (*GINIndex, error) {
 		return nil, errors.Wrap(err, "read config")
 	}
 	idx.Config = cfg
+
+	if err := idx.rebuildPathLookup(); err != nil {
+		return nil, errors.Wrap(err, "rebuild path lookup")
+	}
 
 	return idx, nil
 }
@@ -988,19 +995,44 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		TrigramMinLength:  sc.TrigramMinLength,
 		HLLPrecision:      sc.HLLPrecision,
 		PrefixBlockSize:   sc.PrefixBlockSize,
-		ftsPaths:          sc.FTSPaths,
+	}
+
+	if len(sc.FTSPaths) > 0 {
+		cfg.ftsPaths = make([]string, 0, len(sc.FTSPaths))
+		seenFTSPaths := make(map[string]string, len(sc.FTSPaths))
+		for _, path := range sc.FTSPaths {
+			canonicalPath, err := canonicalizeSupportedPath(path)
+			if err != nil {
+				return nil, errors.Wrapf(err, "canonicalize FTS path %q", path)
+			}
+			if firstPath, exists := seenFTSPaths[canonicalPath]; exists {
+				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
+			}
+			seenFTSPaths[canonicalPath] = path
+			cfg.ftsPaths = append(cfg.ftsPaths, canonicalPath)
+		}
 	}
 
 	if len(sc.Transformers) > 0 {
 		cfg.fieldTransformers = make(map[string]FieldTransformer)
 		cfg.transformerSpecs = make(map[string]TransformerSpec)
+		seenTransformerPaths := make(map[string]string, len(sc.Transformers))
 		for _, spec := range sc.Transformers {
+			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
+			if err != nil {
+				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
+			}
+			if firstPath, exists := seenTransformerPaths[canonicalPath]; exists {
+				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical transformer path %q from %q and %q", canonicalPath, firstPath, spec.Path)
+			}
+			seenTransformerPaths[canonicalPath] = spec.Path
+			spec.Path = canonicalPath
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
 				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
 			}
-			cfg.fieldTransformers[spec.Path] = fn
-			cfg.transformerSpecs[spec.Path] = spec
+			cfg.fieldTransformers[canonicalPath] = fn
+			cfg.transformerSpecs[canonicalPath] = spec
 		}
 	}
 

@@ -11,7 +11,7 @@
 - Phases `01` through `05` are complete and archived
 - This milestone starts at `Phase 06`
 
-- [ ] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup
+- [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
 - [ ] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe
 - [ ] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size
 - [ ] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers
@@ -28,7 +28,10 @@
   2. Equivalent supported paths such as `$.foo` and `$['foo']` resolve through the same canonical lookup path
   3. EQ, CONTAINS, and REGEX benchmarks include high path-count fixtures and show measurable lookup improvement or no regression
   4. Existing query, JSONPath, and serialization tests continue to pass
-**Plans:** TBD
+**Plans:** 2/2 plans complete
+Plans:
+- [x] `06-01-PLAN.md` — Canonical path storage, constant-time lookup, decode rebuild, and regression coverage
+- [x] `06-02-PLAN.md` — Wide-path log-style benchmark family for EQ, CONTAINS, REGEX, and equivalent spellings
 
 ### Phase 07: Builder Parsing & Numeric Fidelity
 **Goal**: Build-time ingest gets cheaper and numeric semantics stop depending on generic `float64` JSON decoding
@@ -83,7 +86,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 06. Query Path Hot Path | 0/0 | Not started | - |
+| 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
 | 07. Builder Parsing & Numeric Fidelity | 0/0 | Not started | - |
 | 08. Adaptive High-Cardinality Indexing | 0/0 | Not started | - |
 | 09. Derived Representations | 0/0 | Not started | - |
@@ -91,3 +94,26 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
+
+## Backlog
+
+### Phase 999.1: Lefthook Pre-Push Quality Gates (BACKLOG)
+
+**Goal:** Add `lefthook`-based pre-push quality gates, modeled on `/Users/tazarov/experiments/telia/tclr/tclr-v2/lefthook.yml`, to block pushes when required local validation fails or required tools are missing. Scope the future implementation around this repo's native checks such as `make lint` and `make test`, with room for selective changed-package execution if that keeps hook latency reasonable.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.2: walkJSON NormalizePath Fast-Path (BACKLOG)
+
+**Goal:** Add a fast-path in `walkJSON` to skip `NormalizePath` when the path is already in canonical form (builder-generated paths never contain bracket-quoted fields). This avoids `jp.ParseString` overhead on every recursive call during ingestion.
+**Requirements:** Profile ingestion to confirm `NormalizePath` is a measurable hotspot before implementing.
+**Plans:** 0 plans
+
+### Phase 999.3: Minor Code Clarity in Phase 06 (BACKLOG)
+
+**Goal:** Address non-blocking observations from Phase 06 review: (a) add comment on `findPath` bounds check explaining it guards against corruption; (b) reorder or comment `validatePathReferences` to clarify it reads the original directory; (c) make benchmark fixture path count assertion less brittle.
+**Requirements:** None — cosmetic improvements only.
+**Plans:** 0 plans
