@@ -14,6 +14,7 @@ import (
 )
 
 const maxExactFloatInt = int64(1 << 53)
+const maxInt64AsFloat64 = float64(1 << 63) // upper bound for float64→int64; math.MaxInt64 rounds up to this
 
 type GINBuilder struct {
 	config     GINConfig
@@ -515,7 +516,7 @@ func stagedNumericFromValue(value any) (stagedNumericValue, error) {
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return stagedNumericValue{}, errors.New("non-finite numeric value")
 		}
-		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
+		if v == math.Trunc(v) && v >= math.MinInt64 && v < maxInt64AsFloat64 {
 			return stagedNumericValue{isInt: true, intVal: int64(v)}, nil
 		}
 		return stagedNumericValue{floatVal: v}, nil

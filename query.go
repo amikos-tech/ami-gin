@@ -475,7 +475,7 @@ func toExactInt64(v any) (int64, bool) {
 		}
 		return int64(val), true
 	case float64:
-		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) || val < math.MinInt64 || val > math.MaxInt64 {
+		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) || val < math.MinInt64 || val >= maxInt64AsFloat64 {
 			return 0, false
 		}
 		return int64(val), true
@@ -492,7 +492,7 @@ func toRoundedInt64(v any, round func(float64) float64) (int64, bool) {
 	}
 
 	f := toFloat64(v)
-	if f == nil || math.IsNaN(*f) || math.IsInf(*f, 0) || *f < math.MinInt64 || *f > math.MaxInt64 {
+	if f == nil || math.IsNaN(*f) || math.IsInf(*f, 0) || *f < math.MinInt64 || *f >= maxInt64AsFloat64 {
 		return 0, false
 	}
 
