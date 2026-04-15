@@ -168,7 +168,7 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 		hll:               MustNewHyperLogLog(b.config.HLLPrecision),
 	}
 	if b.shouldEnableTrigrams(path) {
-		pd.trigrams, _ = NewTrigramIndex(b.numRGs)
+		pd.trigrams = MustNewTrigramIndex(b.numRGs)
 	}
 	b.pathData[path] = pd
 	return pd
@@ -263,8 +263,8 @@ func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state 
 				}
 				objectValues[key] = value
 			}
-			for key, value := range objectValues {
-				if err := b.stageMaterializedValue(path+"."+key, value, state, true); err != nil {
+			for _, key := range sortedObjectKeys(objectValues) {
+				if err := b.stageMaterializedValue(path+"."+key, objectValues[key], state, true); err != nil {
 					return err
 				}
 			}
@@ -311,6 +311,15 @@ func decodeAny(decoder *json.Decoder) (any, error) {
 		return nil, err
 	}
 	return value, nil
+}
+
+func sortedObjectKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
@@ -776,8 +785,9 @@ func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) 
 	stat, ok := pd.numericStats[rgID]
 	if !ok {
 		pd.numericStats[rgID] = &RGNumericStat{
-			IntMin:   val,
-			IntMax:   val,
+			IntMin: val,
+			IntMax: val,
+			// Int-only query logic uses IntMin/IntMax; Min/Max are kept for exported stats.
 			Min:      float64(val),
 			Max:      float64(val),
 			HasValue: true,

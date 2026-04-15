@@ -55,6 +55,14 @@ func NewTrigramIndex(numRGs int, opts ...NGramOption) (*TrigramIndex, error) {
 	}, nil
 }
 
+func MustNewTrigramIndex(numRGs int, opts ...NGramOption) *TrigramIndex {
+	ti, err := NewTrigramIndex(numRGs, opts...)
+	if err != nil {
+		panic(err)
+	}
+	return ti
+}
+
 func (ti *TrigramIndex) Add(value string, rgID int) {
 	runes := []rune(strings.ToLower(value))
 	if len(runes) < ti.MinLength {

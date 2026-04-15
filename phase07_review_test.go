@@ -3,6 +3,7 @@ package gin
 import (
 	stderrors "errors"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -21,6 +22,37 @@ func TestWalkJSONPropagatesStagingErrors(t *testing.T) {
 
 	if got := builder.Finalize().PathDirectory; len(got) != 0 {
 		t.Fatalf("walkJSON() merged rejected path state: PathDirectory len = %d, want 0", len(got))
+	}
+}
+
+func TestSortedObjectKeys(t *testing.T) {
+	got := sortedObjectKeys(map[string]any{
+		"z": 1,
+		"a": 2,
+		"m": 3,
+	})
+	want := []string{"a", "m", "z"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("sortedObjectKeys() = %v, want %v", got, want)
+	}
+}
+
+func TestAddDocumentReportsLexicographicallyFirstObjectFieldError(t *testing.T) {
+	cfg, err := NewConfig(
+		WithFieldTransformer("$.a", func(value any) (any, bool) { return complex(1, 0), true }),
+		WithFieldTransformer("$.z", func(value any) (any, bool) { return complex(1, 0), true }),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, cfg, 1)
+	err = builder.AddDocument(0, []byte(`{"z":"bad","a":"bad"}`))
+	if err == nil {
+		t.Fatal("AddDocument() error = nil, want staged field error")
+	}
+	if !strings.Contains(err.Error(), "$.a") {
+		t.Fatalf("AddDocument() error = %v, want $.a to fail first", err)
 	}
 }
 
@@ -239,4 +271,14 @@ func TestToRoundedInt64EdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMustNewTrigramIndexPanicsOnInvalidOption(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("MustNewTrigramIndex() did not panic on invalid option")
+		}
+	}()
+
+	_ = MustNewTrigramIndex(1, WithN(1))
 }
