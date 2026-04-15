@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"encoding/json"
 	stderrors "errors"
 	"math"
 	"reflect"
@@ -53,6 +54,36 @@ func TestAddDocumentReportsLexicographicallyFirstObjectFieldError(t *testing.T) 
 	}
 	if !strings.Contains(err.Error(), "$.a") {
 		t.Fatalf("AddDocument() error = %v, want $.a to fail first", err)
+	}
+}
+
+func TestPrepareTransformerValueRecursesThroughNestedArrays(t *testing.T) {
+	input := map[string]any{
+		"items": []any{
+			json.Number("1"),
+			map[string]any{
+				"values": []any{
+					json.Number("2.5"),
+					map[string]any{"deep": json.Number("3e2")},
+				},
+			},
+		},
+	}
+
+	want := map[string]any{
+		"items": []any{
+			float64(1),
+			map[string]any{
+				"values": []any{
+					float64(2.5),
+					map[string]any{"deep": float64(300)},
+				},
+			},
+		},
+	}
+
+	if got := prepareTransformerValue(input); !reflect.DeepEqual(got, want) {
+		t.Fatalf("prepareTransformerValue() = %#v, want %#v", got, want)
 	}
 }
 
