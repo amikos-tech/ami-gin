@@ -458,8 +458,8 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 		}
 		return nil
 	case map[string]any:
-		for key, val := range v {
-			if err := b.stageMaterializedValue(path+"."+key, val, state, true); err != nil {
+		for _, key := range sortedObjectKeys(v) {
+			if err := b.stageMaterializedValue(path+"."+key, v[key], state, true); err != nil {
 				return err
 			}
 		}
