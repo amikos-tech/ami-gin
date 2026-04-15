@@ -1532,6 +1532,62 @@ func TestNumericIndexPreservesInt64Exactness(t *testing.T) {
 	}
 }
 
+func TestIntOnlyRangeQueriesWithFractionalBounds(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":1}`},
+		{1, `{"score":2}`},
+		{2, `{"score":3}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	tests := []struct {
+		name string
+		pred Predicate
+		want []int
+	}{
+		{
+			name: "GT uses floor bound",
+			pred: GT("$.score", 1.5),
+			want: []int{1, 2},
+		},
+		{
+			name: "GTE uses ceil bound",
+			pred: GTE("$.score", 1.5),
+			want: []int{1, 2},
+		},
+		{
+			name: "LT uses ceil bound",
+			pred: LT("$.score", 2.5),
+			want: []int{0, 1},
+		},
+		{
+			name: "LTE uses floor bound",
+			pred: LTE("$.score", 2.5),
+			want: []int{0, 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idx.Evaluate([]Predicate{tt.pred}).ToSlice(); fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Fatalf("%s = %v, want %v", tt.pred, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestMixedNumericPathRejectsLossyPromotion(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 

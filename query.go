@@ -154,7 +154,7 @@ func (idx *GINIndex) evaluateGT(pathID int, value any) *RGSet {
 	}
 
 	if ni.ValueType == 0 {
-		queryInt, ok := toExactInt64(value)
+		queryInt, ok := toRoundedInt64(value, math.Floor)
 		if !ok {
 			return AllRGs(numRGs)
 		}
@@ -196,7 +196,7 @@ func (idx *GINIndex) evaluateGTE(pathID int, value any) *RGSet {
 	}
 
 	if ni.ValueType == 0 {
-		queryInt, ok := toExactInt64(value)
+		queryInt, ok := toRoundedInt64(value, math.Ceil)
 		if !ok {
 			return AllRGs(numRGs)
 		}
@@ -238,7 +238,7 @@ func (idx *GINIndex) evaluateLT(pathID int, value any) *RGSet {
 	}
 
 	if ni.ValueType == 0 {
-		queryInt, ok := toExactInt64(value)
+		queryInt, ok := toRoundedInt64(value, math.Ceil)
 		if !ok {
 			return AllRGs(numRGs)
 		}
@@ -280,7 +280,7 @@ func (idx *GINIndex) evaluateLTE(pathID int, value any) *RGSet {
 	}
 
 	if ni.ValueType == 0 {
-		queryInt, ok := toExactInt64(value)
+		queryInt, ok := toRoundedInt64(value, math.Floor)
 		if !ok {
 			return AllRGs(numRGs)
 		}
@@ -484,6 +484,19 @@ func toExactInt64(v any) (int64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func toRoundedInt64(v any, round func(float64) float64) (int64, bool) {
+	if exact, ok := toExactInt64(v); ok {
+		return exact, true
+	}
+
+	f := toFloat64(v)
+	if f == nil || math.IsNaN(*f) || math.IsInf(*f, 0) || *f < math.MinInt64 || *f > math.MaxInt64 {
+		return 0, false
+	}
+
+	return int64(round(*f)), true
 }
 
 func (idx *GINIndex) evaluateIntOnlyEQ(ni *NumericIndex, numRGs int, queryInt int64) *RGSet {
