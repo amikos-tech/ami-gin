@@ -887,6 +887,8 @@ func (b *GINBuilder) Finalize() *GINIndex {
 			if pd.numericValueType == 0 {
 				ni.IntGlobalMin = pd.intGlobalMin
 				ni.IntGlobalMax = pd.intGlobalMax
+				ni.GlobalMin = float64(pd.intGlobalMin)
+				ni.GlobalMax = float64(pd.intGlobalMax)
 			} else {
 				ni.GlobalMin = pd.floatGlobalMin
 				ni.GlobalMax = pd.floatGlobalMax
