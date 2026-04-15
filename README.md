@@ -89,7 +89,10 @@ import (
 
 func main() {
     // Create builder for 3 row groups
-    builder := gin.NewBuilder(gin.DefaultConfig(), 3)
+    builder, err := gin.NewBuilder(gin.DefaultConfig(), 3)
+    if err != nil {
+        panic(err)
+    }
 
     // Add documents to row groups
     builder.AddDocument(0, []byte(`{"name": "alice", "age": 30}`))
@@ -551,7 +554,10 @@ config := gin.GINConfig{
     AdaptiveBucketCount:     128,   // Fixed bucket count for long-tail fallback
 }
 
-builder := gin.NewBuilder(config, numRowGroups)
+builder, err := gin.NewBuilder(config, numRowGroups)
+if err != nil {
+    panic(err)
+}
 ```
 
 ### High-Cardinality String Modes
@@ -1053,7 +1059,10 @@ For composite document identifiers (e.g., file + row group):
 ```go
 // Encode file index and row group into single DocID
 codec := gin.NewRowGroupCodec(20)  // 20 RGs per file
-builder := gin.NewBuilderWithCodec(config, totalRGs, codec)
+builder, err := gin.NewBuilder(config, totalRGs, gin.WithCodec(codec))
+if err != nil {
+    panic(err)
+}
 
 docID := codec.Encode(fileIndex, rgIndex)  // e.g., file=3, rg=15 → DocID=75
 builder.AddDocument(docID, jsonDoc)

@@ -199,6 +199,27 @@ func TestParsePredicateRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+func TestParsePredicateRejectsUnsupportedJSONPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []string{
+		`$.items[0] = "x"`,
+		`$..name = "alice"`,
+	}
+
+	for _, input := range tests {
+		input := input
+		t.Run(input, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := parsePredicate(input)
+			if err == nil {
+				t.Fatalf("parsePredicate(%q) returned nil error", input)
+			}
+		})
+	}
+}
+
 func TestParsePredicateRegexRoundTrip(t *testing.T) {
 	t.Parallel()
 

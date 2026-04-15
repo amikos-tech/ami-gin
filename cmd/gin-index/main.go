@@ -666,12 +666,18 @@ func parsePredicate(s string) (gin.Predicate, error) {
 	upper := strings.ToUpper(s)
 
 	if strings.HasSuffix(upper, " IS NULL") {
-		path := strings.TrimSpace(s[:len(s)-len(" IS NULL")])
+		path, err := normalizePredicatePath(strings.TrimSpace(s[:len(s)-len(" IS NULL")]))
+		if err != nil {
+			return gin.Predicate{}, err
+		}
 		return gin.IsNull(path), nil
 	}
 
 	if strings.HasSuffix(upper, " IS NOT NULL") {
-		path := strings.TrimSpace(s[:len(s)-len(" IS NOT NULL")])
+		path, err := normalizePredicatePath(strings.TrimSpace(s[:len(s)-len(" IS NOT NULL")]))
+		if err != nil {
+			return gin.Predicate{}, err
+		}
 		return gin.IsNotNull(path), nil
 	}
 
@@ -693,7 +699,10 @@ func parsePredicate(s string) (gin.Predicate, error) {
 
 	for _, p := range patterns {
 		if matches := p.regex.FindStringSubmatch(s); matches != nil {
-			path := strings.TrimSpace(matches[1])
+			path, err := normalizePredicatePath(strings.TrimSpace(matches[1]))
+			if err != nil {
+				return gin.Predicate{}, err
+			}
 			valueStr := strings.TrimSpace(matches[2])
 
 			if p.op == gin.OpIN || p.op == gin.OpNIN {
@@ -705,6 +714,13 @@ func parsePredicate(s string) (gin.Predicate, error) {
 	}
 
 	return gin.Predicate{}, errors.Errorf("cannot parse predicate: %s", s)
+}
+
+func normalizePredicatePath(path string) (string, error) {
+	if err := gin.ValidateJSONPath(path); err != nil {
+		return "", errors.Wrap(err, "invalid JSONPath")
+	}
+	return gin.NormalizePath(path), nil
 }
 
 func parseValue(s string) any {

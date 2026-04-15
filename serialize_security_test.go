@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 )
 
@@ -296,6 +297,82 @@ func TestDecodeRejectsMissingConfigLengthTrailer(t *testing.T) {
 	_, err = Decode(truncated)
 	if err == nil {
 		t.Fatal("Decode() error = nil, want ErrInvalidFormat for missing config length")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsOversizedCompressedPayload(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	uncompressed, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	payload := append([]byte{}, uncompressed[4:]...)
+	if len(payload) >= maxDecodedIndexSize {
+		t.Fatalf("fixture payload length = %d, want less than cap %d", len(payload), maxDecodedIndexSize)
+	}
+	padding := bytes.Repeat([]byte{0}, maxDecodedIndexSize-len(payload)+1)
+	payload = append(payload, padding...)
+
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	if err != nil {
+		t.Fatalf("zstd.NewWriter() error = %v", err)
+	}
+	compressed := encoder.EncodeAll(payload, nil)
+	encoder.Close()
+
+	_, err = Decode(append([]byte(compressedMagic), compressed...))
+	if err == nil {
+		t.Fatal("Decode() error = nil, want oversized compressed payload rejection")
+	}
+	if !strings.Contains(err.Error(), "decompress data") {
+		t.Fatalf("expected decompress data error, got %v", err)
+	}
+}
+
+func TestDecodeRejectsOversizedHeaderRowGroups(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	binary.LittleEndian.PutUint32(data[12:16], maxHeaderRowGroups+1)
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("Decode() error = nil, want oversized row-group count rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsOversizedHeaderDocs(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	binary.LittleEndian.PutUint64(data[16:24], maxHeaderDocs+1)
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("Decode() error = nil, want oversized doc count rejection")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)

@@ -16,12 +16,19 @@ import (
 const maxConfigSize = 1 << 20 // 1MB max config size
 
 const (
+	// maxDecodedIndexSize caps decompressed payload size for compressed indexes.
+	maxDecodedIndexSize = 64 << 20
+
 	// maxRGSetSize limits roaring bitmap deserialization.
 	// 16MB covers worst-case bitmaps for millions of row groups.
 	maxRGSetSize = 16 << 20
 
 	// maxNumPaths matches PathID's uint16 range.
 	maxNumPaths = 65535
+
+	// maxHeaderRowGroups and maxHeaderDocs bound header-controlled allocations.
+	maxHeaderRowGroups = 1_000_000
+	maxHeaderDocs      = 100_000_000
 
 	// maxTermsPerPath caps string index terms per path.
 	// Default CardinalityThreshold is 10,000; 1M is generous headroom.
@@ -232,13 +239,17 @@ func Decode(data []byte) (*GINIndex, error) {
 	case uncompressedMagic:
 		decompressed = data[4:]
 	case compressedMagic:
-		decoder, err := zstd.NewReader(nil)
+		decoder, err := zstd.NewReader(nil,
+			zstd.WithDecoderMaxMemory(maxDecodedIndexSize),
+			zstd.WithDecoderMaxWindow(maxDecodedIndexSize),
+			zstd.WithDecodeAllCapLimit(true),
+		)
 		if err != nil {
 			return nil, errors.Wrap(err, "create zstd decoder")
 		}
 		defer decoder.Close()
 
-		decompressed, err = decoder.DecodeAll(data[4:], nil)
+		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
 		if err != nil {
 			return nil, errors.Wrap(err, "decompress data")
 		}
@@ -353,8 +364,14 @@ func readHeader(r io.Reader, idx *GINIndex) error {
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumRowGroups); err != nil {
 		return err
 	}
+	if idx.Header.NumRowGroups > maxHeaderRowGroups {
+		return errors.Wrapf(ErrInvalidFormat, "row-group count %d exceeds max %d", idx.Header.NumRowGroups, maxHeaderRowGroups)
+	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumDocs); err != nil {
 		return err
+	}
+	if idx.Header.NumDocs > maxHeaderDocs {
+		return errors.Wrapf(ErrInvalidFormat, "doc count %d exceeds max %d", idx.Header.NumDocs, maxHeaderDocs)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumPaths); err != nil {
 		return err
