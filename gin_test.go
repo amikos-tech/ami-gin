@@ -258,6 +258,82 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	}
 }
 
+func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 2
+	config.AdaptiveBucketCount = 1
+
+	builder := mustNewBuilder(t, config, 6)
+	for rgID := 0; rgID < 2; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 2; rgID < 6; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.field")
+	if entry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if entry.Flags&FlagAdaptiveHybrid == 0 {
+		t.Fatalf("Flags = %08b, want adaptive hybrid set", entry.Flags)
+	}
+
+	result := idx.Evaluate([]Predicate{EQ("$.field", "tail_2")})
+	if !result.IsSet(2) {
+		t.Fatalf("tail bucket result = %v, want RG 2 present", result.ToSlice())
+	}
+	if result.Count() <= 1 {
+		t.Fatalf("tail bucket result = %v, want lossy bucket superset", result.ToSlice())
+	}
+	if result.Count() == 6 {
+		t.Fatalf("tail bucket result = %v, should not degrade to AllRGs()", result.ToSlice())
+	}
+	if result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("tail bucket result = %v, promoted-only RGs should not be in tail bucket", result.ToSlice())
+	}
+}
+
+func TestAdaptiveNegativePredicatesStayConservative(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 2
+	config.AdaptiveBucketCount = 1
+
+	builder := mustNewBuilder(t, config, 6)
+	for rgID := 0; rgID < 2; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 2; rgID < 6; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	if got := idx.Evaluate([]Predicate{NE("$.field", "tail_2")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NE non-promoted result = %v, want all present RGs", got)
+	}
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "tail_2", "tail_3")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NIN non-promoted result = %v, want all present RGs", got)
+	}
+	if got := idx.Evaluate([]Predicate{NE("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{2, 3, 4, 5}) {
+		t.Fatalf("NE promoted result = %v, want exact promoted inversion", got)
+	}
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{2, 3, 4, 5}) {
+		t.Fatalf("NIN promoted result = %v, want exact promoted inversion", got)
+	}
+}
+
 func TestQueryNIN(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 4)
 
