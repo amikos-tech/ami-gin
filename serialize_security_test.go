@@ -6,11 +6,37 @@ import (
 	"encoding/json"
 	stderrors "errors"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
 )
+
+func buildAdaptiveSerializationFixture(t *testing.T, config GINConfig) *GINIndex {
+	t.Helper()
+
+	builder := mustNewBuilder(t, config, 6)
+	docs := []struct {
+		rgID int
+		json string
+	}{
+		{rgID: 0, json: `{"field":"hot","other":"tail_0"}`},
+		{rgID: 1, json: `{"field":"hot","other":"tail_1"}`},
+		{rgID: 2, json: `{"field":"hot","other":"tail_2"}`},
+		{rgID: 3, json: `{"field":"tail_3"}`},
+		{rgID: 4, json: `{"field":"tail_4"}`},
+		{rgID: 5, json: `{"field":"tail_5"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(DocID(doc.rgID), []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", doc.rgID, err)
+		}
+	}
+
+	return builder.Finalize()
+}
 
 func TestDecodeVersionMismatch(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
@@ -108,6 +134,147 @@ func TestDecodeRoundTripRegression(t *testing.T) {
 	result := decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
 	if !result.IsSet(0) {
 		t.Error("query on decoded index should find alice in RG 0")
+	}
+}
+
+func TestAdaptiveConfigRoundTrip(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 3
+	config.AdaptiveMinRGCoverage = 3
+	config.AdaptivePromotedTermCap = 11
+	config.AdaptiveCoverageCeiling = 0.75
+	config.AdaptiveBucketCount = 16
+
+	idx := buildAdaptiveSerializationFixture(t, config)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if decoded.Config == nil {
+		t.Fatal("decoded Config = nil, want adaptive config")
+	}
+
+	if decoded.Config.AdaptiveMinRGCoverage != config.AdaptiveMinRGCoverage {
+		t.Fatalf("AdaptiveMinRGCoverage = %d, want %d", decoded.Config.AdaptiveMinRGCoverage, config.AdaptiveMinRGCoverage)
+	}
+	if decoded.Config.AdaptivePromotedTermCap != config.AdaptivePromotedTermCap {
+		t.Fatalf("AdaptivePromotedTermCap = %d, want %d", decoded.Config.AdaptivePromotedTermCap, config.AdaptivePromotedTermCap)
+	}
+	if decoded.Config.AdaptiveCoverageCeiling != config.AdaptiveCoverageCeiling {
+		t.Fatalf("AdaptiveCoverageCeiling = %v, want %v", decoded.Config.AdaptiveCoverageCeiling, config.AdaptiveCoverageCeiling)
+	}
+	if decoded.Config.AdaptiveBucketCount != config.AdaptiveBucketCount {
+		t.Fatalf("AdaptiveBucketCount = %d, want %d", decoded.Config.AdaptiveBucketCount, config.AdaptiveBucketCount)
+	}
+}
+
+func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 3
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.75
+	config.AdaptiveBucketCount = 16
+
+	idx := buildAdaptiveSerializationFixture(t, config)
+	originalEntry := findPathEntry(idx, "$.field")
+	if originalEntry == nil {
+		t.Fatal("adaptive path entry not found")
+	}
+	if originalEntry.Flags&FlagAdaptiveHybrid == 0 {
+		t.Fatalf("path flags = %08b, want adaptive hybrid", originalEntry.Flags)
+	}
+	originalAdaptive := idx.AdaptiveStringIndexes[originalEntry.PathID]
+	if originalAdaptive == nil {
+		t.Fatal("adaptive string index missing before encode")
+	}
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	decodedEntry := findPathEntry(decoded, "$.field")
+	if decodedEntry == nil {
+		t.Fatal("decoded adaptive path entry not found")
+	}
+	if decodedEntry.Flags&FlagAdaptiveHybrid == 0 {
+		t.Fatalf("decoded path flags = %08b, want adaptive hybrid", decodedEntry.Flags)
+	}
+	if decodedEntry.AdaptivePromotedTerms != originalEntry.AdaptivePromotedTerms {
+		t.Fatalf("AdaptivePromotedTerms = %d, want %d", decodedEntry.AdaptivePromotedTerms, originalEntry.AdaptivePromotedTerms)
+	}
+	if decodedEntry.AdaptiveBucketCount != originalEntry.AdaptiveBucketCount {
+		t.Fatalf("AdaptiveBucketCount = %d, want %d", decodedEntry.AdaptiveBucketCount, originalEntry.AdaptiveBucketCount)
+	}
+
+	decodedAdaptive := decoded.AdaptiveStringIndexes[decodedEntry.PathID]
+	if decodedAdaptive == nil {
+		t.Fatal("adaptive string index missing after decode")
+	}
+	if decodedAdaptive.BucketCount != originalAdaptive.BucketCount {
+		t.Fatalf("BucketCount = %d, want %d", decodedAdaptive.BucketCount, originalAdaptive.BucketCount)
+	}
+	if !reflect.DeepEqual(decodedAdaptive.Terms, originalAdaptive.Terms) {
+		t.Fatalf("Terms = %v, want %v", decodedAdaptive.Terms, originalAdaptive.Terms)
+	}
+	if len(decodedAdaptive.RGBitmaps) != len(originalAdaptive.RGBitmaps) {
+		t.Fatalf("RGBitmaps len = %d, want %d", len(decodedAdaptive.RGBitmaps), len(originalAdaptive.RGBitmaps))
+	}
+	for i := range originalAdaptive.RGBitmaps {
+		if got, want := decodedAdaptive.RGBitmaps[i].ToSlice(), originalAdaptive.RGBitmaps[i].ToSlice(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("RGBitmaps[%d] = %v, want %v", i, got, want)
+		}
+	}
+	if len(decodedAdaptive.BucketRGBitmaps) != len(originalAdaptive.BucketRGBitmaps) {
+		t.Fatalf("BucketRGBitmaps len = %d, want %d", len(decodedAdaptive.BucketRGBitmaps), len(originalAdaptive.BucketRGBitmaps))
+	}
+	for i := range originalAdaptive.BucketRGBitmaps {
+		if got, want := decodedAdaptive.BucketRGBitmaps[i].ToSlice(), originalAdaptive.BucketRGBitmaps[i].ToSlice(); !reflect.DeepEqual(got, want) {
+			t.Fatalf("BucketRGBitmaps[%d] = %v, want %v", i, got, want)
+		}
+	}
+}
+
+func TestDecodeRejectsOversizedAdaptiveBucketSection(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(pathID) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+		t.Fatalf("binary.Write(numPromotedTerms) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(maxAdaptiveBucketsPerPath+1)); err != nil {
+		t.Fatalf("binary.Write(bucketCount) error = %v", err)
+	}
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 10
+	idx.PathDirectory = []PathEntry{{
+		PathID: 0,
+		Flags:  FlagAdaptiveHybrid,
+	}}
+
+	err := readAdaptiveStringIndexes(&buf, idx)
+	if err == nil {
+		t.Fatal("expected error for oversized adaptive bucket section, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
 }
 
