@@ -2,6 +2,7 @@ package gin
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 )
@@ -104,6 +105,12 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 
 	case float64:
 		if ni, ok := idx.NumericIndexes[uint16(pathID)]; ok {
+			if ni.ValueType == 0 {
+				if queryInt, ok := toExactInt64(v); ok {
+					return idx.evaluateIntOnlyEQ(ni, numRGs, queryInt)
+				}
+				return NoRGs(numRGs)
+			}
 			if v < ni.GlobalMin || v > ni.GlobalMax {
 				return NoRGs(numRGs)
 			}
@@ -117,9 +124,12 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 		}
 
 	case int:
-		return idx.evaluateEQ(pathID, entry, float64(v))
+		return idx.evaluateEQ(pathID, entry, int64(v))
 
 	case int64:
+		if ni, ok := idx.NumericIndexes[uint16(pathID)]; ok && ni.ValueType == 0 {
+			return idx.evaluateIntOnlyEQ(ni, numRGs, v)
+		}
 		return idx.evaluateEQ(pathID, entry, float64(v))
 
 	case bool:
@@ -138,13 +148,30 @@ func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet 
 
 func (idx *GINIndex) evaluateGT(pathID int, value any) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
-	v := toFloat64(value)
-	if v == nil {
+	ni, ok := idx.NumericIndexes[uint16(pathID)]
+	if !ok {
 		return AllRGs(numRGs)
 	}
 
-	ni, ok := idx.NumericIndexes[uint16(pathID)]
-	if !ok {
+	if ni.ValueType == 0 {
+		queryInt, ok := toExactInt64(value)
+		if !ok {
+			return AllRGs(numRGs)
+		}
+		if queryInt >= ni.IntGlobalMax {
+			return NoRGs(numRGs)
+		}
+		result := MustNewRGSet(numRGs)
+		for rgID, stat := range ni.RGStats {
+			if stat.HasValue && stat.IntMax > queryInt {
+				result.Set(rgID)
+			}
+		}
+		return result
+	}
+
+	v := toFloat64(value)
+	if v == nil {
 		return AllRGs(numRGs)
 	}
 
@@ -163,13 +190,30 @@ func (idx *GINIndex) evaluateGT(pathID int, value any) *RGSet {
 
 func (idx *GINIndex) evaluateGTE(pathID int, value any) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
-	v := toFloat64(value)
-	if v == nil {
+	ni, ok := idx.NumericIndexes[uint16(pathID)]
+	if !ok {
 		return AllRGs(numRGs)
 	}
 
-	ni, ok := idx.NumericIndexes[uint16(pathID)]
-	if !ok {
+	if ni.ValueType == 0 {
+		queryInt, ok := toExactInt64(value)
+		if !ok {
+			return AllRGs(numRGs)
+		}
+		if queryInt > ni.IntGlobalMax {
+			return NoRGs(numRGs)
+		}
+		result := MustNewRGSet(numRGs)
+		for rgID, stat := range ni.RGStats {
+			if stat.HasValue && stat.IntMax >= queryInt {
+				result.Set(rgID)
+			}
+		}
+		return result
+	}
+
+	v := toFloat64(value)
+	if v == nil {
 		return AllRGs(numRGs)
 	}
 
@@ -188,13 +232,30 @@ func (idx *GINIndex) evaluateGTE(pathID int, value any) *RGSet {
 
 func (idx *GINIndex) evaluateLT(pathID int, value any) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
-	v := toFloat64(value)
-	if v == nil {
+	ni, ok := idx.NumericIndexes[uint16(pathID)]
+	if !ok {
 		return AllRGs(numRGs)
 	}
 
-	ni, ok := idx.NumericIndexes[uint16(pathID)]
-	if !ok {
+	if ni.ValueType == 0 {
+		queryInt, ok := toExactInt64(value)
+		if !ok {
+			return AllRGs(numRGs)
+		}
+		if queryInt <= ni.IntGlobalMin {
+			return NoRGs(numRGs)
+		}
+		result := MustNewRGSet(numRGs)
+		for rgID, stat := range ni.RGStats {
+			if stat.HasValue && stat.IntMin < queryInt {
+				result.Set(rgID)
+			}
+		}
+		return result
+	}
+
+	v := toFloat64(value)
+	if v == nil {
 		return AllRGs(numRGs)
 	}
 
@@ -213,13 +274,30 @@ func (idx *GINIndex) evaluateLT(pathID int, value any) *RGSet {
 
 func (idx *GINIndex) evaluateLTE(pathID int, value any) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
-	v := toFloat64(value)
-	if v == nil {
+	ni, ok := idx.NumericIndexes[uint16(pathID)]
+	if !ok {
 		return AllRGs(numRGs)
 	}
 
-	ni, ok := idx.NumericIndexes[uint16(pathID)]
-	if !ok {
+	if ni.ValueType == 0 {
+		queryInt, ok := toExactInt64(value)
+		if !ok {
+			return AllRGs(numRGs)
+		}
+		if queryInt < ni.IntGlobalMin {
+			return NoRGs(numRGs)
+		}
+		result := MustNewRGSet(numRGs)
+		for rgID, stat := range ni.RGStats {
+			if stat.HasValue && stat.IntMin <= queryInt {
+				result.Set(rgID)
+			}
+		}
+		return result
+	}
+
+	v := toFloat64(value)
+	if v == nil {
 		return AllRGs(numRGs)
 	}
 
@@ -366,6 +444,59 @@ func toFloat64(v any) *float64 {
 	default:
 		return nil
 	}
+}
+
+func toExactInt64(v any) (int64, bool) {
+	switch val := v.(type) {
+	case int:
+		return int64(val), true
+	case int8:
+		return int64(val), true
+	case int16:
+		return int64(val), true
+	case int32:
+		return int64(val), true
+	case int64:
+		return val, true
+	case uint:
+		if val > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(val), true
+	case uint8:
+		return int64(val), true
+	case uint16:
+		return int64(val), true
+	case uint32:
+		return int64(val), true
+	case uint64:
+		if val > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(val), true
+	case float64:
+		if math.IsNaN(val) || math.IsInf(val, 0) || val != math.Trunc(val) || val < math.MinInt64 || val > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(val), true
+	case float32:
+		return toExactInt64(float64(val))
+	default:
+		return 0, false
+	}
+}
+
+func (idx *GINIndex) evaluateIntOnlyEQ(ni *NumericIndex, numRGs int, queryInt int64) *RGSet {
+	if queryInt < ni.IntGlobalMin || queryInt > ni.IntGlobalMax {
+		return NoRGs(numRGs)
+	}
+	result := MustNewRGSet(numRGs)
+	for rgID, stat := range ni.RGStats {
+		if stat.HasValue && queryInt >= stat.IntMin && queryInt <= stat.IntMax {
+			result.Set(rgID)
+		}
+	}
+	return result
 }
 
 func EQ(path string, value any) Predicate {

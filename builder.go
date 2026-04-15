@@ -1,8 +1,10 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"sort"
 	"strconv"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/pkg/errors"
 )
+
+const maxExactFloatInt = int64(1 << 53)
 
 type GINBuilder struct {
 	config     GINConfig
@@ -35,6 +39,58 @@ type pathBuildData struct {
 	presentRGs        *RGSet
 	hll               *HyperLogLog
 	trigrams          *TrigramIndex
+
+	hasNumericValues bool
+	numericValueType uint8
+	intGlobalMin     int64
+	intGlobalMax     int64
+	floatGlobalMin   float64
+	floatGlobalMax   float64
+}
+
+type stagedNumericValue struct {
+	isInt    bool
+	intVal   int64
+	floatVal float64
+}
+
+type stagedPathData struct {
+	observedTypes uint8
+	present       bool
+	isNull        bool
+	stringTerms   map[string]struct{}
+	numericValues []stagedNumericValue
+
+	numericSeeded       bool
+	numericSimHasValue  bool
+	numericSimValueType uint8
+	numericSimIntMin    int64
+	numericSimIntMax    int64
+	numericSimFloatMin  float64
+	numericSimFloatMax  float64
+}
+
+type documentBuildState struct {
+	rgID  int
+	paths map[string]*stagedPathData
+}
+
+func newDocumentBuildState(rgID int) *documentBuildState {
+	return &documentBuildState{
+		rgID:  rgID,
+		paths: make(map[string]*stagedPathData),
+	}
+}
+
+func (s *documentBuildState) getOrCreatePath(path string) *stagedPathData {
+	if pd, ok := s.paths[path]; ok {
+		return pd
+	}
+	pd := &stagedPathData{
+		stringTerms: make(map[string]struct{}),
+	}
+	s.paths[path] = pd
+	return pd
 }
 
 type BuilderOption func(*GINBuilder) error
@@ -125,22 +181,14 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		if pos >= b.numRGs {
 			return errors.Errorf("position %d exceeds numRGs %d", pos, b.numRGs)
 		}
-		b.docIDToPos[docID] = pos
-		b.posToDocID = append(b.posToDocID, docID)
-		b.nextPos++
 	}
 
-	if pos > b.maxRGID {
-		b.maxRGID = pos
-	}
-	b.numDocs++
-
-	var doc any
-	if err := json.Unmarshal(jsonDoc, &doc); err != nil {
-		return errors.Wrap(err, "failed to parse JSON")
+	state, err := b.parseAndStageDocument(jsonDoc, pos)
+	if err != nil {
+		return err
 	}
 
-	b.walkJSON("$", doc, pos)
+	b.mergeDocumentState(docID, pos, exists, state)
 	return nil
 }
 
@@ -152,9 +200,181 @@ func normalizeWalkPath(path string) string {
 }
 
 func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
-	canonicalPath := normalizeWalkPath(path)
+	state := newDocumentBuildState(rgID)
+	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
+		panic(err)
+	}
+	b.mergeStagedPaths(state)
+}
 
-	if b.config.fieldTransformers != nil {
+func (b *GINBuilder) parseAndStageDocument(jsonDoc []byte, rgID int) (*documentBuildState, error) {
+	decoder := json.NewDecoder(bytes.NewReader(jsonDoc))
+	decoder.UseNumber()
+
+	state := newDocumentBuildState(rgID)
+	if err := b.stageStreamValue(decoder, "$", state); err != nil {
+		return nil, err
+	}
+	if err := ensureDecoderEOF(decoder); err != nil {
+		return nil, errors.Wrap(err, "failed to parse JSON")
+	}
+	return state, nil
+}
+
+func ensureDecoderEOF(decoder *json.Decoder) error {
+	if _, err := decoder.Token(); err == io.EOF {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	return errors.New("unexpected trailing JSON content")
+}
+
+func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state *documentBuildState) error {
+	canonicalPath := normalizeWalkPath(path)
+	if transformed, handled, err := b.decodeTransformedValue(decoder, canonicalPath); err != nil {
+		return errors.Wrapf(err, "parse transformed subtree at %s", canonicalPath)
+	} else if handled {
+		return b.stageMaterializedValue(path, transformed, state, false)
+	}
+
+	token, err := decoder.Token()
+	if err != nil {
+		return errors.Wrap(err, "read JSON token")
+	}
+
+	switch tok := token.(type) {
+	case json.Delim:
+		state.getOrCreatePath(canonicalPath).present = true
+		switch tok {
+		case '{':
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return errors.Wrapf(err, "read object key at %s", canonicalPath)
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.Errorf("non-string object key at %s", canonicalPath)
+				}
+				if err := b.stageStreamValue(decoder, path+"."+key, state); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil {
+				return errors.Wrapf(err, "close object at %s", canonicalPath)
+			}
+			if delim, ok := end.(json.Delim); !ok || delim != '}' {
+				return errors.Errorf("malformed object at %s", canonicalPath)
+			}
+			return nil
+		case '[':
+			for i := 0; decoder.More(); i++ {
+				item, err := decodeAny(decoder)
+				if err != nil {
+					return errors.Wrapf(err, "parse array element at %s[%d]", canonicalPath, i)
+				}
+				if err := b.stageMaterializedValue(fmt.Sprintf("%s[%d]", path, i), item, state, true); err != nil {
+					return err
+				}
+				if err := b.stageMaterializedValue(path+"[*]", item, state, true); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil {
+				return errors.Wrapf(err, "close array at %s", canonicalPath)
+			}
+			if delim, ok := end.(json.Delim); !ok || delim != ']' {
+				return errors.Errorf("malformed array at %s", canonicalPath)
+			}
+			return nil
+		default:
+			return errors.Errorf("unsupported delimiter %q at %s", tok, canonicalPath)
+		}
+	default:
+		return b.stageScalarToken(canonicalPath, token, state)
+	}
+}
+
+func decodeAny(decoder *json.Decoder) (any, error) {
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
+	if b.config.fieldTransformers == nil {
+		return nil, false, nil
+	}
+	transformer, ok := b.config.fieldTransformers[canonicalPath]
+	if !ok {
+		return nil, false, nil
+	}
+	value, err := decodeAny(decoder)
+	if err != nil {
+		return nil, false, err
+	}
+	if transformed, ok := transformer(prepareTransformerValue(value)); ok {
+		return transformed, true, nil
+	}
+	return value, true, nil
+}
+
+func prepareTransformerValue(value any) any {
+	switch v := value.(type) {
+	case json.Number:
+		if floatVal, err := strconv.ParseFloat(v.String(), 64); err == nil {
+			return floatVal
+		}
+		return v.String()
+	case []any:
+		out := make([]any, len(v))
+		for i, item := range v {
+			out[i] = prepareTransformerValue(item)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for key, item := range v {
+			out[key] = prepareTransformerValue(item)
+		}
+		return out
+	default:
+		return value
+	}
+}
+
+func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *documentBuildState) error {
+	pathState := state.getOrCreatePath(canonicalPath)
+	pathState.present = true
+
+	switch v := token.(type) {
+	case nil:
+		pathState.observedTypes |= TypeNull
+		pathState.isNull = true
+		return nil
+	case bool:
+		pathState.observedTypes |= TypeBool
+		pathState.stringTerms[strconv.FormatBool(v)] = struct{}{}
+		return nil
+	case string:
+		pathState.observedTypes |= TypeString
+		pathState.stringTerms[v] = struct{}{}
+		return nil
+	case json.Number:
+		return b.stageJSONNumberLiteral(canonicalPath, v.String(), state)
+	default:
+		return errors.Errorf("unsupported JSON token type %T at %s", token, canonicalPath)
+	}
+}
+
+func (b *GINBuilder) stageMaterializedValue(path string, value any, state *documentBuildState, allowTransform bool) error {
+	canonicalPath := normalizeWalkPath(path)
+	if allowTransform && b.config.fieldTransformers != nil {
 		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
 			if transformed, ok := transformer(value); ok {
 				value = transformed
@@ -162,46 +382,277 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
 		}
 	}
 
-	pd := b.getOrCreatePath(canonicalPath)
-	pd.presentRGs.Set(rgID)
+	pathState := state.getOrCreatePath(canonicalPath)
+	pathState.present = true
 
 	switch v := value.(type) {
 	case nil:
-		pd.observedTypes |= TypeNull
-		pd.nullRGs.Set(rgID)
-
+		pathState.observedTypes |= TypeNull
+		pathState.isNull = true
+		return nil
 	case bool:
-		pd.observedTypes |= TypeBool
-		term := strconv.FormatBool(v)
-		b.addStringTerm(pd, term, rgID, canonicalPath)
-
-	case float64:
-		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
-			pd.observedTypes |= TypeInt
-		} else {
-			pd.observedTypes |= TypeFloat
-		}
-		b.addNumericValue(pd, v, rgID)
-		b.bloom.AddString(canonicalPath + "=" + strconv.FormatFloat(v, 'f', -1, 64))
-
+		pathState.observedTypes |= TypeBool
+		pathState.stringTerms[strconv.FormatBool(v)] = struct{}{}
+		return nil
 	case string:
-		pd.observedTypes |= TypeString
-		b.addStringTerm(pd, v, rgID, canonicalPath)
-
+		pathState.observedTypes |= TypeString
+		pathState.stringTerms[v] = struct{}{}
+		return nil
+	case json.Number:
+		return b.stageJSONNumberLiteral(canonicalPath, v.String(), state)
+	case float64:
+		return b.stageNativeNumeric(canonicalPath, v, state)
+	case float32:
+		return b.stageNativeNumeric(canonicalPath, float64(v), state)
+	case int:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case int8:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case int16:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case int32:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case int64:
+		return b.stageNativeNumeric(canonicalPath, v, state)
+	case uint:
+		if v > math.MaxInt64 {
+			return errors.Errorf("unsupported integer at %s", canonicalPath)
+		}
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case uint8:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case uint16:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case uint32:
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+	case uint64:
+		if v > math.MaxInt64 {
+			return errors.Errorf("unsupported integer at %s", canonicalPath)
+		}
+		return b.stageNativeNumeric(canonicalPath, int64(v), state)
 	case []any:
 		for i, item := range v {
-			arrayPath := fmt.Sprintf("%s[%d]", path, i)
-			b.walkJSON(arrayPath, item, rgID)
+			if err := b.stageMaterializedValue(fmt.Sprintf("%s[%d]", path, i), item, state, true); err != nil {
+				return err
+			}
+			if err := b.stageMaterializedValue(path+"[*]", item, state, true); err != nil {
+				return err
+			}
 		}
-		wildcardPath := path + "[*]"
-		for _, item := range v {
-			b.walkJSON(wildcardPath, item, rgID)
-		}
-
+		return nil
 	case map[string]any:
 		for key, val := range v {
-			childPath := path + "." + key
-			b.walkJSON(childPath, val, rgID)
+			if err := b.stageMaterializedValue(path+"."+key, val, state, true); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return errors.Errorf("unsupported transformed value type %T at %s", value, canonicalPath)
+	}
+}
+
+func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
+	isInt, intVal, floatVal, err := parseJSONNumberLiteral(raw)
+	if err != nil {
+		return errors.Wrapf(err, "parse numeric at %s", path)
+	}
+	return b.stageNumericObservation(path, stagedNumericValue{
+		isInt:    isInt,
+		intVal:   intVal,
+		floatVal: floatVal,
+	}, state)
+}
+
+func parseJSONNumberLiteral(raw string) (bool, int64, float64, error) {
+	if strings.ContainsAny(raw, ".eE") {
+		floatVal, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			return false, 0, 0, err
+		}
+		if math.IsNaN(floatVal) || math.IsInf(floatVal, 0) {
+			return false, 0, 0, errors.New("non-finite numeric value")
+		}
+		return false, 0, floatVal, nil
+	}
+
+	intVal, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return false, 0, 0, errors.New("unsupported integer literal")
+	}
+	return true, intVal, 0, nil
+}
+
+func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentBuildState) error {
+	obs, err := stagedNumericFromValue(value)
+	if err != nil {
+		return errors.Wrapf(err, "parse numeric at %s", path)
+	}
+	return b.stageNumericObservation(path, obs, state)
+}
+
+func stagedNumericFromValue(value any) (stagedNumericValue, error) {
+	switch v := value.(type) {
+	case int64:
+		return stagedNumericValue{isInt: true, intVal: v}, nil
+	case float64:
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			return stagedNumericValue{}, errors.New("non-finite numeric value")
+		}
+		if v == math.Trunc(v) && v >= math.MinInt64 && v <= math.MaxInt64 {
+			return stagedNumericValue{isInt: true, intVal: int64(v)}, nil
+		}
+		return stagedNumericValue{floatVal: v}, nil
+	default:
+		return stagedNumericValue{}, errors.Errorf("unsupported numeric type %T", value)
+	}
+}
+
+func (b *GINBuilder) stageNumericObservation(path string, observation stagedNumericValue, state *documentBuildState) error {
+	pathState := state.getOrCreatePath(path)
+	b.seedNumericSimulation(path, pathState)
+
+	if !pathState.numericSimHasValue {
+		pathState.numericSimHasValue = true
+		if observation.isInt {
+			pathState.numericSimValueType = 0
+			pathState.numericSimIntMin = observation.intVal
+			pathState.numericSimIntMax = observation.intVal
+			pathState.observedTypes |= TypeInt
+		} else {
+			pathState.numericSimValueType = 1
+			pathState.numericSimFloatMin = observation.floatVal
+			pathState.numericSimFloatMax = observation.floatVal
+			pathState.observedTypes |= TypeFloat
+		}
+		pathState.numericValues = append(pathState.numericValues, observation)
+		return nil
+	}
+
+	if pathState.numericSimValueType == 0 {
+		if observation.isInt {
+			if observation.intVal < pathState.numericSimIntMin {
+				pathState.numericSimIntMin = observation.intVal
+			}
+			if observation.intVal > pathState.numericSimIntMax {
+				pathState.numericSimIntMax = observation.intVal
+			}
+			pathState.observedTypes |= TypeInt
+			pathState.numericValues = append(pathState.numericValues, observation)
+			return nil
+		}
+
+		if !canRepresentIntAsExactFloat(pathState.numericSimIntMin) || !canRepresentIntAsExactFloat(pathState.numericSimIntMax) {
+			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+		}
+
+		pathState.numericSimValueType = 1
+		pathState.numericSimFloatMin = math.Min(float64(pathState.numericSimIntMin), observation.floatVal)
+		pathState.numericSimFloatMax = math.Max(float64(pathState.numericSimIntMax), observation.floatVal)
+		pathState.observedTypes |= TypeFloat
+		pathState.numericValues = append(pathState.numericValues, observation)
+		return nil
+	}
+
+	if observation.isInt {
+		if !canRepresentIntAsExactFloat(observation.intVal) {
+			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+		}
+		floatVal := float64(observation.intVal)
+		if floatVal < pathState.numericSimFloatMin {
+			pathState.numericSimFloatMin = floatVal
+		}
+		if floatVal > pathState.numericSimFloatMax {
+			pathState.numericSimFloatMax = floatVal
+		}
+		pathState.observedTypes |= TypeInt
+		pathState.numericValues = append(pathState.numericValues, observation)
+		return nil
+	}
+
+	if observation.floatVal < pathState.numericSimFloatMin {
+		pathState.numericSimFloatMin = observation.floatVal
+	}
+	if observation.floatVal > pathState.numericSimFloatMax {
+		pathState.numericSimFloatMax = observation.floatVal
+	}
+	pathState.observedTypes |= TypeFloat
+	pathState.numericValues = append(pathState.numericValues, observation)
+	return nil
+}
+
+func (b *GINBuilder) seedNumericSimulation(path string, pathState *stagedPathData) {
+	if pathState.numericSeeded {
+		return
+	}
+	pathState.numericSeeded = true
+
+	pd, ok := b.pathData[path]
+	if !ok || !pd.hasNumericValues {
+		return
+	}
+
+	pathState.numericSimHasValue = true
+	pathState.numericSimValueType = pd.numericValueType
+	if pd.numericValueType == 0 {
+		pathState.numericSimIntMin = pd.intGlobalMin
+		pathState.numericSimIntMax = pd.intGlobalMax
+		return
+	}
+	pathState.numericSimFloatMin = pd.floatGlobalMin
+	pathState.numericSimFloatMax = pd.floatGlobalMax
+}
+
+func canRepresentIntAsExactFloat(value int64) bool {
+	return value >= -maxExactFloatInt && value <= maxExactFloatInt
+}
+
+func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) {
+	b.mergeStagedPaths(state)
+
+	if !exists {
+		b.docIDToPos[docID] = pos
+		b.posToDocID = append(b.posToDocID, docID)
+		b.nextPos++
+	}
+
+	if pos > b.maxRGID {
+		b.maxRGID = pos
+	}
+	b.numDocs++
+}
+
+func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
+	paths := make([]string, 0, len(state.paths))
+	for path := range state.paths {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	for _, path := range paths {
+		staged := state.paths[path]
+		pd := b.getOrCreatePath(path)
+		pd.observedTypes |= staged.observedTypes
+		if staged.present {
+			pd.presentRGs.Set(state.rgID)
+		}
+		if staged.isNull {
+			pd.nullRGs.Set(state.rgID)
+		}
+
+		if len(staged.stringTerms) > 0 {
+			terms := make([]string, 0, len(staged.stringTerms))
+			for term := range staged.stringTerms {
+				terms = append(terms, term)
+			}
+			sort.Strings(terms)
+			for _, term := range terms {
+				b.addStringTerm(pd, term, state.rgID, path)
+			}
+		}
+
+		for _, observation := range staged.numericValues {
+			b.mergeNumericObservation(pd, observation, state.rgID, path)
 		}
 	}
 }
@@ -224,7 +675,91 @@ func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, pat
 	}
 }
 
-func (b *GINBuilder) addNumericValue(pd *pathBuildData, val float64, rgID int) {
+func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) {
+	if !pd.hasNumericValues {
+		pd.hasNumericValues = true
+		if observation.isInt {
+			pd.numericValueType = 0
+			pd.intGlobalMin = observation.intVal
+			pd.intGlobalMax = observation.intVal
+			b.addIntNumericValue(pd, observation.intVal, rgID)
+			b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
+			return
+		}
+		pd.numericValueType = 1
+		pd.floatGlobalMin = observation.floatVal
+		pd.floatGlobalMax = observation.floatVal
+		b.addFloatNumericValue(pd, observation.floatVal, rgID)
+		b.bloom.AddString(path + "=" + strconv.FormatFloat(observation.floatVal, 'f', -1, 64))
+		return
+	}
+
+	if pd.numericValueType == 0 && !observation.isInt {
+		b.promoteNumericPathToFloat(pd)
+	}
+
+	if pd.numericValueType == 0 {
+		if observation.intVal < pd.intGlobalMin {
+			pd.intGlobalMin = observation.intVal
+		}
+		if observation.intVal > pd.intGlobalMax {
+			pd.intGlobalMax = observation.intVal
+		}
+		b.addIntNumericValue(pd, observation.intVal, rgID)
+		b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
+		return
+	}
+
+	floatVal := observation.floatVal
+	if observation.isInt {
+		floatVal = float64(observation.intVal)
+	}
+
+	if floatVal < pd.floatGlobalMin {
+		pd.floatGlobalMin = floatVal
+	}
+	if floatVal > pd.floatGlobalMax {
+		pd.floatGlobalMax = floatVal
+	}
+	b.addFloatNumericValue(pd, floatVal, rgID)
+	b.bloom.AddString(path + "=" + strconv.FormatFloat(floatVal, 'f', -1, 64))
+}
+
+func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
+	if pd.numericValueType == 1 {
+		return
+	}
+	pd.numericValueType = 1
+	pd.floatGlobalMin = float64(pd.intGlobalMin)
+	pd.floatGlobalMax = float64(pd.intGlobalMax)
+	for _, stat := range pd.numericStats {
+		if !stat.HasValue {
+			continue
+		}
+		stat.Min = float64(stat.IntMin)
+		stat.Max = float64(stat.IntMax)
+	}
+}
+
+func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) {
+	stat, ok := pd.numericStats[rgID]
+	if !ok {
+		pd.numericStats[rgID] = &RGNumericStat{
+			IntMin:   val,
+			IntMax:   val,
+			HasValue: true,
+		}
+		return
+	}
+	if val < stat.IntMin {
+		stat.IntMin = val
+	}
+	if val > stat.IntMax {
+		stat.IntMax = val
+	}
+}
+
+func (b *GINBuilder) addFloatNumericValue(pd *pathBuildData, val float64, rgID int) {
 	stat, ok := pd.numericStats[rgID]
 	if !ok {
 		pd.numericStats[rgID] = &RGNumericStat{
@@ -346,27 +881,19 @@ func (b *GINBuilder) Finalize() *GINIndex {
 
 		if pd.observedTypes&(TypeInt|TypeFloat) != 0 && len(pd.numericStats) > 0 {
 			ni := &NumericIndex{
-				RGStats: make([]RGNumericStat, b.numRGs),
+				ValueType: pd.numericValueType,
+				RGStats:   make([]RGNumericStat, b.numRGs),
 			}
-			if pd.observedTypes&TypeFloat != 0 {
-				ni.ValueType = 1
+			if pd.numericValueType == 0 {
+				ni.IntGlobalMin = pd.intGlobalMin
+				ni.IntGlobalMax = pd.intGlobalMax
+			} else {
+				ni.GlobalMin = pd.floatGlobalMin
+				ni.GlobalMax = pd.floatGlobalMax
 			}
-			first := true
 			for rgID, stat := range pd.numericStats {
 				if rgID < len(ni.RGStats) {
 					ni.RGStats[rgID] = *stat
-				}
-				if first {
-					ni.GlobalMin = stat.Min
-					ni.GlobalMax = stat.Max
-					first = false
-				} else {
-					if stat.Min < ni.GlobalMin {
-						ni.GlobalMin = stat.Min
-					}
-					if stat.Max > ni.GlobalMax {
-						ni.GlobalMax = stat.Max
-					}
 				}
 			}
 			idx.NumericIndexes[pd.pathID] = ni

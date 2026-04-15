@@ -2,6 +2,7 @@ package gin
 
 import (
 	"math"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -1097,5 +1098,68 @@ func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 	result := idx.Evaluate([]Predicate{EQ("$.metrics", float64(150))})
 	if !result.IsSet(0) || result.IsSet(1) {
 		t.Fatalf("EQ($.metrics, 150) = %v, want [0]", result.ToSlice())
+	}
+}
+
+func TestTransformerNumericDecodeParity(t *testing.T) {
+	config, err := NewConfig(
+		WithFieldTransformer("$.build", func(value any) (any, bool) {
+			build, ok := value.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			rawID, ok := build["id"].(string)
+			if !ok {
+				return nil, false
+			}
+			parsed, err := strconv.ParseInt(rawID, 10, 64)
+			if err != nil {
+				return nil, false
+			}
+			return parsed, true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"build":{"id":"9223372036854775806"}}`},
+		{1, `{"build":{"id":"9223372036854775807"}}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	idx := builder.Finalize()
+	before := idx.Evaluate([]Predicate{EQ("$.build", int64(9223372036854775807))})
+	if before.Count() != 1 || !before.IsSet(1) || before.IsSet(0) {
+		t.Fatalf("pre-encode EQ($.build, 9223372036854775807) = %v, want [1]", before.ToSlice())
+	}
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	after := decoded.Evaluate([]Predicate{EQ("$.build", int64(9223372036854775807))})
+	if after.Count() != 1 || !after.IsSet(1) || after.IsSet(0) {
+		t.Fatalf("decoded EQ($.build, 9223372036854775807) = %v, want [1]", after.ToSlice())
 	}
 }

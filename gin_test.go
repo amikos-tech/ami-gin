@@ -1496,3 +1496,102 @@ func TestAddDocumentRejectsUnsupportedNumberWithoutPartialMutation(t *testing.T)
 		t.Fatal("rejected document path was added to finalized index")
 	}
 }
+
+func TestNumericIndexPreservesInt64Exactness(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":9223372036854775806}`},
+		{1, `{"score":9223372036854775807}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	exact := idx.Evaluate([]Predicate{EQ("$.score", int64(9223372036854775807))})
+	if exact.Count() != 1 || !exact.IsSet(1) || exact.IsSet(0) {
+		t.Fatalf("exact int64 EQ result = %v, want [1]", exact.ToSlice())
+	}
+
+	rangeResult := idx.Evaluate([]Predicate{GTE("$.score", int64(9223372036854775807))})
+	if rangeResult.Count() != 1 || !rangeResult.IsSet(1) || rangeResult.IsSet(0) {
+		t.Fatalf("exact int64 GTE result = %v, want [1]", rangeResult.ToSlice())
+	}
+
+	lower := idx.Evaluate([]Predicate{LT("$.score", int64(9223372036854775807))})
+	if lower.Count() != 1 || !lower.IsSet(0) || lower.IsSet(1) {
+		t.Fatalf("exact int64 LT result = %v, want [0]", lower.ToSlice())
+	}
+}
+
+func TestMixedNumericPathRejectsLossyPromotion(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"score":1.5}`))
+	if err == nil {
+		t.Fatal("expected lossy mixed numeric promotion to fail")
+	}
+	if !strings.Contains(err.Error(), "$.score") {
+		t.Fatalf("error should contain path context, got %v", err)
+	}
+
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+
+	idx := builder.Finalize()
+	result := idx.Evaluate([]Predicate{EQ("$.score", int64(9007199254740993))})
+	if result.Count() != 1 || !result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("exact int64 EQ after rejected promotion = %v, want [0]", result.ToSlice())
+	}
+}
+
+func TestIntOnlyNumericDecodeParity(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":9223372036854775806}`},
+		{1, `{"score":9223372036854775807}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	encoded, err := Encode(builder.Finalize())
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	exact := decoded.Evaluate([]Predicate{EQ("$.score", int64(9223372036854775807))})
+	if exact.Count() != 1 || !exact.IsSet(1) || exact.IsSet(0) {
+		t.Fatalf("decoded exact int64 EQ result = %v, want [1]", exact.ToSlice())
+	}
+
+	rangeResult := decoded.Evaluate([]Predicate{GTE("$.score", int64(9223372036854775807))})
+	if rangeResult.Count() != 1 || !rangeResult.IsSet(1) || rangeResult.IsSet(0) {
+		t.Fatalf("decoded exact int64 GTE result = %v, want [1]", rangeResult.ToSlice())
+	}
+}

@@ -9,7 +9,7 @@ import (
 
 const (
 	MagicBytes = "GIN\x01"
-	Version    = uint16(3)
+	Version    = uint16(4)
 )
 
 const (
@@ -70,13 +70,18 @@ type StringIndex struct {
 }
 
 type NumericIndex struct {
-	ValueType uint8
-	GlobalMin float64
-	GlobalMax float64
-	RGStats   []RGNumericStat
+	// ValueType is the numeric storage mode: 0 = int-only, 1 = float-or-mixed.
+	ValueType    uint8
+	IntGlobalMin int64
+	IntGlobalMax int64
+	GlobalMin    float64
+	GlobalMax    float64
+	RGStats      []RGNumericStat
 }
 
 type RGNumericStat struct {
+	IntMin   int64
+	IntMax   int64
 	Min      float64
 	Max      float64
 	HasValue bool
