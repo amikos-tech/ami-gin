@@ -140,6 +140,16 @@ func TestParsePredicateSupportedOperators(t *testing.T) {
 			input:     `$.deleted_at IS NOT NULL`,
 			predicate: gin.IsNotNull("$.deleted_at"),
 		},
+		{
+			name:      "is null mixed case",
+			input:     `$.deleted_at Is Null`,
+			predicate: gin.IsNull("$.deleted_at"),
+		},
+		{
+			name:      "is not null mixed case",
+			input:     `$.deleted_at Is Not Null`,
+			predicate: gin.IsNotNull("$.deleted_at"),
+		},
 	}
 
 	for _, tt := range tests {

@@ -278,6 +278,30 @@ func TestDecodeRejectsOversizedAdaptiveBucketSection(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsMissingConfigLengthTrailer(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+	if len(data) < 4 {
+		t.Fatalf("encoded length = %d, want at least 4 bytes", len(data))
+	}
+
+	truncated := data[:len(data)-4]
+	_, err = Decode(truncated)
+	if err == nil {
+		t.Fatal("Decode() error = nil, want ErrInvalidFormat for missing config length")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
 func TestDecodeBoundsRGSet(t *testing.T) {
 	var buf bytes.Buffer
 	// numRGs = 1

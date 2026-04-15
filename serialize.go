@@ -1166,8 +1166,8 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 func readConfig(r io.Reader) (*GINConfig, error) {
 	var configLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &configLen); err != nil {
-		if stderrors.Is(err, io.EOF) {
-			return nil, nil
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "missing config length")
 		}
 		return nil, err
 	}
@@ -1182,6 +1182,9 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 
 	data := make([]byte, configLen)
 	if _, err := io.ReadFull(r, data); err != nil {
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "truncated config payload")
+		}
 		return nil, err
 	}
 

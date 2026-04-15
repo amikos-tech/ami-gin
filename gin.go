@@ -377,14 +377,24 @@ func (c GINConfig) validate() error {
 	if c.AdaptivePromotedTermCap < 0 {
 		return errors.New("adaptive promoted term cap must be non-negative")
 	}
-	if c.AdaptiveCoverageCeiling <= 0 || c.AdaptiveCoverageCeiling >= 1 {
-		return errors.New("adaptive coverage ceiling must be greater than 0 and less than 1")
-	}
 	if c.AdaptiveBucketCount < 0 {
 		return errors.New("adaptive bucket count must be non-negative")
 	}
-	if c.AdaptiveBucketCount > 0 && !isPowerOfTwo(c.AdaptiveBucketCount) {
-		return errors.New("adaptive bucket count must be a power of two")
+
+	adaptiveEnabled := c.AdaptivePromotedTermCap > 0 && c.AdaptiveBucketCount > 0
+	if adaptiveEnabled {
+		if c.AdaptiveCoverageCeiling <= 0 || c.AdaptiveCoverageCeiling >= 1 {
+			return errors.New("adaptive coverage ceiling must be greater than 0 and less than 1")
+		}
+		if !isPowerOfTwo(c.AdaptiveBucketCount) {
+			return errors.New("adaptive bucket count must be a power of two")
+		}
+		if c.AdaptivePromotedTermCap > maxAdaptiveTermsPerPath {
+			return errors.Errorf("adaptive promoted term cap must be <= %d", maxAdaptiveTermsPerPath)
+		}
+		if c.AdaptiveBucketCount > maxAdaptiveBucketsPerPath {
+			return errors.Errorf("adaptive bucket count must be <= %d", maxAdaptiveBucketsPerPath)
+		}
 	}
 	return nil
 }

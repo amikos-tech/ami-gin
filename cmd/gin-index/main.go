@@ -663,18 +663,15 @@ func fatal(format string, args ...any) {
 
 func parsePredicate(s string) (gin.Predicate, error) {
 	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
 
-	if strings.HasSuffix(strings.ToUpper(s), " IS NULL") {
-		path := strings.TrimSuffix(s, " IS NULL")
-		path = strings.TrimSuffix(path, " is null")
-		path = strings.TrimSpace(path)
+	if strings.HasSuffix(upper, " IS NULL") {
+		path := strings.TrimSpace(s[:len(s)-len(" IS NULL")])
 		return gin.IsNull(path), nil
 	}
 
-	if strings.HasSuffix(strings.ToUpper(s), " IS NOT NULL") {
-		path := strings.TrimSuffix(s, " IS NOT NULL")
-		path = strings.TrimSuffix(path, " is not null")
-		path = strings.TrimSpace(path)
+	if strings.HasSuffix(upper, " IS NOT NULL") {
+		path := strings.TrimSpace(s[:len(s)-len(" IS NOT NULL")])
 		return gin.IsNotNull(path), nil
 	}
 

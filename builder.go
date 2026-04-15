@@ -728,6 +728,9 @@ func canRepresentIntAsExactFloat(value int64) bool {
 }
 
 func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
+	if err := b.validateStagedPaths(state); err != nil {
+		return err
+	}
 	if err := b.mergeStagedPaths(state); err != nil {
 		return err
 	}
@@ -742,6 +745,25 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		b.maxRGID = pos
 	}
 	b.numDocs++
+	return nil
+}
+
+func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
+	preview := newDocumentBuildState(state.rgID)
+	paths := make([]string, 0, len(state.paths))
+	for path := range state.paths {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+
+	for _, path := range paths {
+		staged := state.paths[path]
+		for _, observation := range staged.numericValues {
+			if err := b.stageNumericObservation(path, observation, preview); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 

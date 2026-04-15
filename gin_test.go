@@ -258,6 +258,72 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	}
 }
 
+func TestNewBuilderAllowsLegacyConfigLiteralWhenAdaptiveDisabled(t *testing.T) {
+	config := GINConfig{
+		CardinalityThreshold: 128,
+		BloomFilterSize:      1 << 20,
+		BloomFilterHashes:    7,
+		EnableTrigrams:       true,
+		TrigramMinLength:     3,
+		HLLPrecision:         12,
+		PrefixBlockSize:      16,
+	}
+
+	if _, err := NewBuilder(config, 2); err != nil {
+		t.Fatalf("NewBuilder() error = %v, want legacy struct literal to remain valid", err)
+	}
+}
+
+func TestNewBuilderRejectsOversizedAdaptiveSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		config func() GINConfig
+	}{
+		{
+			name: "bucket count exceeds serialized limit",
+			config: func() GINConfig {
+				cfg := DefaultConfig()
+				cfg.AdaptiveBucketCount = maxAdaptiveBucketsPerPath * 2
+				return cfg
+			},
+		},
+		{
+			name: "promoted term cap exceeds path metadata limit",
+			config: func() GINConfig {
+				cfg := DefaultConfig()
+				cfg.AdaptivePromotedTermCap = maxAdaptiveTermsPerPath + 1
+				return cfg
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewBuilder(tt.config(), 2); err == nil {
+				t.Fatal("NewBuilder() error = nil, want oversized adaptive setting rejection")
+			}
+		})
+	}
+}
+
+func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("AddDocument(seed) failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"alpha":"leak","score":1.5}`))
+	if err == nil {
+		t.Fatal("AddDocument(leaking doc) error = nil, want mixed numeric promotion failure")
+	}
+
+	idx := builder.Finalize()
+	if entry := findPathEntry(idx, "$.alpha"); entry != nil {
+		t.Fatalf("$.alpha leaked into finalized index with path id %d", entry.PathID)
+	}
+}
+
 func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
 	config := DefaultConfig()
 	config.CardinalityThreshold = 2
