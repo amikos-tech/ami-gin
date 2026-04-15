@@ -144,8 +144,15 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 	return nil
 }
 
+func normalizeWalkPath(path string) string {
+	if !strings.Contains(path, "['") && !strings.Contains(path, `["`) {
+		return path
+	}
+	return NormalizePath(path)
+}
+
 func (b *GINBuilder) walkJSON(path string, value any, rgID int) {
-	canonicalPath := NormalizePath(path)
+	canonicalPath := normalizeWalkPath(path)
 
 	if b.config.fieldTransformers != nil {
 		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
