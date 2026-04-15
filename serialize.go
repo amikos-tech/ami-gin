@@ -606,6 +606,12 @@ func writeNumericIndexes(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, ni.ValueType); err != nil {
 			return err
 		}
+		if err := binary.Write(w, binary.LittleEndian, ni.IntGlobalMin); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, ni.IntGlobalMax); err != nil {
+			return err
+		}
 		if err := binary.Write(w, binary.LittleEndian, math.Float64bits(ni.GlobalMin)); err != nil {
 			return err
 		}
@@ -616,6 +622,12 @@ func writeNumericIndexes(w io.Writer, idx *GINIndex) error {
 			return err
 		}
 		for _, stat := range ni.RGStats {
+			if err := binary.Write(w, binary.LittleEndian, stat.IntMin); err != nil {
+				return err
+			}
+			if err := binary.Write(w, binary.LittleEndian, stat.IntMax); err != nil {
+				return err
+			}
 			if err := binary.Write(w, binary.LittleEndian, math.Float64bits(stat.Min)); err != nil {
 				return err
 			}
@@ -651,6 +663,12 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 		if err := binary.Read(r, binary.LittleEndian, &ni.ValueType); err != nil {
 			return err
 		}
+		if err := binary.Read(r, binary.LittleEndian, &ni.IntGlobalMin); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &ni.IntGlobalMax); err != nil {
+			return err
+		}
 		var minBits, maxBits uint64
 		if err := binary.Read(r, binary.LittleEndian, &minBits); err != nil {
 			return err
@@ -670,6 +688,12 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 		}
 		ni.RGStats = make([]RGNumericStat, numRGs)
 		for j := uint32(0); j < numRGs; j++ {
+			if err := binary.Read(r, binary.LittleEndian, &ni.RGStats[j].IntMin); err != nil {
+				return err
+			}
+			if err := binary.Read(r, binary.LittleEndian, &ni.RGStats[j].IntMax); err != nil {
+				return err
+			}
 			if err := binary.Read(r, binary.LittleEndian, &minBits); err != nil {
 				return err
 			}
@@ -680,11 +704,9 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 			if err := binary.Read(r, binary.LittleEndian, &hasValue); err != nil {
 				return err
 			}
-			ni.RGStats[j] = RGNumericStat{
-				Min:      math.Float64frombits(minBits),
-				Max:      math.Float64frombits(maxBits),
-				HasValue: hasValue != 0,
-			}
+			ni.RGStats[j].Min = math.Float64frombits(minBits)
+			ni.RGStats[j].Max = math.Float64frombits(maxBits)
+			ni.RGStats[j].HasValue = hasValue != 0
 		}
 		idx.NumericIndexes[pathID] = ni
 	}

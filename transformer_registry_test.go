@@ -316,6 +316,56 @@ func TestConfigSerializationCanonicalQueryBehavior(t *testing.T) {
 	}
 }
 
+func TestConfigSerializationNumericTransformerPath(t *testing.T) {
+	cfg, err := NewConfig(WithSemVerTransformer("$.version"))
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder, err := NewBuilder(cfg, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder() error = %v", err)
+	}
+
+	docs := []string{
+		`{"version":"v2.1.3"}`,
+		`{"version":"v2.1.4"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument() error = %v", err)
+		}
+	}
+
+	encoded, err := Encode(builder.Finalize())
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	fn, ok := decoded.Config.fieldTransformers["$.version"]
+	if !ok {
+		t.Fatalf("expected decoded fieldTransformers to contain $.version, got %v", decoded.Config.fieldTransformers)
+	}
+
+	transformed, ok := fn("v2.1.3")
+	if !ok {
+		t.Fatal("decoded semver transformer rejected valid input")
+	}
+	if transformed.(float64) != 2001003 {
+		t.Fatalf("decoded semver transformer = %v, want 2001003", transformed)
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.version", int64(2001003))})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("decoded numeric transformer query result = %v, want [0]", result.ToSlice())
+	}
+}
+
 func TestTransformerRoundTrip(t *testing.T) {
 	cfg, err := NewConfig(
 		WithISODateTransformer("$.created_at"),

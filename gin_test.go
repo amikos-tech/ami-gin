@@ -3,6 +3,7 @@ package gin
 import (
 	stderrors "errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -1074,8 +1075,12 @@ func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
 func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 
-	builder.walkJSON("$['foo']", "alpha", 0)
-	builder.walkJSON(`$["foo"]`, "beta", 1)
+	if err := builder.walkJSON("$['foo']", "alpha", 0); err != nil {
+		t.Fatalf("walkJSON() error = %v", err)
+	}
+	if err := builder.walkJSON(`$["foo"]`, "beta", 1); err != nil {
+		t.Fatalf("walkJSON() error = %v", err)
+	}
 
 	idx := builder.Finalize()
 
@@ -1420,5 +1425,325 @@ func TestStringLengthIndexSerialization(t *testing.T) {
 	result := idx2.Evaluate([]Predicate{EQ("$.name", "ab")})
 	if !result.IsEmpty() {
 		t.Error("len=2 query should return empty after round-trip (min=5)")
+	}
+}
+
+func TestAddDocumentUsesExplicitParser(t *testing.T) {
+	src, err := os.ReadFile("builder.go")
+	if err != nil {
+		t.Fatalf("read builder.go: %v", err)
+	}
+
+	text := string(src)
+	if strings.Contains(text, "json.Unmarshal(jsonDoc, &doc)") {
+		t.Fatal("AddDocument still uses eager generic unmarshal")
+	}
+	if !strings.Contains(text, "json.NewDecoder(") {
+		t.Fatal("AddDocument should use json.NewDecoder for streaming parse")
+	}
+	if !strings.Contains(text, ".UseNumber()") {
+		t.Fatal("AddDocument should enable UseNumber on the decoder")
+	}
+}
+
+func TestAddDocumentRejectsUnsupportedNumberWithoutPartialMutation(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 4)
+
+	if err := builder.AddDocument(0, []byte(`{"name":"stable","score":10}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"name":"leak","nested":{"label":"should-not-stick"},"score":9223372036854775808}`))
+	if err == nil {
+		t.Fatal("expected unsupported numeric literal to fail")
+	}
+	if !strings.Contains(err.Error(), "$.score") {
+		t.Fatalf("error should contain path context, got %v", err)
+	}
+
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+	if _, exists := builder.docIDToPos[DocID(1)]; exists {
+		t.Fatalf("docIDToPos contains rejected document: %+v", builder.docIDToPos)
+	}
+	if len(builder.posToDocID) != 1 {
+		t.Fatalf("posToDocID len = %d, want 1", len(builder.posToDocID))
+	}
+	if builder.nextPos != 1 {
+		t.Fatalf("nextPos = %d, want 1", builder.nextPos)
+	}
+	if _, exists := builder.pathData["$.nested.label"]; exists {
+		t.Fatal("rejected document leaked nested path into builder state")
+	}
+
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 1 {
+		t.Fatalf("finalized NumDocs = %d, want 1", idx.Header.NumDocs)
+	}
+
+	namePathID, ok := idx.pathLookup["$.name"]
+	if !ok {
+		t.Fatal("$.name missing from pathLookup")
+	}
+	stringIndex, ok := idx.StringIndexes[namePathID]
+	if !ok {
+		t.Fatal("$.name string index missing")
+	}
+	for _, term := range stringIndex.Terms {
+		if term == "leak" {
+			t.Fatal("rejected document term was indexed")
+		}
+	}
+
+	if _, exists := idx.pathLookup["$.nested.label"]; exists {
+		t.Fatal("rejected document path was added to finalized index")
+	}
+}
+
+func TestNumericIndexPreservesInt64Exactness(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":9223372036854775806}`},
+		{1, `{"score":9223372036854775807}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	exact := idx.Evaluate([]Predicate{EQ("$.score", int64(9223372036854775807))})
+	if exact.Count() != 1 || !exact.IsSet(1) || exact.IsSet(0) {
+		t.Fatalf("exact int64 EQ result = %v, want [1]", exact.ToSlice())
+	}
+
+	rangeResult := idx.Evaluate([]Predicate{GTE("$.score", int64(9223372036854775807))})
+	if rangeResult.Count() != 1 || !rangeResult.IsSet(1) || rangeResult.IsSet(0) {
+		t.Fatalf("exact int64 GTE result = %v, want [1]", rangeResult.ToSlice())
+	}
+
+	lower := idx.Evaluate([]Predicate{LT("$.score", int64(9223372036854775807))})
+	if lower.Count() != 1 || !lower.IsSet(0) || lower.IsSet(1) {
+		t.Fatalf("exact int64 LT result = %v, want [0]", lower.ToSlice())
+	}
+}
+
+func TestAddDocumentDuplicateObjectKeysUseLastValue(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+
+	if err := builder.AddDocument(0, []byte(`{"name":"old","name":"new"}`)); err != nil {
+		t.Fatalf("AddDocument() failed: %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	oldResult := idx.Evaluate([]Predicate{EQ("$.name", "old")})
+	if oldResult.Count() != 0 {
+		t.Fatalf(`EQ("$.name", "old") = %v, want []`, oldResult.ToSlice())
+	}
+
+	newResult := idx.Evaluate([]Predicate{EQ("$.name", "new")})
+	if newResult.Count() != 1 || !newResult.IsSet(0) {
+		t.Fatalf(`EQ("$.name", "new") = %v, want [0]`, newResult.ToSlice())
+	}
+}
+
+func TestIntOnlyNumericIndexExportsPerRGFloatBounds(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":10}`},
+		{1, `{"score":20}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	assertNumericBounds := func(t *testing.T, label string, idx *GINIndex) {
+		t.Helper()
+
+		scorePathID, ok := idx.pathLookup["$.score"]
+		if !ok {
+			t.Fatalf("%s: $.score missing from pathLookup", label)
+		}
+
+		ni, ok := idx.NumericIndexes[scorePathID]
+		if !ok {
+			t.Fatalf("%s: $.score missing numeric index", label)
+		}
+		if ni.ValueType != NumericValueTypeIntOnly {
+			t.Fatalf("%s: ValueType = %v, want %v", label, ni.ValueType, NumericValueTypeIntOnly)
+		}
+
+		want := []struct {
+			intMin int64
+			intMax int64
+			min    float64
+			max    float64
+		}{
+			{intMin: 10, intMax: 10, min: 10, max: 10},
+			{intMin: 20, intMax: 20, min: 20, max: 20},
+		}
+
+		for rgID, expected := range want {
+			stat := ni.RGStats[rgID]
+			if !stat.HasValue {
+				t.Fatalf("%s: RGStats[%d].HasValue = false, want true", label, rgID)
+			}
+			if stat.IntMin != expected.intMin || stat.IntMax != expected.intMax {
+				t.Fatalf("%s: RGStats[%d] int bounds = [%d,%d], want [%d,%d]", label, rgID, stat.IntMin, stat.IntMax, expected.intMin, expected.intMax)
+			}
+			if stat.Min != expected.min || stat.Max != expected.max {
+				t.Fatalf("%s: RGStats[%d] float bounds = [%v,%v], want [%v,%v]", label, rgID, stat.Min, stat.Max, expected.min, expected.max)
+			}
+		}
+	}
+
+	idx := builder.Finalize()
+	assertNumericBounds(t, "finalized", idx)
+
+	data, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	assertNumericBounds(t, "decoded", decoded)
+}
+
+func TestIntOnlyRangeQueriesWithFractionalBounds(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":1}`},
+		{1, `{"score":2}`},
+		{2, `{"score":3}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	tests := []struct {
+		name string
+		pred Predicate
+		want []int
+	}{
+		{
+			name: "GT uses floor bound",
+			pred: GT("$.score", 1.5),
+			want: []int{1, 2},
+		},
+		{
+			name: "GTE uses ceil bound",
+			pred: GTE("$.score", 1.5),
+			want: []int{1, 2},
+		},
+		{
+			name: "LT uses ceil bound",
+			pred: LT("$.score", 2.5),
+			want: []int{0, 1},
+		},
+		{
+			name: "LTE uses floor bound",
+			pred: LTE("$.score", 2.5),
+			want: []int{0, 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := idx.Evaluate([]Predicate{tt.pred}).ToSlice(); fmt.Sprint(got) != fmt.Sprint(tt.want) {
+				t.Fatalf("%s = %v, want %v", tt.pred, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMixedNumericPathRejectsLossyPromotion(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"score":1.5}`))
+	if err == nil {
+		t.Fatal("expected lossy mixed numeric promotion to fail")
+	}
+	if !strings.Contains(err.Error(), "$.score") {
+		t.Fatalf("error should contain path context, got %v", err)
+	}
+
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+
+	idx := builder.Finalize()
+	result := idx.Evaluate([]Predicate{EQ("$.score", int64(9007199254740993))})
+	if result.Count() != 1 || !result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("exact int64 EQ after rejected promotion = %v, want [0]", result.ToSlice())
+	}
+}
+
+func TestIntOnlyNumericDecodeParity(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"score":9223372036854775806}`},
+		{1, `{"score":9223372036854775807}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument(%d) failed: %v", doc.docID, err)
+		}
+	}
+
+	encoded, err := Encode(builder.Finalize())
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	exact := decoded.Evaluate([]Predicate{EQ("$.score", int64(9223372036854775807))})
+	if exact.Count() != 1 || !exact.IsSet(1) || exact.IsSet(0) {
+		t.Fatalf("decoded exact int64 EQ result = %v, want [1]", exact.ToSlice())
+	}
+
+	rangeResult := decoded.Evaluate([]Predicate{GTE("$.score", int64(9223372036854775807))})
+	if rangeResult.Count() != 1 || !rangeResult.IsSet(1) || rangeResult.IsSet(0) {
+		t.Fatalf("decoded exact int64 GTE result = %v, want [1]", rangeResult.ToSlice())
 	}
 }

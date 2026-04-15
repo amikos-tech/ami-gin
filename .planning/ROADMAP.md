@@ -12,7 +12,7 @@
 - This milestone starts at `Phase 06`
 
 - [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
-- [ ] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe
+- [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
 - [ ] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size
 - [ ] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers
 - [ ] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes
@@ -43,7 +43,7 @@ Plans:
   3. Integers within the supported range are indexed without pre-index rounding loss
   4. Unsupported numeric values return an explicit error instead of being silently mis-indexed
   5. Benchmarks report ingest/build latency and allocation deltas for the new parser path
-**Plans:** TBD
+**Plans:** 2/2 plans complete
 
 ### Phase 08: Adaptive High-Cardinality Indexing
 **Goal**: High-cardinality string paths keep exact pruning power for hot values while retaining compact fallback behavior for the long tail
@@ -87,7 +87,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
-| 07. Builder Parsing & Numeric Fidelity | 0/0 | Not started | - |
+| 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
 | 08. Adaptive High-Cardinality Indexing | 0/0 | Not started | - |
 | 09. Derived Representations | 0/0 | Not started | - |
 | 10. Serialization Compaction | 0/0 | Not started | - |
