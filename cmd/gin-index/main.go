@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -376,17 +377,42 @@ func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
 		}
 	}
 
-	fmt.Printf("GIN Index Info:\n")
-	fmt.Printf("  Version: %d\n", idx.Header.Version)
-	fmt.Printf("  Row Groups: %d\n", idx.Header.NumRowGroups)
-	fmt.Printf("  Documents: %d\n", idx.Header.NumDocs)
-	fmt.Printf("  Paths: %d\n", idx.Header.NumPaths)
-	fmt.Printf("  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
-	fmt.Printf("\nPaths:\n")
+	writeIndexInfo(os.Stdout, idx)
+}
+
+func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
+	fmt.Fprintf(w, "GIN Index Info:\n")
+	fmt.Fprintf(w, "  Version: %d\n", idx.Header.Version)
+	fmt.Fprintf(w, "  Row Groups: %d\n", idx.Header.NumRowGroups)
+	fmt.Fprintf(w, "  Documents: %d\n", idx.Header.NumDocs)
+	fmt.Fprintf(w, "  Paths: %d\n", idx.Header.NumPaths)
+	fmt.Fprintf(w, "  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
+	fmt.Fprintf(w, "\nPaths:\n")
 	for _, pe := range idx.PathDirectory {
-		types := describeTypes(pe.ObservedTypes)
-		fmt.Printf("  %s (id=%d, types=%s, cardinality=%d)\n", pe.PathName, pe.PathID, types, pe.Cardinality)
+		fmt.Fprintln(w, formatPathInfo(idx, pe))
 	}
+}
+
+func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
+	mode := "exact"
+	switch {
+	case pe.Flags&gin.FlagAdaptiveHybrid != 0:
+		mode = "adaptive-hybrid"
+	case pe.Flags&gin.FlagBloomOnly != 0:
+		mode = "bloom-only"
+	}
+
+	info := fmt.Sprintf("  %s (id=%d, types=%s, cardinality=%d, mode=%s",
+		pe.PathName, pe.PathID, describeTypes(pe.ObservedTypes), pe.Cardinality, mode)
+	if mode == "adaptive-hybrid" {
+		info += fmt.Sprintf(", promoted=%d, buckets=%d, threshold=%d",
+			pe.AdaptivePromotedTerms, pe.AdaptiveBucketCount, idx.Header.CardinalityThresh)
+		if idx.Config != nil {
+			info += fmt.Sprintf(", cap=%d", idx.Config.AdaptivePromotedTermCap)
+		}
+	}
+	info += ")"
+	return info
 }
 
 func cmdExtract(args []string) {
