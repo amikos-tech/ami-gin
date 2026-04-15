@@ -105,3 +105,15 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 
 Plans:
 - [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.2: walkJSON NormalizePath Fast-Path (BACKLOG)
+
+**Goal:** Add a fast-path in `walkJSON` to skip `NormalizePath` when the path is already in canonical form (builder-generated paths never contain bracket-quoted fields). This avoids `jp.ParseString` overhead on every recursive call during ingestion.
+**Requirements:** Profile ingestion to confirm `NormalizePath` is a measurable hotspot before implementing.
+**Plans:** 0 plans
+
+### Phase 999.3: Minor Code Clarity in Phase 06 (BACKLOG)
+
+**Goal:** Address non-blocking observations from Phase 06 review: (a) add comment on `findPath` bounds check explaining it guards against corruption; (b) reorder or comment `validatePathReferences` to clarify it reads the original directory; (c) make benchmark fixture path count assertion less brittle.
+**Requirements:** None — cosmetic improvements only.
+**Plans:** 0 plans

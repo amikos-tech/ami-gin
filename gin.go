@@ -143,13 +143,18 @@ type ConfigOption func(*GINConfig) error
 
 func WithFTSPaths(paths ...string) ConfigOption {
 	return func(c *GINConfig) error {
-		canonicalPaths := make([]string, len(paths))
-		for i, path := range paths {
+		seen := make(map[string]string, len(paths))
+		canonicalPaths := make([]string, 0, len(paths))
+		for _, path := range paths {
 			canonicalPath, err := canonicalizeSupportedPath(path)
 			if err != nil {
 				return err
 			}
-			canonicalPaths[i] = canonicalPath
+			if firstPath, exists := seen[canonicalPath]; exists {
+				return errors.Errorf("duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
+			}
+			seen[canonicalPath] = path
+			canonicalPaths = append(canonicalPaths, canonicalPath)
 		}
 		c.ftsPaths = canonicalPaths
 		return nil
@@ -305,10 +310,7 @@ func (idx *GINIndex) rebuildPathLookup() error {
 		}
 
 		rawPath := entry.PathName
-		canonical, err := canonicalizeSupportedPath(rawPath)
-		if err != nil {
-			return errors.Wrapf(ErrInvalidFormat, "invalid path directory entry %q: %v", rawPath, err)
-		}
+		canonical := NormalizePath(rawPath)
 		if firstPath, exists := originals[canonical]; exists {
 			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, rawPath)
 		}

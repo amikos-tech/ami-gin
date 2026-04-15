@@ -3,6 +3,7 @@ package gin
 import (
 	stderrors "errors"
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -259,6 +260,42 @@ func TestSerializeRoundTrip(t *testing.T) {
 	result := decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
 	if !result.IsSet(0) {
 		t.Error("query on decoded index failed")
+	}
+}
+
+func TestSerializeRoundTripWithArrays(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	builder.AddDocument(0, []byte(`{"items": ["x", "y"], "name": "alice"}`))
+	builder.AddDocument(1, []byte(`{"items": ["z"], "nested": [{"a": 1}]}`))
+
+	idx := builder.Finalize()
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+
+	if decoded.Header.NumDocs != idx.Header.NumDocs {
+		t.Errorf("NumDocs mismatch: %d vs %d", decoded.Header.NumDocs, idx.Header.NumDocs)
+	}
+	if len(decoded.PathDirectory) != len(idx.PathDirectory) {
+		t.Errorf("PathDirectory length mismatch: %d vs %d", len(decoded.PathDirectory), len(idx.PathDirectory))
+	}
+
+	result := decoded.Evaluate([]Predicate{EQ("$.items[*]", "x")})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Errorf("array query on decoded index failed: got %v", result.ToSlice())
+	}
+
+	result = decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
+	if !result.IsSet(0) || result.IsSet(1) {
+		t.Errorf("flat field query on decoded index failed: got %v", result.ToSlice())
 	}
 }
 
@@ -1021,6 +1058,16 @@ func TestWithFTSPathsOnNumericField(t *testing.T) {
 	result := idx.Evaluate([]Predicate{Contains("$.score", "100")})
 	if result.Count() != 2 {
 		t.Errorf("CONTAINS on numeric field should return all RGs, got %d", result.Count())
+	}
+}
+
+func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
+	_, err := NewConfig(WithFTSPaths("$.foo", "$['foo']"))
+	if err == nil {
+		t.Fatal("expected error for duplicate canonical FTS paths, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate canonical FTS path") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
