@@ -25,25 +25,27 @@ const (
 )
 
 const (
-	FlagBloomOnly    uint8 = 1 << iota
-	FlagTrigramIndex       // path has trigram index for CONTAINS queries
+	FlagBloomOnly uint8 = 1 << iota
+	FlagAdaptiveHybrid
+	FlagTrigramIndex // path has trigram index for CONTAINS queries
 )
 
 type GINIndex struct {
 	// GINIndex is immutable after `Finalize()` or `Decode()`; pathLookup is
 	// derived, non-serialized state rebuilt once and then treated as read-only.
-	Header              Header
-	PathDirectory       []PathEntry
-	GlobalBloom         *BloomFilter
-	StringIndexes       map[uint16]*StringIndex
-	NumericIndexes      map[uint16]*NumericIndex
-	NullIndexes         map[uint16]*NullIndex
-	TrigramIndexes      map[uint16]*TrigramIndex
-	StringLengthIndexes map[uint16]*StringLengthIndex
-	PathCardinality     map[uint16]*HyperLogLog
-	DocIDMapping        []DocID
-	Config              *GINConfig
-	pathLookup          map[string]uint16
+	Header                Header
+	PathDirectory         []PathEntry
+	GlobalBloom           *BloomFilter
+	StringIndexes         map[uint16]*StringIndex
+	AdaptiveStringIndexes map[uint16]*AdaptiveStringIndex
+	NumericIndexes        map[uint16]*NumericIndex
+	NullIndexes           map[uint16]*NullIndex
+	TrigramIndexes        map[uint16]*TrigramIndex
+	StringLengthIndexes   map[uint16]*StringLengthIndex
+	PathCardinality       map[uint16]*HyperLogLog
+	DocIDMapping          []DocID
+	Config                *GINConfig
+	pathLookup            map[string]uint16
 }
 
 type Header struct {
@@ -57,16 +59,25 @@ type Header struct {
 }
 
 type PathEntry struct {
-	PathID        uint16
-	PathName      string
-	ObservedTypes uint8
-	Cardinality   uint32
-	Flags         uint8
+	PathID                uint16
+	PathName              string
+	ObservedTypes         uint8
+	Cardinality           uint32
+	Flags                 uint8
+	AdaptivePromotedTerms uint16
+	AdaptiveBucketCount   uint16
 }
 
 type StringIndex struct {
 	Terms     []string
 	RGBitmaps []*RGSet
+}
+
+type AdaptiveStringIndex struct {
+	Terms           []string
+	RGBitmaps       []*RGSet
+	BucketCount     int
+	BucketRGBitmaps []*RGSet
 }
 
 type NumericValueType uint8
@@ -139,16 +150,20 @@ type Predicate struct {
 type FieldTransformer func(value any) (any, bool)
 
 type GINConfig struct {
-	CardinalityThreshold uint32
-	BloomFilterSize      uint32
-	BloomFilterHashes    uint8
-	EnableTrigrams       bool
-	TrigramMinLength     int
-	HLLPrecision         uint8
-	PrefixBlockSize      int
-	ftsPaths             []string                    // paths to enable FTS on; empty means all paths
-	fieldTransformers    map[string]FieldTransformer // path -> transformer
-	transformerSpecs     map[string]TransformerSpec  // path -> spec for serialization
+	CardinalityThreshold    uint32
+	BloomFilterSize         uint32
+	BloomFilterHashes       uint8
+	EnableTrigrams          bool
+	TrigramMinLength        int
+	HLLPrecision            uint8
+	PrefixBlockSize         int
+	AdaptiveMinRGCoverage   int
+	AdaptivePromotedTermCap int
+	AdaptiveCoverageCeiling float64
+	AdaptiveBucketCount     int
+	ftsPaths                []string                    // paths to enable FTS on; empty means all paths
+	fieldTransformers       map[string]FieldTransformer // path -> transformer
+	transformerSpecs        map[string]TransformerSpec  // path -> spec for serialization
 }
 
 type ConfigOption func(*GINConfig) error
@@ -265,6 +280,49 @@ func WithBoolNormalizeTransformer(path string) ConfigOption {
 	return WithRegisteredTransformer(path, TransformerBoolNormalize, nil)
 }
 
+func WithAdaptiveMinRGCoverage(minCoverage int) ConfigOption {
+	return func(c *GINConfig) error {
+		if minCoverage < 0 {
+			return errors.New("adaptive min RG coverage must be non-negative")
+		}
+		c.AdaptiveMinRGCoverage = minCoverage
+		return nil
+	}
+}
+
+func WithAdaptivePromotedTermCap(cap int) ConfigOption {
+	return func(c *GINConfig) error {
+		if cap < 0 {
+			return errors.New("adaptive promoted term cap must be non-negative")
+		}
+		c.AdaptivePromotedTermCap = cap
+		return nil
+	}
+}
+
+func WithAdaptiveCoverageCeiling(ceiling float64) ConfigOption {
+	return func(c *GINConfig) error {
+		if ceiling <= 0 || ceiling >= 1 {
+			return errors.New("adaptive coverage ceiling must be greater than 0 and less than 1")
+		}
+		c.AdaptiveCoverageCeiling = ceiling
+		return nil
+	}
+}
+
+func WithAdaptiveBucketCount(bucketCount int) ConfigOption {
+	return func(c *GINConfig) error {
+		if bucketCount <= 0 {
+			return errors.New("adaptive bucket count must be greater than 0")
+		}
+		if !isPowerOfTwo(bucketCount) {
+			return errors.New("adaptive bucket count must be a power of two")
+		}
+		c.AdaptiveBucketCount = bucketCount
+		return nil
+	}
+}
+
 func NewConfig(opts ...ConfigOption) (GINConfig, error) {
 	cfg := DefaultConfig()
 	for _, opt := range opts {
@@ -272,18 +330,25 @@ func NewConfig(opts ...ConfigOption) (GINConfig, error) {
 			return GINConfig{}, err
 		}
 	}
+	if err := cfg.validate(); err != nil {
+		return GINConfig{}, err
+	}
 	return cfg, nil
 }
 
 func DefaultConfig() GINConfig {
 	return GINConfig{
-		CardinalityThreshold: 10000,
-		BloomFilterSize:      65536,
-		BloomFilterHashes:    5,
-		EnableTrigrams:       true,
-		TrigramMinLength:     3,
-		HLLPrecision:         12,
-		PrefixBlockSize:      16,
+		CardinalityThreshold:    10000,
+		BloomFilterSize:         65536,
+		BloomFilterHashes:       5,
+		EnableTrigrams:          true,
+		TrigramMinLength:        3,
+		HLLPrecision:            12,
+		PrefixBlockSize:         16,
+		AdaptiveMinRGCoverage:   2,
+		AdaptivePromotedTermCap: 64,
+		AdaptiveCoverageCeiling: 0.80,
+		AdaptiveBucketCount:     128,
 	}
 }
 
@@ -293,15 +358,35 @@ func NewGINIndex() *GINIndex {
 			Magic:   [4]byte{'G', 'I', 'N', 0x01},
 			Version: Version,
 		},
-		PathDirectory:       make([]PathEntry, 0),
-		StringIndexes:       make(map[uint16]*StringIndex),
-		NumericIndexes:      make(map[uint16]*NumericIndex),
-		NullIndexes:         make(map[uint16]*NullIndex),
-		TrigramIndexes:      make(map[uint16]*TrigramIndex),
-		StringLengthIndexes: make(map[uint16]*StringLengthIndex),
-		PathCardinality:     make(map[uint16]*HyperLogLog),
-		pathLookup:          make(map[string]uint16),
+		PathDirectory:         make([]PathEntry, 0),
+		StringIndexes:         make(map[uint16]*StringIndex),
+		AdaptiveStringIndexes: make(map[uint16]*AdaptiveStringIndex),
+		NumericIndexes:        make(map[uint16]*NumericIndex),
+		NullIndexes:           make(map[uint16]*NullIndex),
+		TrigramIndexes:        make(map[uint16]*TrigramIndex),
+		StringLengthIndexes:   make(map[uint16]*StringLengthIndex),
+		PathCardinality:       make(map[uint16]*HyperLogLog),
+		pathLookup:            make(map[string]uint16),
 	}
+}
+
+func (c GINConfig) validate() error {
+	if c.AdaptiveMinRGCoverage < 0 {
+		return errors.New("adaptive min RG coverage must be non-negative")
+	}
+	if c.AdaptivePromotedTermCap < 0 {
+		return errors.New("adaptive promoted term cap must be non-negative")
+	}
+	if c.AdaptiveCoverageCeiling <= 0 || c.AdaptiveCoverageCeiling >= 1 {
+		return errors.New("adaptive coverage ceiling must be greater than 0 and less than 1")
+	}
+	if c.AdaptiveBucketCount < 0 {
+		return errors.New("adaptive bucket count must be non-negative")
+	}
+	if c.AdaptiveBucketCount > 0 && !isPowerOfTwo(c.AdaptiveBucketCount) {
+		return errors.New("adaptive bucket count must be a power of two")
+	}
+	return nil
 }
 
 func (idx *GINIndex) rebuildPathLookup() error {
@@ -343,6 +428,11 @@ func (idx *GINIndex) rebuildPathLookup() error {
 func (idx *GINIndex) validatePathReferences() error {
 	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
 		if err := idx.validatePathReference("string index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
+		if err := idx.validatePathReference("adaptive string index", pathID); err != nil {
 			return err
 		}
 	}
@@ -394,4 +484,8 @@ func (idx *GINIndex) validatePathReference(kind string, pathID uint16) error {
 
 func jsonMarshal(v any) ([]byte, error) {
 	return json.Marshal(v)
+}
+
+func isPowerOfTwo(v int) bool {
+	return v > 0 && (v&(v-1)) == 0
 }

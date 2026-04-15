@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
 )
 
@@ -110,6 +111,9 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	if numRGs <= 0 {
 		return nil, errors.New("numRGs must be greater than 0")
 	}
+	if err := config.validate(); err != nil {
+		return nil, err
+	}
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)
 	if err != nil {
 		return nil, errors.Wrap(err, "create bloom filter")
@@ -129,6 +133,105 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 		}
 	}
 	return b, nil
+}
+
+func adaptiveBucketIndex(term string, bucketCount int) int {
+	if bucketCount <= 0 {
+		return 0
+	}
+	return int(xxhash.Sum64String(term) & uint64(bucketCount-1))
+}
+
+func buildStringIndex(stringTerms map[string]*RGSet) *StringIndex {
+	si := &StringIndex{
+		Terms:     make([]string, 0, len(stringTerms)),
+		RGBitmaps: make([]*RGSet, 0, len(stringTerms)),
+	}
+	terms := make([]string, 0, len(stringTerms))
+	for term := range stringTerms {
+		terms = append(terms, term)
+	}
+	sort.Strings(terms)
+	for _, term := range terms {
+		si.Terms = append(si.Terms, term)
+		si.RGBitmaps = append(si.RGBitmaps, stringTerms[term])
+	}
+	return si
+}
+
+type adaptivePromotionCandidate struct {
+	term     string
+	coverage int
+}
+
+func (b *GINBuilder) selectAdaptivePromotedTerms(pd *pathBuildData) map[string]struct{} {
+	if b.config.AdaptivePromotedTermCap == 0 || len(pd.stringTerms) == 0 {
+		return map[string]struct{}{}
+	}
+
+	candidates := make([]adaptivePromotionCandidate, 0, len(pd.stringTerms))
+	for term, rgSet := range pd.stringTerms {
+		coverage := rgSet.Count()
+		if coverage < b.config.AdaptiveMinRGCoverage {
+			continue
+		}
+		if float64(coverage)/float64(b.numRGs) > b.config.AdaptiveCoverageCeiling {
+			continue
+		}
+		candidates = append(candidates, adaptivePromotionCandidate{
+			term:     term,
+			coverage: coverage,
+		})
+	}
+
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].coverage == candidates[j].coverage {
+			return candidates[i].term < candidates[j].term
+		}
+		return candidates[i].coverage > candidates[j].coverage
+	})
+
+	if len(candidates) > b.config.AdaptivePromotedTermCap {
+		candidates = candidates[:b.config.AdaptivePromotedTermCap]
+	}
+
+	promoted := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		promoted[candidate.term] = struct{}{}
+	}
+	return promoted
+}
+
+func (b *GINBuilder) buildAdaptiveStringIndex(pd *pathBuildData) *AdaptiveStringIndex {
+	promoted := b.selectAdaptivePromotedTerms(pd)
+	adaptive := &AdaptiveStringIndex{
+		Terms:           make([]string, 0, len(promoted)),
+		RGBitmaps:       make([]*RGSet, 0, len(promoted)),
+		BucketCount:     b.config.AdaptiveBucketCount,
+		BucketRGBitmaps: make([]*RGSet, b.config.AdaptiveBucketCount),
+	}
+
+	for bucketID := range adaptive.BucketRGBitmaps {
+		adaptive.BucketRGBitmaps[bucketID] = MustNewRGSet(b.numRGs)
+	}
+
+	for term := range promoted {
+		adaptive.Terms = append(adaptive.Terms, term)
+	}
+	sort.Strings(adaptive.Terms)
+	for _, term := range adaptive.Terms {
+		adaptive.RGBitmaps = append(adaptive.RGBitmaps, pd.stringTerms[term].Clone())
+	}
+
+	for term, rgSet := range pd.stringTerms {
+		if _, ok := promoted[term]; ok {
+			continue
+		}
+		bucketID := adaptiveBucketIndex(term, adaptive.BucketCount)
+		adaptive.BucketRGBitmaps[bucketID] = adaptive.BucketRGBitmaps[bucketID].Union(rgSet)
+	}
+
+	return adaptive
 }
 
 func (b *GINBuilder) shouldEnableTrigrams(path string) bool {
@@ -862,41 +965,37 @@ func (b *GINBuilder) Finalize() *GINIndex {
 
 		cardinality := uint32(pd.hll.Estimate())
 		flags := uint8(0)
-		if cardinality > b.config.CardinalityThreshold {
+		adaptivePromotedTerms := uint16(0)
+		adaptiveBucketCount := uint16(0)
+		highCardinality := cardinality > b.config.CardinalityThreshold
+		adaptiveEnabled := b.config.AdaptivePromotedTermCap > 0 && b.config.AdaptiveBucketCount > 0
+		if highCardinality && !adaptiveEnabled {
 			flags |= FlagBloomOnly
+		} else if highCardinality {
+			flags |= FlagAdaptiveHybrid
+			adaptiveBucketCount = uint16(b.config.AdaptiveBucketCount)
 		}
 		if pd.trigrams != nil && pd.trigrams.TrigramCount() > 0 {
 			flags |= FlagTrigramIndex
 		}
 
 		entry := PathEntry{
-			PathID:        pd.pathID,
-			PathName:      path,
-			ObservedTypes: pd.observedTypes,
-			Cardinality:   cardinality,
-			Flags:         flags,
+			PathID:                pd.pathID,
+			PathName:              path,
+			ObservedTypes:         pd.observedTypes,
+			Cardinality:           cardinality,
+			Flags:                 flags,
+			AdaptivePromotedTerms: adaptivePromotedTerms,
+			AdaptiveBucketCount:   adaptiveBucketCount,
 		}
-		idx.PathDirectory = append(idx.PathDirectory, entry)
-		idx.pathLookup[path] = pd.pathID
-
-		idx.PathCardinality[pd.pathID] = pd.hll
-
 		if pd.observedTypes&TypeString != 0 || pd.observedTypes&TypeBool != 0 {
-			if flags&FlagBloomOnly == 0 && len(pd.stringTerms) > 0 {
-				si := &StringIndex{
-					Terms:     make([]string, 0, len(pd.stringTerms)),
-					RGBitmaps: make([]*RGSet, 0, len(pd.stringTerms)),
-				}
-				terms := make([]string, 0, len(pd.stringTerms))
-				for t := range pd.stringTerms {
-					terms = append(terms, t)
-				}
-				sort.Strings(terms)
-				for _, t := range terms {
-					si.Terms = append(si.Terms, t)
-					si.RGBitmaps = append(si.RGBitmaps, pd.stringTerms[t])
-				}
-				idx.StringIndexes[pd.pathID] = si
+			switch {
+			case flags&FlagAdaptiveHybrid != 0 && len(pd.stringTerms) > 0:
+				adaptive := b.buildAdaptiveStringIndex(pd)
+				idx.AdaptiveStringIndexes[pd.pathID] = adaptive
+				entry.AdaptivePromotedTerms = uint16(len(adaptive.Terms))
+			case flags&FlagBloomOnly == 0 && len(pd.stringTerms) > 0:
+				idx.StringIndexes[pd.pathID] = buildStringIndex(pd.stringTerms)
 			}
 
 			if len(pd.stringLengthStats) > 0 {
@@ -924,6 +1023,11 @@ func (b *GINBuilder) Finalize() *GINIndex {
 				idx.StringLengthIndexes[pd.pathID] = sli
 			}
 		}
+
+		idx.PathDirectory = append(idx.PathDirectory, entry)
+		idx.pathLookup[path] = pd.pathID
+
+		idx.PathCardinality[pd.pathID] = pd.hll
 
 		if pd.observedTypes&(TypeInt|TypeFloat) != 0 && len(pd.numericStats) > 0 {
 			ni := &NumericIndex{
