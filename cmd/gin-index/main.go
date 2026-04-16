@@ -145,8 +145,10 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// These thin wrappers preserve the historical helper signatures while run*
-// handles injectable I/O streams and exit-code testing.
+// buildSingleFile/extractSingleFile are os.Stdout/os.Stderr wrappers kept for
+// the historical API surface exercised by tests. The *WithIO variants are the
+// canonical implementation and are what run* functions call so captured
+// writers and exit codes are testable end-to-end.
 func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINConfig, pqCfg gin.ParquetConfig) {
 	_ = buildSingleFileWithIO(os.Stdout, os.Stderr, input, column, output, embed, ginCfg, pqCfg)
 }
@@ -468,11 +470,17 @@ func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
 	return info
 }
 
+// adaptivePathSummary returns the promoted-term and bucket counts for an
+// adaptive-hybrid path. Both the builder and Decode enforce that every
+// PathModeAdaptiveHybrid entry has a matching AdaptiveStringIndexes section,
+// so a missing section indicates an invariant violation; we surface zeros so
+// the CLI renders something coherent rather than panicking.
 func adaptivePathSummary(idx *gin.GINIndex, pe gin.PathEntry) (int, int) {
-	if adaptive, ok := idx.AdaptiveStringIndexes[pe.PathID]; ok && adaptive != nil {
-		return len(adaptive.Terms), len(adaptive.BucketRGBitmaps)
+	adaptive, ok := idx.AdaptiveStringIndexes[pe.PathID]
+	if !ok || adaptive == nil {
+		return 0, 0
 	}
-	return int(pe.AdaptivePromotedTerms), int(pe.AdaptiveBucketCount)
+	return len(adaptive.Terms), len(adaptive.BucketRGBitmaps)
 }
 
 func cmdExtract(args []string) {

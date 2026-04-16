@@ -9,7 +9,13 @@ import (
 
 const (
 	MagicBytes = "GIN\x01"
-	// Version 6 adds PathEntry.Mode to the path directory.
+	// Version is the binary format version. Decode rejects mismatches with
+	// ErrVersionMismatch; the only migration path is to rebuild the index
+	// with the target binary. Version history:
+	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
+	//       (phase 08 adaptive high-cardinality indexing)
+	//   v5: adaptive string index section + SerializedConfig adaptive fields
+	//   v4: earlier pre-OSS format
 	Version = uint16(6)
 )
 
@@ -80,10 +86,11 @@ type PathEntry struct {
 	// Mode is the exclusive string-evaluation mode for this path.
 	Mode  PathMode
 	Flags uint8
-	// AdaptivePromotedTerms is derived metadata populated from the adaptive section.
+	// AdaptivePromotedTerms and AdaptiveBucketCount are derived metadata
+	// populated from the adaptive section at decode time. They are not
+	// persisted in the path directory; encoders must not rely on them.
 	AdaptivePromotedTerms uint16
-	// AdaptiveBucketCount is derived metadata populated from the adaptive section.
-	AdaptiveBucketCount uint16
+	AdaptiveBucketCount   uint16
 }
 
 type StringIndex struct {
@@ -92,9 +99,17 @@ type StringIndex struct {
 }
 
 // AdaptiveStringIndex stores promoted exact terms plus lossy tail buckets.
+// Terms must be sorted lexically; RGBitmaps is parallel to Terms. Values that
+// are not promoted fall into one of len(BucketRGBitmaps) hash buckets, which
+// may return false-positive row groups.
 type AdaptiveStringIndex struct {
-	Terms           []string
-	RGBitmaps       []*RGSet
+	// Terms holds the promoted exact-match values in sorted order.
+	Terms []string
+	// RGBitmaps[i] lists the row groups that contain Terms[i].
+	RGBitmaps []*RGSet
+	// BucketRGBitmaps partitions the long-tail terms by xxhash; len must be a
+	// non-zero power of two. A bucket hit is a superset match (may include
+	// row groups that do not actually contain the queried term).
 	BucketRGBitmaps []*RGSet
 }
 
@@ -345,6 +360,9 @@ func WithBoolNormalizeTransformer(path string) ConfigOption {
 	return WithRegisteredTransformer(path, TransformerBoolNormalize, nil)
 }
 
+// WithAdaptiveMinRGCoverage sets the minimum number of row groups a term must
+// cover to be eligible for promotion to the exact adaptive index.
+// Terms below this threshold fall into the bucket layer.
 func WithAdaptiveMinRGCoverage(minCoverage int) ConfigOption {
 	return func(c *GINConfig) error {
 		if minCoverage < 0 {
@@ -355,6 +373,8 @@ func WithAdaptiveMinRGCoverage(minCoverage int) ConfigOption {
 	}
 }
 
+// WithAdaptivePromotedTermCap caps the number of terms promoted to the exact
+// adaptive index per high-cardinality path. Zero disables adaptive mode.
 func WithAdaptivePromotedTermCap(cap int) ConfigOption {
 	return func(c *GINConfig) error {
 		if cap < 0 {
@@ -365,6 +385,10 @@ func WithAdaptivePromotedTermCap(cap int) ConfigOption {
 	}
 }
 
+// WithAdaptiveCoverageCeiling sets the maximum fraction of row groups a term
+// may cover and still be eligible for promotion. Terms above the ceiling are
+// treated as too-ubiquitous and fall through to the bucket layer.
+// Must be in the open interval (0, 1).
 func WithAdaptiveCoverageCeiling(ceiling float64) ConfigOption {
 	return func(c *GINConfig) error {
 		if ceiling <= 0 || ceiling >= 1 {
@@ -375,6 +399,8 @@ func WithAdaptiveCoverageCeiling(ceiling float64) ConfigOption {
 	}
 }
 
+// WithAdaptiveBucketCount sets the fan-out of the long-tail bucket layer.
+// Must be a positive power of two. Zero disables adaptive mode.
 func WithAdaptiveBucketCount(bucketCount int) ConfigOption {
 	return func(c *GINConfig) error {
 		if bucketCount <= 0 {

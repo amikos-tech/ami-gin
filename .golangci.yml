@@ -39,6 +39,11 @@ linters:
       - linters:
           - errcheck
         path: examples/
+      # CLI writes status/errors via fmt.Fprintf to stdout/stderr; ignoring
+      # those errors is standard practice for terminal output.
+      - linters:
+          - errcheck
+        path: cmd/gin-index/
 
 issues:
   max-same-issues: 0

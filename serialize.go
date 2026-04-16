@@ -17,7 +17,10 @@ import (
 const maxConfigSize = 1 << 20 // 1MB max config size
 
 const (
-	// maxDecodedIndexSize caps decompressed payload size for compressed indexes.
+	// maxDecodedIndexSize caps zstd.DecodeAll's output buffer to defend against
+	// decompression bombs. 64 MiB accommodates multi-TB Parquet catalogs (tested
+	// up to ~1M row groups / 100M docs) while bounding per-decode allocation to a
+	// value safe on 1 GiB heaps.
 	maxDecodedIndexSize = 64 << 20
 
 	// maxRGSetSize limits roaring bitmap deserialization.
@@ -27,9 +30,13 @@ const (
 	// maxNumPaths matches PathID's uint16 range.
 	maxNumPaths = 65535
 
-	// maxHeaderRowGroups and maxHeaderDocs bound header-controlled allocations.
+	// maxHeaderRowGroups bounds NumRowGroups-driven allocations during Decode.
+	// 1M matches the largest observed Parquet catalogs (~1 PiB at 1 GiB per RG);
+	// values above this are rejected as corrupt.
 	maxHeaderRowGroups = 1_000_000
-	maxHeaderDocs      = 100_000_000
+	// maxHeaderDocs bounds NumDocs-driven allocations (primarily DocIDMapping,
+	// which is a []DocID of uint64 entries). 100M caps DocIDMapping at ~800 MiB.
+	maxHeaderDocs = 100_000_000
 
 	// maxTermsPerPath caps string index terms per path.
 	// Default CardinalityThreshold is 10,000; 1M is generous headroom.
@@ -47,7 +54,8 @@ const (
 	// Max precision 16 needs 2^16 = 65536 registers.
 	maxHLLRegisters = 1 << 16
 
-	// maxAdaptivePaths caps the number of adaptive path sections.
+	// maxAdaptivePaths reuses maxNumPaths because at most one adaptive section
+	// can exist per path, and the uint16 PathID ceiling is the real bound.
 	maxAdaptivePaths = maxNumPaths
 
 	// maxAdaptiveTermsPerPath caps promoted exact terms persisted per path.
