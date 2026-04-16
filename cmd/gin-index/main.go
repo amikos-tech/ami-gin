@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,22 +82,31 @@ Batch Processing (Directory/S3 Prefix):
 }
 
 func cmdBuild(args []string) {
-	fs := flag.NewFlagSet("build", flag.ExitOnError)
+	if code := runBuild(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runBuild(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	column := fs.String("c", "", "JSON column name (required)")
 	output := fs.String("o", "", "Output path (for single file only)")
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Error: input file or directory required")
+		fmt.Fprintln(stderr, "Error: input file or directory required")
 		fs.Usage()
-		os.Exit(1)
+		return 1
 	}
 	if *column == "" {
-		fmt.Fprintln(os.Stderr, "Error: -c (column) is required")
+		fmt.Fprintln(stderr, "Error: -c (column) is required")
 		fs.Usage()
-		os.Exit(1)
+		return 1
 	}
 
 	input := fs.Arg(0)
@@ -105,48 +115,66 @@ func cmdBuild(args []string) {
 
 	files, err := resolveParquetFiles(input)
 	if err != nil {
-		fatal("Failed to resolve files: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to resolve files: %v\n", err)
+		return 1
 	}
 
 	if len(files) == 0 {
-		fatal("No .parquet files found in %s", input)
+		fmt.Fprintf(stderr, "Error: No .parquet files found in %s\n", input)
+		return 1
 	}
 
 	if len(files) > 1 && *output != "" {
-		fatal("-o cannot be used with multiple files (directory/prefix mode)")
+		fmt.Fprintln(stderr, "Error: -o cannot be used with multiple files (directory/prefix mode)")
+		return 1
 	}
 
+	successes := 0
 	for _, file := range files {
-		fmt.Printf("Processing: %s\n", file)
-		buildSingleFile(file, *column, *output, *embed, ginCfg, pqCfg)
+		fmt.Fprintf(stdout, "Processing: %s\n", file)
+		if err := buildSingleFileWithIO(stdout, stderr, file, *column, *output, *embed, ginCfg, pqCfg); err != nil {
+			continue
+		}
+		successes++
 	}
 
-	fmt.Printf("\nProcessed %d file(s)\n", len(files))
+	writeBatchSummary(stdout, successes, len(files))
+	if successes != len(files) {
+		return 1
+	}
+	return 0
 }
 
+// buildSingleFile/extractSingleFile are os.Stdout/os.Stderr wrappers kept for
+// the historical API surface exercised by tests. The *WithIO variants are the
+// canonical implementation and are what run* functions call so captured
+// writers and exit codes are testable end-to-end.
 func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINConfig, pqCfg gin.ParquetConfig) {
+	_ = buildSingleFileWithIO(os.Stdout, os.Stderr, input, column, output, embed, ginCfg, pqCfg)
+}
+
+func buildSingleFileWithIO(stdout, stderr io.Writer, input, column, output string, embed bool, ginCfg gin.GINConfig, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(input) {
 		bucket, s3Key, err := gin.ParseS3Path(input)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Invalid S3 path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Invalid S3 path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		idx, err = s3Client.BuildFromParquet(bucket, s3Key, column, ginCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to build index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to build index: %v\n", err)
+			return err
 		}
 
 		if embed {
-			fmt.Fprintf(os.Stderr, "  Warning: --embed not supported for S3 paths, using sidecar\n")
+			fmt.Fprintf(stderr, "  Warning: --embed not supported for S3 paths, using sidecar\n")
 		}
 
 		outPath := output
@@ -155,27 +183,28 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 		}
 		outBucket, outKey, err := gin.ParseS3Path(outPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Invalid S3 output path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Invalid S3 output path: %v\n", err)
+			return err
 		}
 		if err := s3Client.WriteSidecar(outBucket, strings.TrimSuffix(outKey, ".gin"), idx); err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to write sidecar: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to write sidecar: %v\n", err)
+			return err
 		}
-		fmt.Printf("  Index written to %s\n", outPath)
+		fmt.Fprintf(stdout, "  Index written to %s\n", outPath)
 	} else {
-		idx, err = gin.BuildFromParquet(input, column, ginCfg)
+		built, err := gin.BuildFromParquet(input, column, ginCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to build index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to build index: %v\n", err)
+			return err
 		}
+		idx = built
 
 		if embed {
 			if err := gin.RebuildWithIndex(input, idx, pqCfg); err != nil {
-				fmt.Fprintf(os.Stderr, "  Error: Failed to embed index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "  Error: Failed to embed index: %v\n", err)
+				return err
 			}
-			fmt.Printf("  Index embedded in %s\n", input)
+			fmt.Fprintf(stdout, "  Index embedded in %s\n", input)
 		} else {
 			outPath := output
 			if outPath == "" {
@@ -183,35 +212,45 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 			}
 			fileMode, err := localOutputMode(input)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+				return err
 			}
 			data, err := gin.Encode(idx)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "  Error: Failed to encode index: %v\n", err)
+				return err
 			}
 			if err := writeLocalIndexFile(outPath, data, fileMode); err != nil {
-				fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "  Error: Failed to write index: %v\n", err)
+				return err
 			}
-			fmt.Printf("  Index written to %s\n", outPath)
+			fmt.Fprintf(stdout, "  Index written to %s\n", outPath)
 		}
 	}
 
-	fmt.Printf("  Stats: %d row groups, %d paths, %d docs\n",
+	fmt.Fprintf(stdout, "  Stats: %d row groups, %d paths, %d docs\n",
 		idx.Header.NumRowGroups, idx.Header.NumPaths, idx.Header.NumDocs)
+	return nil
 }
 
 func cmdQuery(args []string) {
-	fs := flag.NewFlagSet("query", flag.ExitOnError)
+	if code := runQuery(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runQuery(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 2 {
-		fmt.Fprintln(os.Stderr, "Error: index path and query required")
-		fmt.Fprintln(os.Stderr, "Usage: gin-index query <index-path> '<predicate>'")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: index path and query required")
+		fmt.Fprintln(stderr, "Usage: gin-index query <index-path> '<predicate>'")
+		return 1
 	}
 
 	indexPath := fs.Arg(0)
@@ -220,43 +259,49 @@ func cmdQuery(args []string) {
 
 	pred, err := parsePredicate(queryStr)
 	if err != nil {
-		fatal("Failed to parse predicate: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to parse predicate: %v\n", err)
+		return 1
 	}
 
 	files, err := resolveIndexFiles(indexPath)
 	if err != nil {
-		fatal("Failed to resolve files: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to resolve files: %v\n", err)
+		return 1
 	}
 
 	if len(files) == 0 {
-		fatal("No .gin files found in %s", indexPath)
+		fmt.Fprintf(stderr, "Error: No .gin files found in %s\n", indexPath)
+		return 1
 	}
 
+	exitCode := 0
 	for _, file := range files {
 		if len(files) > 1 {
-			fmt.Printf("=== %s ===\n", file)
+			fmt.Fprintf(stdout, "=== %s ===\n", file)
 		}
-		querySingleFile(file, pred, pqCfg)
+		if err := querySingleFileWithIO(stdout, stderr, file, pred, pqCfg); err != nil {
+			exitCode = 1
+		}
 		if len(files) > 1 {
-			fmt.Println()
+			fmt.Fprintln(stdout)
 		}
 	}
+	return exitCode
 }
 
-func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConfig) {
+func querySingleFileWithIO(stdout, stderr io.Writer, indexPath string, pred gin.Predicate, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(indexPath) {
 		bucket, s3Key, err := gin.ParseS3Path(indexPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Invalid S3 path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Invalid S3 path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		if strings.HasSuffix(s3Key, ".gin") {
 			idx, err = s3Client.ReadSidecar(bucket, strings.TrimSuffix(s3Key, ".gin"))
@@ -264,27 +309,28 @@ func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConf
 			idx, err = s3Client.LoadIndex(bucket, s3Key, pqCfg)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+			return err
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
 			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to read index: %v\n", err)
+				return err
 			}
 			idx, err = gin.Decode(data)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to decode index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to decode index: %v\n", err)
+				return err
 			}
 		} else {
-			idx, err = gin.LoadIndex(indexPath, pqCfg)
+			loaded, err := gin.LoadIndex(indexPath, pqCfg)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+				return err
 			}
+			idx = loaded
 		}
 	}
 
@@ -292,20 +338,30 @@ func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConf
 	rgs := result.ToSlice()
 
 	if len(rgs) == 0 {
-		fmt.Println("No matching row groups")
+		fmt.Fprintln(stdout, "No matching row groups")
 	} else {
-		fmt.Printf("Matching row groups (%d/%d): %v\n", len(rgs), idx.Header.NumRowGroups, rgs)
+		fmt.Fprintf(stdout, "Matching row groups (%d/%d): %v\n", len(rgs), idx.Header.NumRowGroups, rgs)
 	}
+	return nil
 }
 
 func cmdInfo(args []string) {
-	fs := flag.NewFlagSet("info", flag.ExitOnError)
+	if code := runInfo(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runInfo(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("info", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Error: index path required")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: index path required")
+		return 1
 	}
 
 	indexPath := fs.Arg(0)
@@ -313,38 +369,43 @@ func cmdInfo(args []string) {
 
 	files, err := resolveIndexFiles(indexPath)
 	if err != nil {
-		fatal("Failed to resolve files: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to resolve files: %v\n", err)
+		return 1
 	}
 
 	if len(files) == 0 {
-		fatal("No .gin files found in %s", indexPath)
+		fmt.Fprintf(stderr, "Error: No .gin files found in %s\n", indexPath)
+		return 1
 	}
 
+	exitCode := 0
 	for _, file := range files {
 		if len(files) > 1 {
-			fmt.Printf("=== %s ===\n", file)
+			fmt.Fprintf(stdout, "=== %s ===\n", file)
 		}
-		infoSingleFile(file, pqCfg)
+		if err := infoSingleFile(stdout, stderr, file, pqCfg); err != nil {
+			exitCode = 1
+		}
 		if len(files) > 1 {
-			fmt.Println()
+			fmt.Fprintln(stdout)
 		}
 	}
+	return exitCode
 }
 
-func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
+func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(indexPath) {
 		bucket, s3Key, err := gin.ParseS3Path(indexPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Invalid S3 path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Invalid S3 path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		if strings.HasSuffix(s3Key, ".gin") {
 			idx, err = s3Client.ReadSidecar(bucket, strings.TrimSuffix(s3Key, ".gin"))
@@ -352,52 +413,94 @@ func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
 			idx, err = s3Client.LoadIndex(bucket, s3Key, pqCfg)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+			return err
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
 			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to read index: %v\n", err)
+				return err
 			}
 			idx, err = gin.Decode(data)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to decode index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to decode index: %v\n", err)
+				return err
 			}
 		} else {
-			idx, err = gin.LoadIndex(indexPath, pqCfg)
+			loaded, err := gin.LoadIndex(indexPath, pqCfg)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+				return err
 			}
+			idx = loaded
 		}
 	}
 
-	fmt.Printf("GIN Index Info:\n")
-	fmt.Printf("  Version: %d\n", idx.Header.Version)
-	fmt.Printf("  Row Groups: %d\n", idx.Header.NumRowGroups)
-	fmt.Printf("  Documents: %d\n", idx.Header.NumDocs)
-	fmt.Printf("  Paths: %d\n", idx.Header.NumPaths)
-	fmt.Printf("  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
-	fmt.Printf("\nPaths:\n")
+	writeIndexInfo(stdout, idx)
+	return nil
+}
+
+func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
+	fmt.Fprintf(w, "GIN Index Info:\n")
+	fmt.Fprintf(w, "  Version: %d\n", idx.Header.Version)
+	fmt.Fprintf(w, "  Row Groups: %d\n", idx.Header.NumRowGroups)
+	fmt.Fprintf(w, "  Documents: %d\n", idx.Header.NumDocs)
+	fmt.Fprintf(w, "  Paths: %d\n", idx.Header.NumPaths)
+	fmt.Fprintf(w, "  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
+	fmt.Fprintf(w, "\nPaths:\n")
 	for _, pe := range idx.PathDirectory {
-		types := describeTypes(pe.ObservedTypes)
-		fmt.Printf("  %s (id=%d, types=%s, cardinality=%d)\n", pe.PathName, pe.PathID, types, pe.Cardinality)
+		fmt.Fprintln(w, formatPathInfo(idx, pe))
 	}
 }
 
+func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
+	info := fmt.Sprintf("  %s (id=%d, types=%s, cardinality=%d, mode=%s",
+		pe.PathName, pe.PathID, describeTypes(pe.ObservedTypes), pe.Cardinality, pe.Mode.String())
+	if pe.Mode == gin.PathModeAdaptiveHybrid {
+		promotedTerms, bucketCount := adaptivePathSummary(idx, pe)
+		info += fmt.Sprintf(", promoted=%d, buckets=%d, threshold=%d",
+			promotedTerms, bucketCount, idx.Header.CardinalityThresh)
+		if idx.Config != nil {
+			info += fmt.Sprintf(", cap=%d", idx.Config.AdaptivePromotedTermCap)
+		}
+	}
+	info += ")"
+	return info
+}
+
+// adaptivePathSummary returns the promoted-term and bucket counts for an
+// adaptive-hybrid path. Both the builder and Decode enforce that every
+// PathModeAdaptiveHybrid entry has a matching AdaptiveStringIndexes section,
+// so a missing section indicates an invariant violation; we surface zeros so
+// the CLI renders something coherent rather than panicking.
+func adaptivePathSummary(idx *gin.GINIndex, pe gin.PathEntry) (int, int) {
+	adaptive, ok := idx.AdaptiveStringIndexes[pe.PathID]
+	if !ok || adaptive == nil {
+		return 0, 0
+	}
+	return len(adaptive.Terms), len(adaptive.BucketRGBitmaps)
+}
+
 func cmdExtract(args []string) {
-	fs := flag.NewFlagSet("extract", flag.ExitOnError)
+	if code := runExtract(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runExtract(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("extract", flag.ContinueOnError)
+	fs.SetOutput(stderr)
 	output := fs.String("o", "", "Output path (required for single file)")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Error: parquet file or directory required")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: parquet file or directory required")
+		return 1
 	}
 
 	input := fs.Arg(0)
@@ -405,95 +508,111 @@ func cmdExtract(args []string) {
 
 	files, err := resolveParquetFiles(input)
 	if err != nil {
-		fatal("Failed to resolve files: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to resolve files: %v\n", err)
+		return 1
 	}
 
 	if len(files) == 0 {
-		fatal("No .parquet files found in %s", input)
+		fmt.Fprintf(stderr, "Error: No .parquet files found in %s\n", input)
+		return 1
 	}
 
 	if len(files) == 1 && *output == "" {
-		fmt.Fprintln(os.Stderr, "Error: -o (output) is required for single file")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: -o (output) is required for single file")
+		return 1
 	}
 
 	if len(files) > 1 && *output != "" {
-		fatal("-o cannot be used with multiple files (directory/prefix mode)")
+		fmt.Fprintln(stderr, "Error: -o cannot be used with multiple files (directory/prefix mode)")
+		return 1
 	}
 
+	successes := 0
 	for _, file := range files {
-		fmt.Printf("Processing: %s\n", file)
+		fmt.Fprintf(stdout, "Processing: %s\n", file)
 		outPath := *output
 		if outPath == "" {
 			outPath = file + ".gin"
 		}
-		extractSingleFile(file, outPath, pqCfg)
+		if err := extractSingleFileWithIO(stdout, stderr, file, outPath, pqCfg); err != nil {
+			continue
+		}
+		successes++
 	}
 
-	fmt.Printf("\nProcessed %d file(s)\n", len(files))
+	writeBatchSummary(stdout, successes, len(files))
+	if successes != len(files) {
+		return 1
+	}
+	return 0
 }
 
 func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
+	_ = extractSingleFileWithIO(os.Stdout, os.Stderr, parquetPath, output, pqCfg)
+}
+
+func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output string, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(parquetPath) {
 		bucket, s3Key, err := gin.ParseS3Path(parquetPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Invalid S3 path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Invalid S3 path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		idx, err = s3Client.ReadFromParquetMetadata(bucket, s3Key, pqCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to read embedded index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to read embedded index: %v\n", err)
+			return err
 		}
 	} else {
-		idx, err = gin.ReadFromParquetMetadata(parquetPath, pqCfg)
+		loaded, err := gin.ReadFromParquetMetadata(parquetPath, pqCfg)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to read embedded index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to read embedded index: %v\n", err)
+			return err
 		}
+		idx = loaded
 	}
 
 	data, err := gin.Encode(idx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "  Error: Failed to encode index: %v\n", err)
-		return
+		fmt.Fprintf(stderr, "  Error: Failed to encode index: %v\n", err)
+		return err
 	}
 	if gin.IsS3Path(output) {
 		bucket, s3Key, err := gin.ParseS3Path(output)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Invalid S3 output path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Invalid S3 output path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		if err := s3Client.WriteFile(bucket, s3Key, data); err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to write index: %v\n", err)
+			return err
 		}
 	} else {
 		fileMode, err := localOutputMode(parquetPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to determine source file permissions: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to determine source file permissions: %v\n", err)
+			return err
 		}
 		if err := writeLocalIndexFile(output, data, fileMode); err != nil {
-			fmt.Fprintf(os.Stderr, "  Error: Failed to write index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "  Error: Failed to write index: %v\n", err)
+			return err
 		}
 	}
 
-	fmt.Printf("  Index extracted to %s\n", output)
+	fmt.Fprintf(stdout, "  Index extracted to %s\n", output)
+	return nil
 }
 
 func readLocalIndexFile(path string) ([]byte, error) {
@@ -630,25 +749,32 @@ func resolveIndexFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
-	os.Exit(1)
+func writeBatchSummary(stdout io.Writer, successes, total int) {
+	failures := total - successes
+	if failures == 0 {
+		fmt.Fprintf(stdout, "\nProcessed %d file(s)\n", total)
+		return
+	}
+	fmt.Fprintf(stdout, "\nProcessed %d/%d file(s) (%d failed)\n", successes, total, failures)
 }
 
 func parsePredicate(s string) (gin.Predicate, error) {
 	s = strings.TrimSpace(s)
+	upper := strings.ToUpper(s)
 
-	if strings.HasSuffix(strings.ToUpper(s), " IS NULL") {
-		path := strings.TrimSuffix(s, " IS NULL")
-		path = strings.TrimSuffix(path, " is null")
-		path = strings.TrimSpace(path)
+	if strings.HasSuffix(upper, " IS NULL") {
+		path, err := normalizePredicatePath(strings.TrimSpace(s[:len(s)-len(" IS NULL")]))
+		if err != nil {
+			return gin.Predicate{}, err
+		}
 		return gin.IsNull(path), nil
 	}
 
-	if strings.HasSuffix(strings.ToUpper(s), " IS NOT NULL") {
-		path := strings.TrimSuffix(s, " IS NOT NULL")
-		path = strings.TrimSuffix(path, " is not null")
-		path = strings.TrimSpace(path)
+	if strings.HasSuffix(upper, " IS NOT NULL") {
+		path, err := normalizePredicatePath(strings.TrimSpace(s[:len(s)-len(" IS NOT NULL")]))
+		if err != nil {
+			return gin.Predicate{}, err
+		}
 		return gin.IsNotNull(path), nil
 	}
 
@@ -670,7 +796,10 @@ func parsePredicate(s string) (gin.Predicate, error) {
 
 	for _, p := range patterns {
 		if matches := p.regex.FindStringSubmatch(s); matches != nil {
-			path := strings.TrimSpace(matches[1])
+			path, err := normalizePredicatePath(strings.TrimSpace(matches[1]))
+			if err != nil {
+				return gin.Predicate{}, err
+			}
 			valueStr := strings.TrimSpace(matches[2])
 
 			if p.op == gin.OpIN || p.op == gin.OpNIN {
@@ -682,6 +811,13 @@ func parsePredicate(s string) (gin.Predicate, error) {
 	}
 
 	return gin.Predicate{}, errors.Errorf("cannot parse predicate: %s", s)
+}
+
+func normalizePredicatePath(path string) (string, error) {
+	if err := gin.ValidateJSONPath(path); err != nil {
+		return "", errors.Wrap(err, "invalid JSONPath")
+	}
+	return gin.NormalizePath(path), nil
 }
 
 func parseValue(s string) any {

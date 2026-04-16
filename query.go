@@ -2,10 +2,36 @@ package gin
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 )
+
+var (
+	adaptiveInvariantLoggerMu sync.RWMutex
+	// adaptiveInvariantLogger is nil by default to follow the Go library
+	// convention of not writing to stderr unless the consumer opts in. Set
+	// it via SetAdaptiveInvariantLogger to surface invariant violations.
+	adaptiveInvariantLogger *log.Logger
+)
+
+// SetAdaptiveInvariantLogger installs a logger that surfaces adaptive index
+// invariant violations (e.g. a path flagged PathModeAdaptiveHybrid with no
+// matching AdaptiveStringIndexes section). The default is nil (silent); pass
+// log.Default() or your own *log.Logger to opt in. Safe for concurrent use.
+func SetAdaptiveInvariantLogger(l *log.Logger) {
+	adaptiveInvariantLoggerMu.Lock()
+	adaptiveInvariantLogger = l
+	adaptiveInvariantLoggerMu.Unlock()
+}
+
+func currentAdaptiveInvariantLogger() *log.Logger {
+	adaptiveInvariantLoggerMu.RLock()
+	defer adaptiveInvariantLoggerMu.RUnlock()
+	return adaptiveInvariantLogger
+}
 
 func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
 	if len(predicates) == 0 {
@@ -75,11 +101,80 @@ func (idx *GINIndex) findPath(path string) (int, *PathEntry) {
 	return int(pathID), &idx.PathDirectory[pathID]
 }
 
+func (idx *GINIndex) lookupAdaptiveStringMatch(pathID uint16, term string) (bitmap *RGSet, exact bool, ok bool) {
+	adaptive, ok := idx.AdaptiveStringIndexes[pathID]
+	if !ok {
+		return nil, false, false
+	}
+
+	termIdx := sort.SearchStrings(adaptive.Terms, term)
+	if termIdx < len(adaptive.Terms) && adaptive.Terms[termIdx] == term {
+		return adaptive.RGBitmaps[termIdx].Clone(), true, true
+	}
+
+	if len(adaptive.BucketRGBitmaps) == 0 {
+		return NoRGs(int(idx.Header.NumRowGroups)), false, true
+	}
+
+	// NewAdaptiveStringIndex enforces a power-of-two bucket count and non-nil
+	// bucket bitmaps, and adaptiveBucketIndex masks with bucketCount-1, so the
+	// index is always within range and the bitmap is never nil here.
+	bucketID := adaptiveBucketIndex(term, len(adaptive.BucketRGBitmaps))
+	return adaptive.BucketRGBitmaps[bucketID].Clone(), false, true
+}
+
+func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, term string) (bitmap *RGSet, exact bool, ok bool) {
+	numRGs := int(idx.Header.NumRowGroups)
+	bloomKey := entry.PathName + "=" + term
+	if !idx.GlobalBloom.MayContainString(bloomKey) {
+		return NoRGs(numRGs), true, true
+	}
+
+	if sli, ok := idx.StringLengthIndexes[uint16(pathID)]; ok {
+		queryLen := uint32(len(term))
+		if queryLen < sli.GlobalMin || queryLen > sli.GlobalMax {
+			return NoRGs(numRGs), true, true
+		}
+	}
+
+	return idx.lookupAdaptiveStringMatch(uint16(pathID), term)
+}
+
+func (idx *GINIndex) adaptiveInvariantAllRGs(entry *PathEntry, op string) *RGSet {
+	if logger := currentAdaptiveInvariantLogger(); logger != nil {
+		logger.Printf(
+			"gin: adaptive path invariant violation for %q (id=%d) during %s; returning all row groups",
+			entry.PathName,
+			entry.PathID,
+			op,
+		)
+	}
+	return AllRGs(int(idx.Header.NumRowGroups))
+}
+
+func stringPredicateTerm(value any) (string, bool) {
+	switch v := value.(type) {
+	case string:
+		return v, true
+	case bool:
+		return strconv.FormatBool(v), true
+	default:
+		return "", false
+	}
+}
+
 func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
 
 	switch v := value.(type) {
 	case string:
+		if entry.Mode == PathModeAdaptiveHybrid {
+			if match, _, ok := idx.evaluateAdaptiveStringTerm(pathID, entry, v); ok {
+				return match
+			}
+			return idx.adaptiveInvariantAllRGs(entry, "EQ")
+		}
+
 		bloomKey := entry.PathName + "=" + v
 		if !idx.GlobalBloom.MayContainString(bloomKey) {
 			return NoRGs(numRGs)
@@ -92,7 +187,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 			}
 		}
 
-		if entry.Flags&FlagBloomOnly != 0 {
+		if entry.Mode == PathModeBloomOnly {
 			return AllRGs(numRGs)
 		}
 		if si, ok := idx.StringIndexes[uint16(pathID)]; ok {
@@ -141,6 +236,20 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 }
 
 func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet {
+	if entry.Mode == PathModeAdaptiveHybrid {
+		if term, ok := stringPredicateTerm(value); ok {
+			presentRGs := idx.evaluateIsNotNull(pathID)
+			eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
+			if !handled {
+				return idx.adaptiveInvariantAllRGs(entry, "NE")
+			}
+			if !exact {
+				return presentRGs
+			}
+			return presentRGs.Intersect(eqResult.Invert())
+		}
+	}
+
 	eqResult := idx.evaluateEQ(pathID, entry, value)
 	presentRGs := idx.evaluateIsNotNull(pathID)
 	return presentRGs.Intersect(eqResult.Invert())
@@ -321,6 +430,14 @@ func (idx *GINIndex) evaluateIN(pathID int, entry *PathEntry, value any) *RGSet 
 		return AllRGs(numRGs)
 	}
 
+	if entry.Mode == PathModeAdaptiveHybrid {
+		return idx.evaluateAdaptiveIN(pathID, entry, values)
+	}
+	return idx.evaluateINNonAdaptive(pathID, entry, values)
+}
+
+func (idx *GINIndex) evaluateINNonAdaptive(pathID int, entry *PathEntry, values []any) *RGSet {
+	numRGs := int(idx.Header.NumRowGroups)
 	result := NoRGs(numRGs)
 	for _, v := range values {
 		rgSet := idx.evaluateEQ(pathID, entry, v)
@@ -329,7 +446,55 @@ func (idx *GINIndex) evaluateIN(pathID int, entry *PathEntry, value any) *RGSet 
 	return result
 }
 
+func (idx *GINIndex) evaluateAdaptiveIN(pathID int, entry *PathEntry, values []any) *RGSet {
+	numRGs := int(idx.Header.NumRowGroups)
+	result := NoRGs(numRGs)
+	for _, v := range values {
+		term, ok := stringPredicateTerm(v)
+		if !ok {
+			return idx.evaluateINNonAdaptive(pathID, entry, values)
+		}
+		rgSet, _, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
+		if !handled {
+			return idx.adaptiveInvariantAllRGs(entry, "IN")
+		}
+		result = result.Union(rgSet)
+	}
+	return result
+}
+
 func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet {
+	if entry.Mode == PathModeAdaptiveHybrid {
+		values, ok := value.([]any)
+		if !ok {
+			return AllRGs(int(idx.Header.NumRowGroups))
+		}
+
+		presentRGs := idx.evaluateIsNotNull(pathID)
+		inResult := NoRGs(int(idx.Header.NumRowGroups))
+		allExact := true
+		for _, v := range values {
+			term, ok := stringPredicateTerm(v)
+			if !ok {
+				// Non-string element forces the non-adaptive path; pass the
+				// already-extracted slice to skip a redundant adaptive walk.
+				return presentRGs.Intersect(idx.evaluateINNonAdaptive(pathID, entry, values).Invert())
+			}
+			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
+			if !handled {
+				return idx.adaptiveInvariantAllRGs(entry, "NIN")
+			}
+			if !exact {
+				allExact = false
+			}
+			inResult = inResult.Union(rgSet)
+		}
+		if !allExact {
+			return presentRGs
+		}
+		return presentRGs.Intersect(inResult.Invert())
+	}
+
 	inResult := idx.evaluateIN(pathID, entry, value)
 	presentRGs := idx.evaluateIsNotNull(pathID)
 	return presentRGs.Intersect(inResult.Invert())

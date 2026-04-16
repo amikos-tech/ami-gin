@@ -86,6 +86,16 @@ func (rs *RGSet) Union(other *RGSet) *RGSet {
 	}
 }
 
+// UnionWith merges other into rs in place, avoiding the per-call clone of
+// Union. Use this when the receiver is exclusively owned and the result
+// does not need to preserve the prior state.
+func (rs *RGSet) UnionWith(other *RGSet) {
+	rs.bitmap.Or(other.bitmap)
+	if other.NumRGs > rs.NumRGs {
+		rs.NumRGs = other.NumRGs
+	}
+}
+
 func (rs *RGSet) All() *RGSet {
 	result := roaring.New()
 	result.AddRange(0, uint64(rs.NumRGs))

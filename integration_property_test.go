@@ -2,6 +2,7 @@ package gin
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -59,11 +60,22 @@ func TestPropertyIntegrationSerializationPreservesQueries(t *testing.T) {
 			}
 
 			numRGs := len(docs)
-			builder, _ := NewBuilder(DefaultConfig(), numRGs)
+			config := DefaultConfig()
+			config.CardinalityThreshold = 1
+			config.AdaptiveMinRGCoverage = 1
+			config.AdaptivePromotedTermCap = 8
+			config.AdaptiveCoverageCeiling = 0.95
+			config.AdaptiveBucketCount = 16
+
+			builder, _ := NewBuilder(config, numRGs)
 			for i, doc := range docs {
 				_ = builder.AddDocument(DocID(i), doc.JSON)
 			}
 			original := builder.Finalize()
+			entry := findPathEntry(original, "$.name")
+			if entry == nil || entry.Mode != PathModeAdaptiveHybrid {
+				return false
+			}
 
 			beforeResult := original.Evaluate([]Predicate{predicate})
 
@@ -81,7 +93,7 @@ func TestPropertyIntegrationSerializationPreservesQueries(t *testing.T) {
 
 			return rgSetEqual(beforeResult, afterResult)
 		},
-		GenTestDocs(20),
+		GenTestDocs(50),
 		GenPredicate(),
 	))
 
@@ -163,9 +175,9 @@ func TestPropertyIntegrationNullPresentConsistency(t *testing.T) {
 func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 	properties := gopter.NewProperties(propertyTestParameters())
 
-	properties.Property("cardinality threshold controls index type", prop.ForAll(
-		func(values []string, threshold uint32) bool {
-			if len(values) == 0 || threshold == 0 {
+	properties.Property("cardinality threshold controls exact, adaptive, and bloom-only modes", prop.ForAll(
+		func(values []string) bool {
+			if len(values) < 3 {
 				return true
 			}
 
@@ -175,41 +187,226 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 					validValues = append(validValues, v)
 				}
 			}
-			if len(validValues) == 0 {
+			if len(validValues) < 3 {
 				return true
 			}
-
-			config := DefaultConfig()
-			config.CardinalityThreshold = threshold
 
 			numRGs := len(validValues)
-			if numRGs > 100 {
-				numRGs = 100
+			if numRGs > 32 {
+				numRGs = 32
 			}
-			builder, _ := NewBuilder(config, numRGs)
-			for i := 0; i < numRGs; i++ {
-				doc := []byte(`{"field": "` + validValues[i] + `"}`)
-				_ = builder.AddDocument(DocID(i), doc)
-			}
-			idx := builder.Finalize()
 
-			entry := findPathEntry(idx, "$.field")
-			if entry == nil {
+			hot := "h" + "ot"
+			fixtureValues := make([]string, numRGs)
+			fixtureValues[0] = hot
+			fixtureValues[1] = hot
+			for i := 2; i < numRGs; i++ {
+				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
+			}
+
+			expectedMatches := make(map[string][]int)
+			for rgID, value := range fixtureValues {
+				expectedMatches[value] = append(expectedMatches[value], rgID)
+			}
+
+			exactConfig := DefaultConfig()
+			exactConfig.CardinalityThreshold = uint32(len(expectedMatches) + 1)
+
+			adaptiveConfig := DefaultConfig()
+			adaptiveConfig.CardinalityThreshold = 1
+			adaptiveConfig.AdaptiveMinRGCoverage = 2
+			adaptiveConfig.AdaptivePromotedTermCap = 64
+			adaptiveConfig.AdaptiveCoverageCeiling = 0.80
+			adaptiveConfig.AdaptiveBucketCount = 128
+
+			bloomOnlyConfig := adaptiveConfig
+			bloomOnlyConfig.AdaptivePromotedTermCap = 0
+
+			cases := []struct {
+				config GINConfig
+				check  func(*PathEntry, *GINIndex) bool
+			}{
+				{
+					config: exactConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasStringIdx := idx.StringIndexes[entry.PathID]
+						return hasStringIdx && entry.Mode == PathModeClassic
+					},
+				},
+				{
+					config: adaptiveConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
+						return hasAdaptiveIdx && entry.Mode == PathModeAdaptiveHybrid
+					},
+				},
+				{
+					config: bloomOnlyConfig,
+					check: func(entry *PathEntry, idx *GINIndex) bool {
+						_, hasStringIdx := idx.StringIndexes[entry.PathID]
+						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
+						return entry.Mode == PathModeBloomOnly && !hasStringIdx && !hasAdaptiveIdx
+					},
+				},
+			}
+
+			for _, tc := range cases {
+				builder, err := NewBuilder(tc.config, numRGs)
+				if err != nil {
+					return false
+				}
+				for rgID, value := range fixtureValues {
+					doc := []byte(`{"field": "` + value + `"}`)
+					if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+						return false
+					}
+				}
+				idx := builder.Finalize()
+				entry := findPathEntry(idx, "$.field")
+				if entry == nil {
+					return false
+				}
+				if !tc.check(entry, idx) {
+					return false
+				}
+
+				for term, matches := range expectedMatches {
+					result := idx.Evaluate([]Predicate{EQ("$.field", term)})
+					for _, rgID := range matches {
+						if !result.IsSet(rgID) {
+							return false
+						}
+					}
+				}
+			}
+
+			adaptiveBuilder, err := NewBuilder(adaptiveConfig, numRGs)
+			if err != nil {
+				return false
+			}
+			for rgID, value := range fixtureValues {
+				doc := []byte(`{"field": "` + value + `"}`)
+				if err := adaptiveBuilder.AddDocument(DocID(rgID), doc); err != nil {
+					return false
+				}
+			}
+			adaptiveIdx := adaptiveBuilder.Finalize()
+			adaptiveEntry := findPathEntry(adaptiveIdx, "$.field")
+			if adaptiveEntry == nil {
+				return false
+			}
+			if adaptiveEntry.Cardinality <= adaptiveConfig.CardinalityThreshold {
+				return false
+			}
+			return true
+		},
+		gen.SliceOfN(100, gen.Identifier()),
+	))
+
+	properties.TestingRun(t)
+}
+
+func TestPropertyIntegrationCrossModeSoundness(t *testing.T) {
+	properties := gopter.NewProperties(propertyTestParameters())
+
+	// For the same fixture, EQ("$.field", term) must satisfy:
+	//   classic ⊆ adaptive ⊆ bloom-only
+	// A violation means an adaptive-mode index is strictly more aggressive than
+	// the exact index - i.e. it drops row groups that really do match, which is
+	// unsound and silently loses data. The existing per-mode no-false-negatives
+	// property catches missed ground-truth matches; this one catches regressions
+	// where adaptive's bucket layer under-reports compared to the exact index.
+	properties.Property("EQ results widen monotonically from classic to adaptive to bloom-only", prop.ForAll(
+		func(values []string) bool {
+			validValues := make([]string, 0, len(values))
+			for _, v := range values {
+				if v != "" {
+					validValues = append(validValues, v)
+				}
+			}
+			if len(validValues) < 3 {
 				return true
 			}
 
-			// Use the stored HLL-estimated cardinality (which is what the builder uses)
-			// rather than actual unique count since HLL is approximate
-			estimatedCardinality := entry.Cardinality
-
-			if estimatedCardinality > threshold {
-				return entry.Flags&FlagBloomOnly != 0
+			numRGs := len(validValues)
+			if numRGs > 32 {
+				numRGs = 32
 			}
-			_, hasStringIdx := idx.StringIndexes[entry.PathID]
-			return hasStringIdx && entry.Flags&FlagBloomOnly == 0
+
+			hot := "h" + "ot"
+			fixtureValues := make([]string, numRGs)
+			fixtureValues[0] = hot
+			fixtureValues[1] = hot
+			for i := 2; i < numRGs; i++ {
+				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
+			}
+
+			// Collect distinct terms so we exercise both hot and tail shapes.
+			seen := map[string]struct{}{}
+			distinctTerms := make([]string, 0, len(fixtureValues))
+			for _, v := range fixtureValues {
+				if _, ok := seen[v]; ok {
+					continue
+				}
+				seen[v] = struct{}{}
+				distinctTerms = append(distinctTerms, v)
+			}
+
+			classicConfig := DefaultConfig()
+			classicConfig.CardinalityThreshold = uint32(len(distinctTerms) + 1)
+
+			adaptiveConfig := DefaultConfig()
+			adaptiveConfig.CardinalityThreshold = 1
+			adaptiveConfig.AdaptiveMinRGCoverage = 2
+			adaptiveConfig.AdaptivePromotedTermCap = 64
+			adaptiveConfig.AdaptiveCoverageCeiling = 0.80
+			adaptiveConfig.AdaptiveBucketCount = 128
+
+			bloomOnlyConfig := adaptiveConfig
+			bloomOnlyConfig.AdaptivePromotedTermCap = 0
+
+			buildIdx := func(cfg GINConfig) *GINIndex {
+				builder, err := NewBuilder(cfg, numRGs)
+				if err != nil {
+					return nil
+				}
+				for rgID, value := range fixtureValues {
+					doc := []byte(`{"field": "` + value + `"}`)
+					if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+						return nil
+					}
+				}
+				return builder.Finalize()
+			}
+
+			classicIdx := buildIdx(classicConfig)
+			adaptiveIdx := buildIdx(adaptiveConfig)
+			bloomOnlyIdx := buildIdx(bloomOnlyConfig)
+			if classicIdx == nil || adaptiveIdx == nil || bloomOnlyIdx == nil {
+				return false
+			}
+
+			isSubset := func(sub, super *RGSet) bool {
+				// sub ⊆ super ⇔ sub ∩ ¬super is empty
+				return sub.Intersect(super.Invert()).IsEmpty()
+			}
+
+			for _, term := range distinctTerms {
+				pred := EQ("$.field", term)
+				classicRGs := classicIdx.Evaluate([]Predicate{pred})
+				adaptiveRGs := adaptiveIdx.Evaluate([]Predicate{pred})
+				bloomOnlyRGs := bloomOnlyIdx.Evaluate([]Predicate{pred})
+
+				if !isSubset(classicRGs, adaptiveRGs) {
+					return false
+				}
+				if !isSubset(adaptiveRGs, bloomOnlyRGs) {
+					return false
+				}
+			}
+			return true
 		},
 		gen.SliceOfN(100, gen.Identifier()),
-		gen.UInt32Range(10, 1000),
 	))
 
 	properties.TestingRun(t)

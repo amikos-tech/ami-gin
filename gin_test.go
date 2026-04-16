@@ -1,8 +1,10 @@
 package gin
 
 import (
+	"bytes"
 	stderrors "errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -184,6 +186,828 @@ func TestQueryIN(t *testing.T) {
 	result := idx.Evaluate([]Predicate{IN("$.status", "active", "pending")})
 	if result.Count() != 2 {
 		t.Errorf("expected 2 matching RGs, got %d", result.Count())
+	}
+}
+
+func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
+	hot := "h" + "ot"
+
+	config := DefaultConfig()
+	if config.AdaptiveMinRGCoverage != 2 {
+		t.Fatalf("AdaptiveMinRGCoverage = %d, want 2", config.AdaptiveMinRGCoverage)
+	}
+	if config.AdaptivePromotedTermCap != 64 {
+		t.Fatalf("AdaptivePromotedTermCap = %d, want 64", config.AdaptivePromotedTermCap)
+	}
+	if config.AdaptiveCoverageCeiling != 0.80 {
+		t.Fatalf("AdaptiveCoverageCeiling = %v, want 0.80", config.AdaptiveCoverageCeiling)
+	}
+	if config.AdaptiveBucketCount != 128 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 128", config.AdaptiveBucketCount)
+	}
+	config.CardinalityThreshold = 4
+
+	builder := mustNewBuilder(t, config, 8)
+	for rgID := 0; rgID < 4; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(fmt.Sprintf(`{"field":"%s"}`, hot))); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 0; rgID < 8; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.field")
+	if entry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
+	}
+	if entry.AdaptivePromotedTerms != 1 {
+		t.Fatalf("AdaptivePromotedTerms = %d, want 1", entry.AdaptivePromotedTerms)
+	}
+	if entry.AdaptiveBucketCount != 128 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 128", entry.AdaptiveBucketCount)
+	}
+	if _, ok := idx.StringIndexes[entry.PathID]; ok {
+		t.Fatal("full StringIndex should be omitted for adaptive path")
+	}
+
+	adaptive, ok := idx.AdaptiveStringIndexes[entry.PathID]
+	if !ok {
+		t.Fatal("expected adaptive string index for high-cardinality path")
+	}
+	if len(adaptive.BucketRGBitmaps) != 128 {
+		t.Fatalf("len(BucketRGBitmaps) = %d, want 128", len(adaptive.BucketRGBitmaps))
+	}
+	if len(adaptive.Terms) != 1 || adaptive.Terms[0] != hot {
+		t.Fatalf("promoted terms = %v, want [hot]", adaptive.Terms)
+	}
+	if len(adaptive.RGBitmaps) != 1 {
+		t.Fatalf("len(RGBitmaps) = %d, want 1", len(adaptive.RGBitmaps))
+	}
+	if got := adaptive.RGBitmaps[0].ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3}) {
+		t.Fatalf("promoted bitmap = %v, want [0 1 2 3]", got)
+	}
+}
+
+func TestNewBuilderAllowsLegacyConfigLiteralWhenAdaptiveDisabled(t *testing.T) {
+	config := GINConfig{
+		CardinalityThreshold: 128,
+		BloomFilterSize:      1 << 20,
+		BloomFilterHashes:    7,
+		EnableTrigrams:       true,
+		TrigramMinLength:     3,
+		HLLPrecision:         12,
+		PrefixBlockSize:      16,
+	}
+
+	if _, err := NewBuilder(config, 2); err != nil {
+		t.Fatalf("NewBuilder() error = %v, want legacy struct literal to remain valid", err)
+	}
+}
+
+func TestNewBuilderRejectsOversizedAdaptiveSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		config func() GINConfig
+	}{
+		{
+			name: "bucket count exceeds serialized limit",
+			config: func() GINConfig {
+				cfg := DefaultConfig()
+				cfg.AdaptiveBucketCount = maxAdaptiveBucketsPerPath * 2
+				return cfg
+			},
+		},
+		{
+			name: "promoted term cap exceeds path metadata limit",
+			config: func() GINConfig {
+				cfg := DefaultConfig()
+				cfg.AdaptivePromotedTermCap = maxAdaptiveTermsPerPath + 1
+				return cfg
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewBuilder(tt.config(), 2); err == nil {
+				t.Fatal("NewBuilder() error = nil, want oversized adaptive setting rejection")
+			}
+		})
+	}
+}
+
+func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("AddDocument(seed) failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"alpha":"leak","score":1.5}`))
+	if err == nil {
+		t.Fatal("AddDocument(leaking doc) error = nil, want mixed numeric promotion failure")
+	}
+
+	idx := builder.Finalize()
+	if entry := findPathEntry(idx, "$.alpha"); entry != nil {
+		t.Fatalf("$.alpha leaked into finalized index with path id %d", entry.PathID)
+	}
+}
+
+func TestAddDocumentRefusesAfterMergeFailurePoisonsBuilder(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument(seed) failed: %v", err)
+	}
+
+	// Simulate a mid-loop mergeStagedPaths failure by poisoning the builder
+	// directly. The natural trigger path (mixed numeric promotion) is caught
+	// by validateStagedPaths' preview before mergeStagedPaths runs, so poison
+	// is defensive; we still need to prove the refusal contract.
+	builder.poisonErr = stderrors.New("simulated merge failure")
+
+	err := builder.AddDocument(1, []byte(`{"name":"bob"}`))
+	if err == nil {
+		t.Fatal("AddDocument after poison = nil, want wrapped poison error")
+	}
+	if !strings.Contains(err.Error(), "builder poisoned") {
+		t.Fatalf("AddDocument error = %q, want 'builder poisoned' context", err.Error())
+	}
+	if !strings.Contains(err.Error(), "simulated merge failure") {
+		t.Fatalf("AddDocument error = %q, want original cause preserved", err.Error())
+	}
+}
+
+func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	for rgID := 0; rgID < 2; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 2; rgID < 6; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.field")
+	if entry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
+	}
+
+	result := idx.Evaluate([]Predicate{EQ("$.field", "tail_2")})
+	if !result.IsSet(2) {
+		t.Fatalf("tail bucket result = %v, want RG 2 present", result.ToSlice())
+	}
+	if result.Count() <= 1 {
+		t.Fatalf("tail bucket result = %v, want lossy bucket superset", result.ToSlice())
+	}
+	if result.Count() == 6 {
+		t.Fatalf("tail bucket result = %v, should not degrade to AllRGs()", result.ToSlice())
+	}
+	if result.IsSet(0) || result.IsSet(1) {
+		t.Fatalf("tail bucket result = %v, promoted-only RGs should not be in tail bucket", result.ToSlice())
+	}
+}
+
+func TestAdaptiveNegativePredicatesStayConservative(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 2
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	for rgID := 0; rgID < 2; rgID++ {
+		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
+		}
+	}
+	for rgID := 2; rgID < 6; rgID++ {
+		doc := []byte(fmt.Sprintf(`{"field":"tail_%d"}`, rgID))
+		if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+			t.Fatalf("AddDocument(tail, rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	if got := idx.Evaluate([]Predicate{NE("$.field", "tail_2")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NE non-promoted result = %v, want all present RGs", got)
+	}
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "tail_2", "tail_3")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NIN non-promoted result = %v, want all present RGs", got)
+	}
+	if got := idx.Evaluate([]Predicate{NE("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{2, 3, 4, 5}) {
+		t.Fatalf("NE promoted result = %v, want exact promoted inversion", got)
+	}
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{2, 3, 4, 5}) {
+		t.Fatalf("NIN promoted result = %v, want exact promoted inversion", got)
+	}
+}
+
+func TestFinalizeHighCardinalityNumericOnlyPathUsesBloomOnlyMode(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+
+	builder := mustNewBuilder(t, config, 2)
+	pd := builder.getOrCreatePath("$.score")
+	pd.observedTypes = TypeInt
+	pd.presentRGs.Set(0)
+	pd.presentRGs.Set(1)
+	pd.hll.AddString("10")
+	pd.hll.AddString("20")
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.score")
+	if entry == nil {
+		t.Fatal("expected $.score path entry")
+	}
+	if entry.Mode != PathModeBloomOnly {
+		t.Fatalf("Mode = %v, want bloom-only for non-adaptive high-cardinality path", entry.Mode)
+	}
+	if entry.AdaptiveBucketCount != 0 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 0", entry.AdaptiveBucketCount)
+	}
+	if _, ok := idx.AdaptiveStringIndexes[entry.PathID]; ok {
+		t.Fatal("unexpected adaptive string index for numeric-only path")
+	}
+}
+
+func TestAdaptiveINVariants(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	docs := []string{
+		`{"field":"hot","flag":true}`,
+		`{"field":"hot","flag":true}`,
+		`{"field":"tail_2","flag":false}`,
+		`{"field":"tail_3","flag":false}`,
+		`{"field":"tail_4","flag":true}`,
+		`{"field":"tail_5","flag":false}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	fieldEntry := findPathEntry(idx, "$.field")
+	if fieldEntry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if fieldEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("$.field Mode = %v, want adaptive hybrid", fieldEntry.Mode)
+	}
+	flagEntry := findPathEntry(idx, "$.flag")
+	if flagEntry == nil {
+		t.Fatal("expected $.flag path entry")
+	}
+	if flagEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("$.flag Mode = %v, want adaptive hybrid", flagEntry.Mode)
+	}
+
+	tests := []struct {
+		name        string
+		pred        Predicate
+		wantExact   []int
+		mustContain []int
+		mustExclude []int
+	}{
+		{
+			name:      "all promoted",
+			pred:      IN("$.field", "hot"),
+			wantExact: []int{0, 1},
+		},
+		{
+			name:        "all tail",
+			pred:        IN("$.field", "tail_2", "tail_3"),
+			mustContain: []int{2, 3},
+			mustExclude: []int{0, 1},
+		},
+		{
+			name:        "mixed promoted and tail",
+			pred:        IN("$.field", "hot", "tail_4"),
+			mustContain: []int{0, 1, 4},
+		},
+		{
+			name:      "bool terms",
+			pred:      IN("$.flag", true),
+			wantExact: []int{0, 1, 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := idx.Evaluate([]Predicate{tt.pred}).ToSlice()
+			if tt.wantExact != nil {
+				if fmt.Sprint(got) != fmt.Sprint(tt.wantExact) {
+					t.Fatalf("%s = %v, want %v", tt.pred.Operator, got, tt.wantExact)
+				}
+				return
+			}
+			for _, rgID := range tt.mustContain {
+				if !containsInt(got, rgID) {
+					t.Fatalf("%s = %v, want RG %d present", tt.pred.Operator, got, rgID)
+				}
+			}
+			for _, rgID := range tt.mustExclude {
+				if containsInt(got, rgID) {
+					t.Fatalf("%s = %v, want RG %d absent", tt.pred.Operator, got, rgID)
+				}
+			}
+		})
+	}
+}
+
+func containsInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAdaptiveThresholdBoundarySelection(t *testing.T) {
+	tests := []struct {
+		name      string
+		threshold uint32
+		wantMode  PathMode
+	}{
+		{name: "below threshold stays exact", threshold: 3, wantMode: PathModeClassic},
+		{name: "at threshold stays exact", threshold: 2, wantMode: PathModeClassic},
+		{name: "above threshold becomes adaptive", threshold: 1, wantMode: PathModeAdaptiveHybrid},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig()
+			config.CardinalityThreshold = tt.threshold
+			config.AdaptiveMinRGCoverage = 2
+			config.AdaptivePromotedTermCap = 2
+			config.AdaptiveCoverageCeiling = 0.80
+			config.AdaptiveBucketCount = 4
+
+			builder := mustNewBuilder(t, config, 3)
+			docs := []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail"}`,
+			}
+			for rgID, doc := range docs {
+				if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+					t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+				}
+			}
+
+			entry := findPathEntry(builder.Finalize(), "$.field")
+			if entry == nil {
+				t.Fatal("expected $.field path entry")
+			}
+			if entry.Mode != tt.wantMode {
+				t.Fatalf("Mode = %v, want %v", entry.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestAdaptiveCardinalitySweepAtFixedThreshold(t *testing.T) {
+	tests := []struct {
+		name         string
+		docs         []string
+		wantMode     PathMode
+		wantAdaptive bool
+	}{
+		{
+			name: "below threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+			},
+			wantMode: PathModeClassic,
+		},
+		{
+			name: "at threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail"}`,
+			},
+			wantMode: PathModeClassic,
+		},
+		{
+			name: "above threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail_a"}`,
+				`{"field":"tail_b"}`,
+			},
+			wantMode: PathModeAdaptiveHybrid,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig()
+			config.CardinalityThreshold = 2
+			config.AdaptiveMinRGCoverage = 2
+			config.AdaptivePromotedTermCap = 2
+			config.AdaptiveCoverageCeiling = 0.80
+			config.AdaptiveBucketCount = 4
+
+			builder := mustNewBuilder(t, config, len(tt.docs))
+			for rgID, doc := range tt.docs {
+				if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+					t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+				}
+			}
+
+			entry := findPathEntry(builder.Finalize(), "$.field")
+			if entry == nil {
+				t.Fatal("expected $.field path entry")
+			}
+			if entry.Mode != tt.wantMode {
+				t.Fatalf("Mode = %v, want %v", entry.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestSelectAdaptivePromotedTermsHonorsCoverageFiltersAndSortOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	pd := builder.getOrCreatePath("$.field")
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "alpha", rgID, "$.field")
+	}
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "beta", rgID, "$.field")
+	}
+	builder.addStringTerm(pd, "gamma", 0, "$.field")
+	for rgID := 0; rgID < 5; rgID++ {
+		builder.addStringTerm(pd, "omega", rgID, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if len(got) != 2 {
+		t.Fatalf("len(promoted) = %d, want 2", len(got))
+	}
+	if _, ok := got["alpha"]; !ok {
+		t.Fatal("expected alpha to be promoted")
+	}
+	if _, ok := got["beta"]; !ok {
+		t.Fatal("expected beta to be promoted")
+	}
+	if _, ok := got["gamma"]; ok {
+		t.Fatal("gamma should be filtered out by min coverage")
+	}
+	if _, ok := got["omega"]; ok {
+		t.Fatal("omega should be filtered out by coverage ceiling")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsMinCoverage(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.99
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	builder.addStringTerm(pd, "single", 0, "$.field")
+	builder.addStringTerm(pd, "double", 0, "$.field")
+	builder.addStringTerm(pd, "double", 1, "$.field")
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if _, ok := got["single"]; ok {
+		t.Fatal("single should be filtered out by min coverage")
+	}
+	if _, ok := got["double"]; !ok {
+		t.Fatal("double should satisfy min coverage")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsCoverageCeiling(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 1
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.50
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "too_hot", rgID, "$.field")
+	}
+	for rgID := 0; rgID < 2; rgID++ {
+		builder.addStringTerm(pd, "okay", rgID, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if _, ok := got["too_hot"]; ok {
+		t.Fatal("too_hot should be filtered out by coverage ceiling")
+	}
+	if _, ok := got["okay"]; !ok {
+		t.Fatal("okay should satisfy coverage ceiling")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsCapAndStableSortOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 1
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.99
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	for _, term := range []string{"beta", "alpha", "gamma"} {
+		builder.addStringTerm(pd, term, 0, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if len(got) != 2 {
+		t.Fatalf("len(promoted) = %d, want 2", len(got))
+	}
+	if _, ok := got["alpha"]; !ok {
+		t.Fatal("alpha should win tie-break by lexical order")
+	}
+	if _, ok := got["beta"]; !ok {
+		t.Fatal("beta should win tie-break by lexical order")
+	}
+	if _, ok := got["gamma"]; ok {
+		t.Fatal("gamma should be dropped by cap")
+	}
+}
+
+func TestNewConfigAdaptiveOptionValidators(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ConfigOption
+	}{
+		{
+			name: "negative min coverage",
+			opts: []ConfigOption{WithAdaptiveMinRGCoverage(-1)},
+		},
+		{
+			name: "negative term cap",
+			opts: []ConfigOption{WithAdaptivePromotedTermCap(-1)},
+		},
+		{
+			name: "invalid coverage ceiling",
+			opts: []ConfigOption{WithAdaptiveCoverageCeiling(1)},
+		},
+		{
+			name: "zero bucket count",
+			opts: []ConfigOption{WithAdaptiveBucketCount(0)},
+		},
+		{
+			name: "non power of two bucket count",
+			opts: []ConfigOption{WithAdaptiveBucketCount(3)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewConfig(tt.opts...); err == nil {
+				t.Fatal("NewConfig() error = nil, want adaptive option validation failure")
+			}
+		})
+	}
+}
+
+func TestNewAdaptiveStringIndexValidatesInvariants(t *testing.T) {
+	rg0 := MustNewRGSet(2)
+	rg0.Set(0)
+	rg1 := MustNewRGSet(2)
+	rg1.Set(1)
+
+	bucket0 := MustNewRGSet(2)
+	bucket1 := MustNewRGSet(2)
+
+	if _, err := NewAdaptiveStringIndex([]string{"beta", "alpha"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want unsorted terms rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want mismatched bitmap length rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0}, []*RGSet{}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want empty bucket set rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0}, []*RGSet{bucket0, bucket1, bucket0}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want non-power-of-two bucket count rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha", "beta"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err != nil {
+		t.Fatalf("NewAdaptiveStringIndex() error = %v, want valid index", err)
+	}
+}
+
+func TestAdaptiveBucketIndexPanicsOnZeroBuckets(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("adaptiveBucketIndex() panic = nil, want panic for zero buckets")
+		}
+	}()
+
+	_ = adaptiveBucketIndex("alpha", 0)
+}
+
+func TestPathModeStringMapping(t *testing.T) {
+	tests := []struct {
+		mode PathMode
+		want string
+	}{
+		{mode: PathModeClassic, want: "exact"},
+		{mode: PathModeBloomOnly, want: "bloom-only"},
+		{mode: PathModeAdaptiveHybrid, want: "adaptive-hybrid"},
+		{mode: PathMode(99), want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.mode.String(); got != tt.want {
+			t.Fatalf("PathMode(%d).String() = %q, want %q", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestPathModeIsValid(t *testing.T) {
+	tests := []struct {
+		mode PathMode
+		want bool
+	}{
+		{mode: PathModeClassic, want: true},
+		{mode: PathModeBloomOnly, want: true},
+		{mode: PathModeAdaptiveHybrid, want: true},
+		{mode: PathMode(3), want: false},
+		{mode: PathMode(99), want: false},
+		{mode: PathMode(255), want: false},
+	}
+
+	for _, tt := range tests {
+		if got := tt.mode.IsValid(); got != tt.want {
+			t.Fatalf("PathMode(%d).IsValid() = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+}
+
+func TestAdaptiveNegativePredicatesMixedPromotedAndTailStayConservative(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	docs := []string{
+		`{"field":"hot"}`,
+		`{"field":"hot"}`,
+		`{"field":"tail_2"}`,
+		`{"field":"tail_3"}`,
+		`{"field":"tail_4"}`,
+		`{"field":"tail_5"}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot", "tail_2")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NIN mixed promoted+tail result = %v, want all present RGs", got)
+	}
+}
+
+func TestAdaptiveContainsUsesTrigramIndex(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 4
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	docs := []string{
+		`{"text":"alpha needle"}`,
+		`{"text":"beta haystack"}`,
+		`{"text":"gamma needle"}`,
+		`{"text":"delta haystack"}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.text")
+	if entry == nil {
+		t.Fatal("expected $.text path entry")
+	}
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
+	}
+	if entry.Flags&FlagTrigramIndex == 0 {
+		t.Fatal("adaptive path should retain trigram index for CONTAINS")
+	}
+
+	assertContains := func(t *testing.T, idx *GINIndex) {
+		t.Helper()
+		if got := idx.Evaluate([]Predicate{Contains("$.text", "needle")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 2}) {
+			t.Fatalf("Contains($.text, needle) = %v, want [0 2]", got)
+		}
+	}
+
+	assertContains(t, idx)
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	assertContains(t, decoded)
+}
+
+func TestAdaptiveInvariantViolationLogs(t *testing.T) {
+	var logBuf bytes.Buffer
+	prev := currentAdaptiveInvariantLogger()
+	SetAdaptiveInvariantLogger(log.New(&logBuf, "", 0))
+	defer SetAdaptiveInvariantLogger(prev)
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 3
+	idx.PathDirectory = []PathEntry{{
+		PathID:   0,
+		PathName: "$.field",
+		Mode:     PathModeAdaptiveHybrid,
+	}}
+	idx.pathLookup["$.field"] = 0
+	idx.GlobalBloom = MustNewBloomFilter(64, 3)
+	idx.GlobalBloom.AddString("$.field=hot")
+
+	if got := idx.Evaluate([]Predicate{EQ("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2}) {
+		t.Fatalf("Evaluate(EQ) = %v, want all row groups", got)
+	}
+	if !strings.Contains(logBuf.String(), "adaptive path invariant violation") {
+		t.Fatalf("log output = %q, want invariant violation message", logBuf.String())
+	}
+}
+
+func TestSetAdaptiveInvariantLoggerNilSilences(t *testing.T) {
+	prev := currentAdaptiveInvariantLogger()
+	SetAdaptiveInvariantLogger(nil)
+	defer SetAdaptiveInvariantLogger(prev)
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 2
+	idx.PathDirectory = []PathEntry{{
+		PathID:   0,
+		PathName: "$.field",
+		Mode:     PathModeAdaptiveHybrid,
+	}}
+	idx.pathLookup["$.field"] = 0
+	idx.GlobalBloom = MustNewBloomFilter(64, 3)
+	idx.GlobalBloom.AddString("$.field=hot")
+
+	// Must not panic or race when logger is nil.
+	got := idx.Evaluate([]Predicate{EQ("$.field", "hot")}).ToSlice()
+	if fmt.Sprint(got) != fmt.Sprint([]int{0, 1}) {
+		t.Fatalf("Evaluate(EQ) = %v, want all row groups (safe fallback)", got)
 	}
 }
 
