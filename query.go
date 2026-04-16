@@ -6,9 +6,30 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"sync"
 )
 
-var adaptiveInvariantViolationLogger = log.Default()
+var (
+	adaptiveInvariantLoggerMu sync.RWMutex
+	adaptiveInvariantLogger   = log.Default()
+)
+
+// SetAdaptiveInvariantLogger overrides the logger used to surface adaptive
+// index invariant violations (e.g. a path flagged PathModeAdaptiveHybrid with
+// no matching AdaptiveStringIndexes section). Pass nil to silence violations.
+// Safe for concurrent use; library consumers can route violations into their
+// own structured logging pipeline.
+func SetAdaptiveInvariantLogger(l *log.Logger) {
+	adaptiveInvariantLoggerMu.Lock()
+	adaptiveInvariantLogger = l
+	adaptiveInvariantLoggerMu.Unlock()
+}
+
+func currentAdaptiveInvariantLogger() *log.Logger {
+	adaptiveInvariantLoggerMu.RLock()
+	defer adaptiveInvariantLoggerMu.RUnlock()
+	return adaptiveInvariantLogger
+}
 
 func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
 	if len(predicates) == 0 {
@@ -121,12 +142,14 @@ func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, te
 }
 
 func (idx *GINIndex) adaptiveInvariantAllRGs(entry *PathEntry, op string) *RGSet {
-	adaptiveInvariantViolationLogger.Printf(
-		"gin: adaptive path invariant violation for %q (id=%d) during %s; returning all row groups",
-		entry.PathName,
-		entry.PathID,
-		op,
-	)
+	if logger := currentAdaptiveInvariantLogger(); logger != nil {
+		logger.Printf(
+			"gin: adaptive path invariant violation for %q (id=%d) during %s; returning all row groups",
+			entry.PathName,
+			entry.PathID,
+			op,
+		)
+	}
 	return AllRGs(int(idx.Header.NumRowGroups))
 }
 
