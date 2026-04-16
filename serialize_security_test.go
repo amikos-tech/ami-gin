@@ -857,6 +857,15 @@ func TestValidatePathReferencesRejectsModeMismatches(t *testing.T) {
 			want: "must not have exact string index",
 		},
 		{
+			name: "adaptive path missing adaptive section",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathModeAdaptiveHybrid}}
+				return idx
+			},
+			want: "missing adaptive section",
+		},
+		{
 			name: "unknown mode",
 			idx: func() *GINIndex {
 				idx := NewGINIndex()

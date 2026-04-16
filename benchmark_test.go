@@ -1712,22 +1712,41 @@ func BenchmarkAdaptiveHighCardinality(b *testing.B) {
 	}
 
 	probes := []struct {
-		name      string
-		value     string
-		candidate func(phase08PreparedAdaptiveBenchmarkMode) int
+		name string
+		pred func(fixture phase08AdaptiveBenchmarkFixture) Predicate
 	}{
 		{
-			name:  "probe=hot-value",
-			value: fixture.hotProbe,
-			candidate: func(preparedMode phase08PreparedAdaptiveBenchmarkMode) int {
-				return preparedMode.hotCandidateRGs
+			name: "op=EQ/probe=hot-value",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return EQ(phase08AdaptiveBenchmarkPath, f.hotProbe) },
+		},
+		{
+			name: "op=EQ/probe=tail-value",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return EQ(phase08AdaptiveBenchmarkPath, f.tailProbe) },
+		},
+		{
+			name: "op=NE/probe=hot-value",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return NE(phase08AdaptiveBenchmarkPath, f.hotProbe) },
+		},
+		{
+			name: "op=NE/probe=tail-value",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return NE(phase08AdaptiveBenchmarkPath, f.tailProbe) },
+		},
+		{
+			name: "op=IN/probe=hot+tail",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate {
+				return IN(phase08AdaptiveBenchmarkPath, f.hotProbe, f.tailProbe)
 			},
 		},
 		{
-			name:  "probe=tail-value",
-			value: fixture.tailProbe,
-			candidate: func(preparedMode phase08PreparedAdaptiveBenchmarkMode) int {
-				return preparedMode.tailCandidateRGs
+			name: "op=NIN/probe=hot+tail",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate {
+				return NIN(phase08AdaptiveBenchmarkPath, f.hotProbe, f.tailProbe)
+			},
+		},
+		{
+			name: "op=Contains/probe=hot-substring",
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate {
+				return Contains(phase08AdaptiveBenchmarkPath, "hot-user-00")
 			},
 		},
 	}
@@ -1738,12 +1757,13 @@ func BenchmarkAdaptiveHighCardinality(b *testing.B) {
 			probe := probe
 			name := fmt.Sprintf("%s/shape=%s/%s", preparedMode.mode.name, phase08AdaptiveBenchmarkShape, probe.name)
 			b.Run(name, func(b *testing.B) {
-				pred := EQ(phase08AdaptiveBenchmarkPath, probe.value)
+				pred := probe.pred(fixture)
+				candidate := preparedMode.idx.Evaluate([]Predicate{pred}).Count()
 				b.ResetTimer()
 				for i := 0; i < b.N; i++ {
 					preparedMode.idx.Evaluate([]Predicate{pred})
 				}
-				b.ReportMetric(float64(probe.candidate(preparedMode)), "candidate_rgs")
+				b.ReportMetric(float64(candidate), "candidate_rgs")
 				b.ReportMetric(float64(preparedMode.encodedBytes), "encoded_bytes")
 			})
 		}
