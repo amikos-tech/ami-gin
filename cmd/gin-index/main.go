@@ -155,7 +155,6 @@ func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINCon
 
 func buildSingleFileWithIO(stdout, stderr io.Writer, input, column, output string, embed bool, ginCfg gin.GINConfig, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(input) {
 		bucket, s3Key, err := gin.ParseS3Path(input)
@@ -193,11 +192,12 @@ func buildSingleFileWithIO(stdout, stderr io.Writer, input, column, output strin
 		}
 		fmt.Fprintf(stdout, "  Index written to %s\n", outPath)
 	} else {
-		idx, err = gin.BuildFromParquet(input, column, ginCfg)
+		built, err := gin.BuildFromParquet(input, column, ginCfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "  Error: Failed to build index: %v\n", err)
 			return err
 		}
+		idx = built
 
 		if embed {
 			if err := gin.RebuildWithIndex(input, idx, pqCfg); err != nil {
@@ -291,7 +291,6 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 
 func querySingleFileWithIO(stdout, stderr io.Writer, indexPath string, pred gin.Predicate, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(indexPath) {
 		bucket, s3Key, err := gin.ParseS3Path(indexPath)
@@ -326,11 +325,12 @@ func querySingleFileWithIO(stdout, stderr io.Writer, indexPath string, pred gin.
 				return err
 			}
 		} else {
-			idx, err = gin.LoadIndex(indexPath, pqCfg)
+			loaded, err := gin.LoadIndex(indexPath, pqCfg)
 			if err != nil {
 				fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
 				return err
 			}
+			idx = loaded
 		}
 	}
 
@@ -395,7 +395,6 @@ func runInfo(args []string, stdout, stderr io.Writer) int {
 
 func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(indexPath) {
 		bucket, s3Key, err := gin.ParseS3Path(indexPath)
@@ -430,11 +429,12 @@ func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.Parque
 				return err
 			}
 		} else {
-			idx, err = gin.LoadIndex(indexPath, pqCfg)
+			loaded, err := gin.LoadIndex(indexPath, pqCfg)
 			if err != nil {
 				fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
 				return err
 			}
+			idx = loaded
 		}
 	}
 
@@ -553,7 +553,6 @@ func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
 
 func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output string, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
-	var err error
 
 	if gin.IsS3Path(parquetPath) {
 		bucket, s3Key, err := gin.ParseS3Path(parquetPath)
@@ -572,11 +571,12 @@ func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output strin
 			return err
 		}
 	} else {
-		idx, err = gin.ReadFromParquetMetadata(parquetPath, pqCfg)
+		loaded, err := gin.ReadFromParquetMetadata(parquetPath, pqCfg)
 		if err != nil {
 			fmt.Fprintf(stderr, "  Error: Failed to read embedded index: %v\n", err)
 			return err
 		}
+		idx = loaded
 	}
 
 	data, err := gin.Encode(idx)
