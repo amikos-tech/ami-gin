@@ -512,7 +512,8 @@ func writeStringIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.StringIndexes))); err != nil {
 		return err
 	}
-	for pathID, si := range idx.StringIndexes {
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		si := idx.StringIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -752,7 +753,8 @@ func writeStringLengthIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.StringLengthIndexes))); err != nil {
 		return err
 	}
-	for pathID, sli := range idx.StringLengthIndexes {
+	for _, pathID := range sortedPathIDs(idx.StringLengthIndexes) {
+		sli := idx.StringLengthIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -837,7 +839,8 @@ func writeNumericIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.NumericIndexes))); err != nil {
 		return err
 	}
-	for pathID, ni := range idx.NumericIndexes {
+	for _, pathID := range sortedPathIDs(idx.NumericIndexes) {
+		ni := idx.NumericIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -958,7 +961,8 @@ func writeNullIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.NullIndexes))); err != nil {
 		return err
 	}
-	for pathID, ni := range idx.NullIndexes {
+	for _, pathID := range sortedPathIDs(idx.NullIndexes) {
+		ni := idx.NullIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -1008,7 +1012,8 @@ func writeTrigramIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.TrigramIndexes))); err != nil {
 		return err
 	}
-	for pathID, ti := range idx.TrigramIndexes {
+	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
+		ti := idx.TrigramIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -1030,7 +1035,13 @@ func writeTrigramIndexes(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, uint32(len(ti.Trigrams))); err != nil {
 			return err
 		}
-		for trigram, rgSet := range ti.Trigrams {
+		trigrams := make([]string, 0, len(ti.Trigrams))
+		for trigram := range ti.Trigrams {
+			trigrams = append(trigrams, trigram)
+		}
+		sort.Strings(trigrams)
+		for _, trigram := range trigrams {
+			rgSet := ti.Trigrams[trigram]
 			trigramBytes := []byte(trigram)
 			if err := binary.Write(w, binary.LittleEndian, uint8(len(trigramBytes))); err != nil {
 				return err
@@ -1117,7 +1128,8 @@ func writeHyperLogLogs(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.PathCardinality))); err != nil {
 		return err
 	}
-	for pathID, hll := range idx.PathCardinality {
+	for _, pathID := range sortedPathIDs(idx.PathCardinality) {
+		hll := idx.PathCardinality[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
 			return err
 		}
@@ -1221,8 +1233,13 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 		FTSPaths:                cfg.ftsPaths,
 	}
 
-	for _, spec := range cfg.transformerSpecs {
-		sc.Transformers = append(sc.Transformers, spec)
+	transformerPaths := make([]string, 0, len(cfg.transformerSpecs))
+	for path := range cfg.transformerSpecs {
+		transformerPaths = append(transformerPaths, path)
+	}
+	sort.Strings(transformerPaths)
+	for _, path := range transformerPaths {
+		sc.Transformers = append(sc.Transformers, cfg.transformerSpecs[path])
 	}
 
 	data, err := json.Marshal(sc)
