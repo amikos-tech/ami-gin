@@ -305,6 +305,111 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestPropertyIntegrationCrossModeSoundness(t *testing.T) {
+	properties := gopter.NewProperties(propertyTestParameters())
+
+	// For the same fixture, EQ("$.field", term) must satisfy:
+	//   classic ⊆ adaptive ⊆ bloom-only
+	// A violation means an adaptive-mode index is strictly more aggressive than
+	// the exact index - i.e. it drops row groups that really do match, which is
+	// unsound and silently loses data. The existing per-mode no-false-negatives
+	// property catches missed ground-truth matches; this one catches regressions
+	// where adaptive's bucket layer under-reports compared to the exact index.
+	properties.Property("EQ results widen monotonically from classic to adaptive to bloom-only", prop.ForAll(
+		func(values []string) bool {
+			validValues := make([]string, 0, len(values))
+			for _, v := range values {
+				if v != "" {
+					validValues = append(validValues, v)
+				}
+			}
+			if len(validValues) < 3 {
+				return true
+			}
+
+			numRGs := len(validValues)
+			if numRGs > 32 {
+				numRGs = 32
+			}
+
+			fixtureValues := make([]string, numRGs)
+			fixtureValues[0] = "hot"
+			fixtureValues[1] = "hot"
+			for i := 2; i < numRGs; i++ {
+				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
+			}
+
+			// Collect distinct terms so we exercise both hot and tail shapes.
+			seen := map[string]struct{}{}
+			distinctTerms := make([]string, 0, len(fixtureValues))
+			for _, v := range fixtureValues {
+				if _, ok := seen[v]; ok {
+					continue
+				}
+				seen[v] = struct{}{}
+				distinctTerms = append(distinctTerms, v)
+			}
+
+			classicConfig := DefaultConfig()
+			classicConfig.CardinalityThreshold = uint32(len(distinctTerms) + 1)
+
+			adaptiveConfig := DefaultConfig()
+			adaptiveConfig.CardinalityThreshold = 1
+			adaptiveConfig.AdaptiveMinRGCoverage = 2
+			adaptiveConfig.AdaptivePromotedTermCap = 64
+			adaptiveConfig.AdaptiveCoverageCeiling = 0.80
+			adaptiveConfig.AdaptiveBucketCount = 128
+
+			bloomOnlyConfig := adaptiveConfig
+			bloomOnlyConfig.AdaptivePromotedTermCap = 0
+
+			buildIdx := func(cfg GINConfig) *GINIndex {
+				builder, err := NewBuilder(cfg, numRGs)
+				if err != nil {
+					return nil
+				}
+				for rgID, value := range fixtureValues {
+					doc := []byte(`{"field": "` + value + `"}`)
+					if err := builder.AddDocument(DocID(rgID), doc); err != nil {
+						return nil
+					}
+				}
+				return builder.Finalize()
+			}
+
+			classicIdx := buildIdx(classicConfig)
+			adaptiveIdx := buildIdx(adaptiveConfig)
+			bloomOnlyIdx := buildIdx(bloomOnlyConfig)
+			if classicIdx == nil || adaptiveIdx == nil || bloomOnlyIdx == nil {
+				return false
+			}
+
+			isSubset := func(sub, super *RGSet) bool {
+				// sub ⊆ super ⇔ sub ∩ ¬super is empty
+				return sub.Intersect(super.Invert()).IsEmpty()
+			}
+
+			for _, term := range distinctTerms {
+				pred := EQ("$.field", term)
+				classicRGs := classicIdx.Evaluate([]Predicate{pred})
+				adaptiveRGs := adaptiveIdx.Evaluate([]Predicate{pred})
+				bloomOnlyRGs := bloomOnlyIdx.Evaluate([]Predicate{pred})
+
+				if !isSubset(classicRGs, adaptiveRGs) {
+					return false
+				}
+				if !isSubset(adaptiveRGs, bloomOnlyRGs) {
+					return false
+				}
+			}
+			return true
+		},
+		gen.SliceOfN(100, gen.Identifier()),
+	))
+
+	properties.TestingRun(t)
+}
+
 func TestPropertyIntegrationArrayWildcardSuperset(t *testing.T) {
 	properties := gopter.NewProperties(propertyTestParameters())
 
