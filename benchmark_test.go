@@ -1721,7 +1721,9 @@ func BenchmarkAdaptiveHighCardinality(b *testing.B) {
 		},
 		{
 			name: "op=EQ/probe=tail-value",
-			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return EQ(phase08AdaptiveBenchmarkPath, f.tailProbe) },
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate {
+				return EQ(phase08AdaptiveBenchmarkPath, f.tailProbe)
+			},
 		},
 		{
 			name: "op=NE/probe=hot-value",
@@ -1729,7 +1731,9 @@ func BenchmarkAdaptiveHighCardinality(b *testing.B) {
 		},
 		{
 			name: "op=NE/probe=tail-value",
-			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate { return NE(phase08AdaptiveBenchmarkPath, f.tailProbe) },
+			pred: func(f phase08AdaptiveBenchmarkFixture) Predicate {
+				return NE(phase08AdaptiveBenchmarkPath, f.tailProbe)
+			},
 		},
 		{
 			name: "op=IN/probe=hot+tail",
