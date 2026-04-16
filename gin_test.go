@@ -1,8 +1,10 @@
 package gin
 
 import (
+	"bytes"
 	stderrors "errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -815,6 +817,24 @@ func TestAdaptiveBucketIndexPanicsOnZeroBuckets(t *testing.T) {
 	_ = adaptiveBucketIndex("alpha", 0)
 }
 
+func TestPathModeStringMapping(t *testing.T) {
+	tests := []struct {
+		mode PathMode
+		want string
+	}{
+		{mode: PathModeClassic, want: "exact"},
+		{mode: PathModeBloomOnly, want: "bloom-only"},
+		{mode: PathModeAdaptiveHybrid, want: "adaptive-hybrid"},
+		{mode: PathMode(99), want: "unknown"},
+	}
+
+	for _, tt := range tests {
+		if got := tt.mode.String(); got != tt.want {
+			t.Fatalf("PathMode(%d).String() = %q, want %q", tt.mode, got, tt.want)
+		}
+	}
+}
+
 func TestAdaptiveNegativePredicatesMixedPromotedAndTailStayConservative(t *testing.T) {
 	config := DefaultConfig()
 	config.CardinalityThreshold = 1
@@ -841,6 +861,86 @@ func TestAdaptiveNegativePredicatesMixedPromotedAndTailStayConservative(t *testi
 	idx := builder.Finalize()
 	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot", "tail_2")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
 		t.Fatalf("NIN mixed promoted+tail result = %v, want all present RGs", got)
+	}
+}
+
+func TestAdaptiveContainsUsesTrigramIndex(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 4
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	docs := []string{
+		`{"text":"alpha needle"}`,
+		`{"text":"beta haystack"}`,
+		`{"text":"gamma needle"}`,
+		`{"text":"delta haystack"}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.text")
+	if entry == nil {
+		t.Fatal("expected $.text path entry")
+	}
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
+	}
+	if entry.Flags&FlagTrigramIndex == 0 {
+		t.Fatal("adaptive path should retain trigram index for CONTAINS")
+	}
+
+	assertContains := func(t *testing.T, idx *GINIndex) {
+		t.Helper()
+		if got := idx.Evaluate([]Predicate{Contains("$.text", "needle")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 2}) {
+			t.Fatalf("Contains($.text, needle) = %v, want [0 2]", got)
+		}
+	}
+
+	assertContains(t, idx)
+
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	assertContains(t, decoded)
+}
+
+func TestAdaptiveInvariantViolationLogs(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevLogger := adaptiveInvariantViolationLogger
+	adaptiveInvariantViolationLogger = log.New(&logBuf, "", 0)
+	defer func() {
+		adaptiveInvariantViolationLogger = prevLogger
+	}()
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 3
+	idx.PathDirectory = []PathEntry{{
+		PathID:   0,
+		PathName: "$.field",
+		Mode:     PathModeAdaptiveHybrid,
+	}}
+	idx.pathLookup["$.field"] = 0
+	idx.GlobalBloom = MustNewBloomFilter(64, 3)
+	idx.GlobalBloom.AddString("$.field=hot")
+
+	if got := idx.Evaluate([]Predicate{EQ("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2}) {
+		t.Fatalf("Evaluate(EQ) = %v, want all row groups", got)
+	}
+	if !strings.Contains(logBuf.String(), "adaptive path invariant violation") {
+		t.Fatalf("log output = %q, want invariant violation message", logBuf.String())
 	}
 }
 

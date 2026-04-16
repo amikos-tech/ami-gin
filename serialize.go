@@ -719,12 +719,6 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d invalid: %v", pathID, err)
 		}
 
-		if entry := idx.PathDirectory[pathID]; entry.AdaptivePromotedTerms != 0 && entry.AdaptivePromotedTerms != uint16(numTerms) {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d directory promoted count %d does not match section %d", pathID, entry.AdaptivePromotedTerms, numTerms)
-		}
-		if entry := idx.PathDirectory[pathID]; entry.AdaptiveBucketCount != 0 && entry.AdaptiveBucketCount != uint16(bucketCount) {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d directory bucket count %d does not match section %d", pathID, entry.AdaptiveBucketCount, bucketCount)
-		}
 		idx.AdaptiveStringIndexes[pathID] = adaptive
 		idx.PathDirectory[pathID].AdaptivePromotedTerms = uint16(numTerms)
 		idx.PathDirectory[pathID].AdaptiveBucketCount = uint16(bucketCount)

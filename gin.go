@@ -9,7 +9,8 @@ import (
 
 const (
 	MagicBytes = "GIN\x01"
-	Version    = uint16(6)
+	// Version 6 adds PathEntry.Mode to the path directory.
+	Version = uint16(6)
 )
 
 const (
@@ -34,7 +35,8 @@ type PathMode uint8
 
 const (
 	// PathModeClassic keeps the full exact string index for a path.
-	// Its user-facing string label remains "exact" for CLI continuity.
+	// Its user-facing string label remains "exact" because that describes the
+	// query semantics more clearly than the internal mode name.
 	PathModeClassic PathMode = iota
 	// PathModeBloomOnly stores no exact term index and answers via bloom-filter fallback.
 	PathModeBloomOnly
@@ -76,10 +78,12 @@ type PathEntry struct {
 	ObservedTypes uint8
 	Cardinality   uint32
 	// Mode is the exclusive string-evaluation mode for this path.
-	Mode                  PathMode
-	Flags                 uint8
+	Mode  PathMode
+	Flags uint8
+	// AdaptivePromotedTerms is derived metadata populated from the adaptive section.
 	AdaptivePromotedTerms uint16
-	AdaptiveBucketCount   uint16
+	// AdaptiveBucketCount is derived metadata populated from the adaptive section.
+	AdaptiveBucketCount uint16
 }
 
 type StringIndex struct {
@@ -87,6 +91,7 @@ type StringIndex struct {
 	RGBitmaps []*RGSet
 }
 
+// AdaptiveStringIndex stores promoted exact terms plus lossy tail buckets.
 type AdaptiveStringIndex struct {
 	Terms           []string
 	RGBitmaps       []*RGSet

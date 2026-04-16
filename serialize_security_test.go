@@ -528,7 +528,7 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsAdaptiveDirectorySectionCountMismatch(t *testing.T) {
+func TestDecodeAdaptiveSectionDerivesPathEntryCounts(t *testing.T) {
 	var buf bytes.Buffer
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
 		t.Fatalf("binary.Write(numPaths) error = %v", err)
@@ -563,19 +563,19 @@ func TestDecodeRejectsAdaptiveDirectorySectionCountMismatch(t *testing.T) {
 		PathID:                0,
 		PathName:              "$.field",
 		Mode:                  PathModeAdaptiveHybrid,
-		AdaptivePromotedTerms: 3,
-		AdaptiveBucketCount:   4,
+		AdaptivePromotedTerms: 99,
+		AdaptiveBucketCount:   99,
 	}}
 
 	err := readAdaptiveStringIndexes(&buf, idx)
-	if err == nil {
-		t.Fatal("expected mismatch error, got nil")
+	if err != nil {
+		t.Fatalf("readAdaptiveStringIndexes() error = %v", err)
 	}
-	if !stderrors.Is(err, ErrInvalidFormat) {
-		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	if idx.PathDirectory[0].AdaptivePromotedTerms != 1 {
+		t.Fatalf("AdaptivePromotedTerms = %d, want 1", idx.PathDirectory[0].AdaptivePromotedTerms)
 	}
-	if !strings.Contains(err.Error(), "directory") {
-		t.Fatalf("error = %v, want directory mismatch context", err)
+	if idx.PathDirectory[0].AdaptiveBucketCount != 2 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 2", idx.PathDirectory[0].AdaptiveBucketCount)
 	}
 }
 
@@ -810,6 +810,16 @@ func TestValidatePathReferencesRejectsModeMismatches(t *testing.T) {
 				return idx
 			},
 			want: "must not have string index",
+		},
+		{
+			name: "bloom-only path with adaptive section",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathModeBloomOnly}}
+				idx.AdaptiveStringIndexes[0] = mustAdaptiveIndex(t, []string{"hot"}, []*RGSet{MustNewRGSet(1)}, []*RGSet{MustNewRGSet(1)})
+				return idx
+			},
+			want: "must not have adaptive section",
 		},
 		{
 			name: "adaptive path with exact string index",

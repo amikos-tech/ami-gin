@@ -2,7 +2,9 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -40,6 +42,35 @@ func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord, ro
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close parquet writer: %v", err)
 	}
+}
+
+func TestRunParseErrorHelper(t *testing.T) {
+	helper := os.Getenv("GIN_INDEX_PARSE_HELPER")
+	if helper == "" {
+		return
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	args := []string{"-definitely-invalid-flag"}
+
+	var code int
+	switch helper {
+	case "build":
+		code = runBuild(args, &stdout, &stderr)
+	case "query":
+		code = runQuery(args, &stdout, &stderr)
+	case "info":
+		code = runInfo(args, &stdout, &stderr)
+	case "extract":
+		code = runExtract(args, &stdout, &stderr)
+	default:
+		t.Fatalf("unknown helper command %q", helper)
+	}
+
+	_, _ = os.Stdout.Write(stdout.Bytes())
+	_, _ = os.Stderr.Write(stderr.Bytes())
+	os.Exit(code)
 }
 
 func buildAdaptiveCLIInfoIndex(t *testing.T) *gin.GINIndex {
@@ -314,6 +345,42 @@ func TestCLIInfoShowsAdaptiveSummary(t *testing.T) {
 	}
 }
 
+func TestPathInfoDerivesAdaptiveSummaryFromSection(t *testing.T) {
+	t.Parallel()
+
+	config := gin.DefaultConfig()
+	config.CardinalityThreshold = 3
+	config.AdaptivePromotedTermCap = 8
+
+	adaptive, err := gin.NewAdaptiveStringIndex(
+		[]string{"hot", "warm"},
+		[]*gin.RGSet{gin.MustNewRGSet(4), gin.MustNewRGSet(4)},
+		[]*gin.RGSet{gin.MustNewRGSet(4), gin.MustNewRGSet(4), gin.MustNewRGSet(4), gin.MustNewRGSet(4)},
+	)
+	if err != nil {
+		t.Fatalf("NewAdaptiveStringIndex() error = %v", err)
+	}
+
+	idx := gin.NewGINIndex()
+	idx.Config = &config
+	idx.Header.CardinalityThresh = 3
+	idx.AdaptiveStringIndexes[0] = adaptive
+
+	info := formatPathInfo(idx, gin.PathEntry{
+		PathID:        0,
+		PathName:      "$.adaptive",
+		ObservedTypes: gin.TypeString,
+		Cardinality:   42,
+		Mode:          gin.PathModeAdaptiveHybrid,
+	})
+
+	for _, want := range []string{"promoted=2", "buckets=4", "threshold=3", "cap=8"} {
+		if !strings.Contains(info, want) {
+			t.Fatalf("formatPathInfo() missing %q in %q", want, info)
+		}
+	}
+}
+
 func TestPathInfoOmitsAdaptiveSummaryOutsideAdaptiveMode(t *testing.T) {
 	t.Parallel()
 
@@ -351,6 +418,41 @@ func TestRunInfoReturnsNonZeroOnDecodeFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Failed to decode index") {
 		t.Fatalf("stderr = %q, want decode failure", stderr.String())
+	}
+}
+
+func TestRunCommandsReturnParseFailureCode(t *testing.T) {
+	t.Parallel()
+
+	for _, helper := range []string{"build", "query", "info", "extract"} {
+		helper := helper
+		t.Run(helper, func(t *testing.T) {
+			t.Parallel()
+
+			cmd := exec.Command(os.Args[0], "-test.run=TestRunParseErrorHelper$")
+			cmd.Env = append(os.Environ(), "GIN_INDEX_PARSE_HELPER="+helper)
+
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			cmd.Stdout = &stdout
+			cmd.Stderr = &stderr
+
+			err := cmd.Run()
+			if err == nil {
+				t.Fatal("subprocess succeeded, want parse failure")
+			}
+
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("Run() error = %v, want *exec.ExitError", err)
+			}
+			if exitErr.ExitCode() != 1 {
+				t.Fatalf("exit code = %d, want 1; stderr=%q", exitErr.ExitCode(), stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "flag provided but not defined") {
+				t.Fatalf("stderr = %q, want parse failure output", stderr.String())
+			}
+		})
 	}
 }
 
@@ -412,6 +514,58 @@ func TestRunExtractReturnsNonZeroOnExtractFailure(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "Failed to read embedded index") {
 		t.Fatalf("stderr = %q, want extract failure", stderr.String())
+	}
+}
+
+func TestRunBuildReportsPartialFailures(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	createCLIParquetFile(t, filepath.Join(tmpDir, "good.parquet"), []cliTestRecord{
+		{ID: 1, Attributes: `{"brand":"Toyota"}`},
+	}, 1)
+	if err := os.WriteFile(filepath.Join(tmpDir, "bad.parquet"), []byte("not-a-parquet-file"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-c", "attributes", tmpDir}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild() code = 0, want non-zero for partial failure")
+	}
+	if !strings.Contains(stdout.String(), "Processed 1/2 file(s) (1 failed)") {
+		t.Fatalf("stdout = %q, want partial-failure summary", stdout.String())
+	}
+}
+
+func TestRunExtractReportsPartialFailures(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	goodParquet := filepath.Join(tmpDir, "good.parquet")
+	createCLIParquetFile(t, goodParquet, []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+	}, 1)
+	idx, err := gin.BuildFromParquet(goodParquet, "attributes", gin.DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet() error = %v", err)
+	}
+	if err := gin.RebuildWithIndex(goodParquet, idx, gin.DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "bad.parquet"), []byte("not-a-parquet-file"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExtract([]string{tmpDir}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExtract() code = 0, want non-zero for partial failure")
+	}
+	if !strings.Contains(stdout.String(), "Processed 1/2 file(s) (1 failed)") {
+		t.Fatalf("stdout = %q, want partial-failure summary", stdout.String())
 	}
 }
 

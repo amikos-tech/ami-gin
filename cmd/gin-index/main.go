@@ -88,13 +88,15 @@ func cmdBuild(args []string) {
 }
 
 func runBuild(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("build", flag.ExitOnError)
+	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	column := fs.String("c", "", "JSON column name (required)")
 	output := fs.String("o", "", "Output path (for single file only)")
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(stderr, "Error: input file or directory required")
@@ -127,18 +129,24 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	exitCode := 0
+	successes := 0
 	for _, file := range files {
 		fmt.Fprintf(stdout, "Processing: %s\n", file)
 		if err := buildSingleFileWithIO(stdout, stderr, file, *column, *output, *embed, ginCfg, pqCfg); err != nil {
-			exitCode = 1
+			continue
 		}
+		successes++
 	}
 
-	fmt.Fprintf(stdout, "\nProcessed %d file(s)\n", len(files))
-	return exitCode
+	writeBatchSummary(stdout, successes, len(files))
+	if successes != len(files) {
+		return 1
+	}
+	return 0
 }
 
+// These thin wrappers preserve the historical helper signatures while run*
+// handles injectable I/O streams and exit-code testing.
 func buildSingleFile(input, column, output string, embed bool, ginCfg gin.GINConfig, pqCfg gin.ParquetConfig) {
 	_ = buildSingleFileWithIO(os.Stdout, os.Stderr, input, column, output, embed, ginCfg, pqCfg)
 }
@@ -230,10 +238,12 @@ func cmdQuery(args []string) {
 }
 
 func runQuery(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("query", flag.ExitOnError)
+	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 2 {
 		fmt.Fprintln(stderr, "Error: index path and query required")
@@ -275,10 +285,6 @@ func runQuery(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return exitCode
-}
-
-func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConfig) {
-	_ = querySingleFileWithIO(os.Stdout, os.Stderr, indexPath, pred, pqCfg)
 }
 
 func querySingleFileWithIO(stdout, stderr io.Writer, indexPath string, pred gin.Predicate, pqCfg gin.ParquetConfig) error {
@@ -344,10 +350,12 @@ func cmdInfo(args []string) {
 }
 
 func runInfo(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("info", flag.ExitOnError)
+	fs := flag.NewFlagSet("info", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(stderr, "Error: index path required")
@@ -449,14 +457,22 @@ func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
 	info := fmt.Sprintf("  %s (id=%d, types=%s, cardinality=%d, mode=%s",
 		pe.PathName, pe.PathID, describeTypes(pe.ObservedTypes), pe.Cardinality, pe.Mode.String())
 	if pe.Mode == gin.PathModeAdaptiveHybrid {
+		promotedTerms, bucketCount := adaptivePathSummary(idx, pe)
 		info += fmt.Sprintf(", promoted=%d, buckets=%d, threshold=%d",
-			pe.AdaptivePromotedTerms, pe.AdaptiveBucketCount, idx.Header.CardinalityThresh)
+			promotedTerms, bucketCount, idx.Header.CardinalityThresh)
 		if idx.Config != nil {
 			info += fmt.Sprintf(", cap=%d", idx.Config.AdaptivePromotedTermCap)
 		}
 	}
 	info += ")"
 	return info
+}
+
+func adaptivePathSummary(idx *gin.GINIndex, pe gin.PathEntry) (int, int) {
+	if adaptive, ok := idx.AdaptiveStringIndexes[pe.PathID]; ok && adaptive != nil {
+		return len(adaptive.Terms), len(adaptive.BucketRGBitmaps)
+	}
+	return int(pe.AdaptivePromotedTerms), int(pe.AdaptiveBucketCount)
 }
 
 func cmdExtract(args []string) {
@@ -466,11 +482,13 @@ func cmdExtract(args []string) {
 }
 
 func runExtract(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("extract", flag.ExitOnError)
+	fs := flag.NewFlagSet("extract", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	output := fs.String("o", "", "Output path (required for single file)")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	_ = fs.Parse(args)
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
 
 	if fs.NArg() < 1 {
 		fmt.Fprintln(stderr, "Error: parquet file or directory required")
@@ -501,7 +519,7 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	exitCode := 0
+	successes := 0
 	for _, file := range files {
 		fmt.Fprintf(stdout, "Processing: %s\n", file)
 		outPath := *output
@@ -509,12 +527,16 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 			outPath = file + ".gin"
 		}
 		if err := extractSingleFileWithIO(stdout, stderr, file, outPath, pqCfg); err != nil {
-			exitCode = 1
+			continue
 		}
+		successes++
 	}
 
-	fmt.Fprintf(stdout, "\nProcessed %d file(s)\n", len(files))
-	return exitCode
+	writeBatchSummary(stdout, successes, len(files))
+	if successes != len(files) {
+		return 1
+	}
+	return 0
 }
 
 func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
@@ -719,9 +741,13 @@ func resolveIndexFiles(path string) ([]string, error) {
 	return files, nil
 }
 
-func fatal(format string, args ...any) {
-	fmt.Fprintf(os.Stderr, "Error: "+format+"\n", args...)
-	os.Exit(1)
+func writeBatchSummary(stdout io.Writer, successes, total int) {
+	failures := total - successes
+	if failures == 0 {
+		fmt.Fprintf(stdout, "\nProcessed %d file(s)\n", total)
+		return
+	}
+	fmt.Fprintf(stdout, "\nProcessed %d/%d file(s) (%d failed)\n", successes, total, failures)
 }
 
 func parsePredicate(s string) (gin.Predicate, error) {
