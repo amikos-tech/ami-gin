@@ -188,8 +188,8 @@ func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 	if originalEntry == nil {
 		t.Fatal("adaptive path entry not found")
 	}
-	if originalEntry.Flags&FlagAdaptiveHybrid == 0 {
-		t.Fatalf("path flags = %08b, want adaptive hybrid", originalEntry.Flags)
+	if originalEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", originalEntry.Mode)
 	}
 	originalAdaptive := idx.AdaptiveStringIndexes[originalEntry.PathID]
 	if originalAdaptive == nil {
@@ -210,8 +210,8 @@ func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 	if decodedEntry == nil {
 		t.Fatal("decoded adaptive path entry not found")
 	}
-	if decodedEntry.Flags&FlagAdaptiveHybrid == 0 {
-		t.Fatalf("decoded path flags = %08b, want adaptive hybrid", decodedEntry.Flags)
+	if decodedEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("decoded Mode = %v, want adaptive hybrid", decodedEntry.Mode)
 	}
 	if decodedEntry.AdaptivePromotedTerms != originalEntry.AdaptivePromotedTerms {
 		t.Fatalf("AdaptivePromotedTerms = %d, want %d", decodedEntry.AdaptivePromotedTerms, originalEntry.AdaptivePromotedTerms)
@@ -224,8 +224,8 @@ func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 	if decodedAdaptive == nil {
 		t.Fatal("adaptive string index missing after decode")
 	}
-	if decodedAdaptive.BucketCount != originalAdaptive.BucketCount {
-		t.Fatalf("BucketCount = %d, want %d", decodedAdaptive.BucketCount, originalAdaptive.BucketCount)
+	if len(decodedAdaptive.BucketRGBitmaps) != len(originalAdaptive.BucketRGBitmaps) {
+		t.Fatalf("len(BucketRGBitmaps) = %d, want %d", len(decodedAdaptive.BucketRGBitmaps), len(originalAdaptive.BucketRGBitmaps))
 	}
 	if !reflect.DeepEqual(decodedAdaptive.Terms, originalAdaptive.Terms) {
 		t.Fatalf("Terms = %v, want %v", decodedAdaptive.Terms, originalAdaptive.Terms)
@@ -238,13 +238,53 @@ func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 			t.Fatalf("RGBitmaps[%d] = %v, want %v", i, got, want)
 		}
 	}
-	if len(decodedAdaptive.BucketRGBitmaps) != len(originalAdaptive.BucketRGBitmaps) {
-		t.Fatalf("BucketRGBitmaps len = %d, want %d", len(decodedAdaptive.BucketRGBitmaps), len(originalAdaptive.BucketRGBitmaps))
-	}
 	for i := range originalAdaptive.BucketRGBitmaps {
 		if got, want := decodedAdaptive.BucketRGBitmaps[i].ToSlice(), originalAdaptive.BucketRGBitmaps[i].ToSlice(); !reflect.DeepEqual(got, want) {
 			t.Fatalf("BucketRGBitmaps[%d] = %v, want %v", i, got, want)
 		}
+	}
+}
+
+func TestAdaptiveRoundTripPreservesQueryResults(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 3
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.75
+	config.AdaptiveBucketCount = 16
+
+	original := buildAdaptiveSerializationFixture(t, config)
+	data, err := EncodeWithLevel(original, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		pred Predicate
+	}{
+		{name: "eq promoted", pred: EQ("$.field", "hot")},
+		{name: "eq tail", pred: EQ("$.field", "tail_4")},
+		{name: "ne promoted", pred: NE("$.field", "hot")},
+		{name: "ne tail", pred: NE("$.field", "tail_4")},
+		{name: "in mixed", pred: IN("$.field", "hot", "tail_4")},
+		{name: "nin mixed", pred: NIN("$.field", "hot", "tail_4")},
+		{name: "contains", pred: Contains("$.field", "tail")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := original.Evaluate([]Predicate{tt.pred})
+			after := decoded.Evaluate([]Predicate{tt.pred})
+			if got, want := after.ToSlice(), before.ToSlice(); !reflect.DeepEqual(got, want) {
+				t.Fatalf("decoded Evaluate(%s) = %v, want %v", tt.name, got, want)
+			}
+		})
 	}
 }
 
@@ -267,7 +307,7 @@ func TestDecodeRejectsOversizedAdaptiveBucketSection(t *testing.T) {
 	idx.Header.NumRowGroups = 10
 	idx.PathDirectory = []PathEntry{{
 		PathID: 0,
-		Flags:  FlagAdaptiveHybrid,
+		Mode:   PathModeAdaptiveHybrid,
 	}}
 
 	err := readAdaptiveStringIndexes(&buf, idx)
@@ -276,6 +316,139 @@ func TestDecodeRejectsOversizedAdaptiveBucketSection(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
+	tests := []struct {
+		name         string
+		build        func(*testing.T) (*bytes.Buffer, *GINIndex)
+		wantContains string
+	}{
+		{
+			name: "bucket count zero",
+			build: func(t *testing.T) (*bytes.Buffer, *GINIndex) {
+				t.Helper()
+				var buf bytes.Buffer
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+					t.Fatalf("binary.Write(numPaths) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+					t.Fatalf("binary.Write(pathID) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+					t.Fatalf("binary.Write(numTerms) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+					t.Fatalf("binary.Write(bucketCount) error = %v", err)
+				}
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 10
+				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+				return &buf, idx
+			},
+			wantContains: "must be greater than 0",
+		},
+		{
+			name: "bucket count not power of two",
+			build: func(t *testing.T) (*bytes.Buffer, *GINIndex) {
+				t.Helper()
+				var buf bytes.Buffer
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+					t.Fatalf("binary.Write(numPaths) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+					t.Fatalf("binary.Write(pathID) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+					t.Fatalf("binary.Write(numTerms) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(3)); err != nil {
+					t.Fatalf("binary.Write(bucketCount) error = %v", err)
+				}
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 10
+				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+				return &buf, idx
+			},
+			wantContains: "power of two",
+		},
+		{
+			name: "adaptive section without adaptive mode",
+			build: func(t *testing.T) (*bytes.Buffer, *GINIndex) {
+				t.Helper()
+				var buf bytes.Buffer
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+					t.Fatalf("binary.Write(numPaths) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+					t.Fatalf("binary.Write(pathID) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+					t.Fatalf("binary.Write(numTerms) error = %v", err)
+				}
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+					t.Fatalf("binary.Write(bucketCount) error = %v", err)
+				}
+				for i := 0; i < 2; i++ {
+					if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
+						t.Fatalf("writeRGSet(bucket=%d) error = %v", i, err)
+					}
+				}
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 4
+				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeClassic}}
+				return &buf, idx
+			},
+			wantContains: "missing adaptive mode",
+		},
+		{
+			name: "duplicate path section",
+			build: func(t *testing.T) (*bytes.Buffer, *GINIndex) {
+				t.Helper()
+				var buf bytes.Buffer
+				if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+					t.Fatalf("binary.Write(numPaths) error = %v", err)
+				}
+				for i := 0; i < 2; i++ {
+					if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+						t.Fatalf("binary.Write(pathID) error = %v", err)
+					}
+					if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+						t.Fatalf("binary.Write(numTerms) error = %v", err)
+					}
+					if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+						t.Fatalf("binary.Write(bucketCount) error = %v", err)
+					}
+					for bucketID := 0; bucketID < 2; bucketID++ {
+						if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
+							t.Fatalf("writeRGSet(path=%d bucket=%d) error = %v", i, bucketID, err)
+						}
+					}
+				}
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 4
+				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+				return &buf, idx
+			},
+			wantContains: "duplicate adaptive section",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf, idx := tt.build(t)
+			err := readAdaptiveStringIndexes(buf, idx)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !stderrors.Is(err, ErrInvalidFormat) {
+				t.Fatalf("expected ErrInvalidFormat, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.wantContains) {
+				t.Fatalf("error = %v, want substring %q", err, tt.wantContains)
+			}
+		})
 	}
 }
 

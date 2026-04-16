@@ -60,11 +60,22 @@ func TestPropertyIntegrationSerializationPreservesQueries(t *testing.T) {
 			}
 
 			numRGs := len(docs)
-			builder, _ := NewBuilder(DefaultConfig(), numRGs)
+			config := DefaultConfig()
+			config.CardinalityThreshold = 1
+			config.AdaptiveMinRGCoverage = 1
+			config.AdaptivePromotedTermCap = 8
+			config.AdaptiveCoverageCeiling = 0.95
+			config.AdaptiveBucketCount = 16
+
+			builder, _ := NewBuilder(config, numRGs)
 			for i, doc := range docs {
 				_ = builder.AddDocument(DocID(i), doc.JSON)
 			}
 			original := builder.Finalize()
+			entry := findPathEntry(original, "$.name")
+			if entry == nil || entry.Mode != PathModeAdaptiveHybrid {
+				return false
+			}
 
 			beforeResult := original.Evaluate([]Predicate{predicate})
 
@@ -82,7 +93,7 @@ func TestPropertyIntegrationSerializationPreservesQueries(t *testing.T) {
 
 			return rgSetEqual(beforeResult, afterResult)
 		},
-		GenTestDocs(20),
+		GenTestDocs(50),
 		GenPredicate(),
 	))
 
@@ -218,14 +229,14 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 					config: exactConfig,
 					check: func(entry *PathEntry, idx *GINIndex) bool {
 						_, hasStringIdx := idx.StringIndexes[entry.PathID]
-						return hasStringIdx && entry.Flags&FlagBloomOnly == 0 && entry.Flags&FlagAdaptiveHybrid == 0
+						return hasStringIdx && entry.Mode == PathModeClassic
 					},
 				},
 				{
 					config: adaptiveConfig,
 					check: func(entry *PathEntry, idx *GINIndex) bool {
 						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
-						return hasAdaptiveIdx && entry.Flags&FlagAdaptiveHybrid != 0 && entry.Flags&FlagBloomOnly == 0
+						return hasAdaptiveIdx && entry.Mode == PathModeAdaptiveHybrid
 					},
 				},
 				{
@@ -233,7 +244,7 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 					check: func(entry *PathEntry, idx *GINIndex) bool {
 						_, hasStringIdx := idx.StringIndexes[entry.PathID]
 						_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
-						return entry.Flags&FlagBloomOnly != 0 && entry.Flags&FlagAdaptiveHybrid == 0 && !hasStringIdx && !hasAdaptiveIdx
+						return entry.Mode == PathModeBloomOnly && !hasStringIdx && !hasAdaptiveIdx
 					},
 				},
 			}

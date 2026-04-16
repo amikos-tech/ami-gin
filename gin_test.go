@@ -221,11 +221,8 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected $.field path entry")
 	}
-	if entry.Flags&FlagAdaptiveHybrid == 0 {
-		t.Fatalf("Flags = %08b, want adaptive hybrid set", entry.Flags)
-	}
-	if entry.Flags&FlagBloomOnly != 0 {
-		t.Fatalf("Flags = %08b, bloom-only should be unset for adaptive path", entry.Flags)
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
 	}
 	if entry.AdaptivePromotedTerms != 1 {
 		t.Fatalf("AdaptivePromotedTerms = %d, want 1", entry.AdaptivePromotedTerms)
@@ -241,8 +238,8 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	if !ok {
 		t.Fatal("expected adaptive string index for high-cardinality path")
 	}
-	if adaptive.BucketCount != 128 {
-		t.Fatalf("BucketCount = %d, want 128", adaptive.BucketCount)
+	if len(adaptive.BucketRGBitmaps) != 128 {
+		t.Fatalf("len(BucketRGBitmaps) = %d, want 128", len(adaptive.BucketRGBitmaps))
 	}
 	if len(adaptive.Terms) != 1 || adaptive.Terms[0] != "hot" {
 		t.Fatalf("promoted terms = %v, want [hot]", adaptive.Terms)
@@ -252,9 +249,6 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	}
 	if got := adaptive.RGBitmaps[0].ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3}) {
 		t.Fatalf("promoted bitmap = %v, want [0 1 2 3]", got)
-	}
-	if len(adaptive.BucketRGBitmaps) != 128 {
-		t.Fatalf("len(BucketRGBitmaps) = %d, want 128", len(adaptive.BucketRGBitmaps))
 	}
 }
 
@@ -326,8 +320,8 @@ func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
 
 func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
 	config := DefaultConfig()
-	config.CardinalityThreshold = 2
-	config.AdaptiveBucketCount = 1
+	config.CardinalityThreshold = 1
+	config.AdaptiveBucketCount = 4
 
 	builder := mustNewBuilder(t, config, 6)
 	for rgID := 0; rgID < 2; rgID++ {
@@ -347,8 +341,8 @@ func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected $.field path entry")
 	}
-	if entry.Flags&FlagAdaptiveHybrid == 0 {
-		t.Fatalf("Flags = %08b, want adaptive hybrid set", entry.Flags)
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
 	}
 
 	result := idx.Evaluate([]Predicate{EQ("$.field", "tail_2")})
@@ -369,7 +363,7 @@ func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
 func TestAdaptiveNegativePredicatesStayConservative(t *testing.T) {
 	config := DefaultConfig()
 	config.CardinalityThreshold = 2
-	config.AdaptiveBucketCount = 1
+	config.AdaptiveBucketCount = 4
 
 	builder := mustNewBuilder(t, config, 6)
 	for rgID := 0; rgID < 2; rgID++ {
@@ -398,6 +392,288 @@ func TestAdaptiveNegativePredicatesStayConservative(t *testing.T) {
 	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{2, 3, 4, 5}) {
 		t.Fatalf("NIN promoted result = %v, want exact promoted inversion", got)
 	}
+}
+
+func TestFinalizeHighCardinalityNumericOnlyPathUsesBloomOnlyMode(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+
+	builder := mustNewBuilder(t, config, 2)
+	pd := builder.getOrCreatePath("$.score")
+	pd.observedTypes = TypeInt
+	pd.presentRGs.Set(0)
+	pd.presentRGs.Set(1)
+	pd.hll.AddString("10")
+	pd.hll.AddString("20")
+
+	idx := builder.Finalize()
+	entry := findPathEntry(idx, "$.score")
+	if entry == nil {
+		t.Fatal("expected $.score path entry")
+	}
+	if entry.Mode != PathModeBloomOnly {
+		t.Fatalf("Mode = %v, want bloom-only for non-adaptive high-cardinality path", entry.Mode)
+	}
+	if entry.AdaptiveBucketCount != 0 {
+		t.Fatalf("AdaptiveBucketCount = %d, want 0", entry.AdaptiveBucketCount)
+	}
+	if _, ok := idx.AdaptiveStringIndexes[entry.PathID]; ok {
+		t.Fatal("unexpected adaptive string index for numeric-only path")
+	}
+}
+
+func TestAdaptiveINVariants(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	docs := []string{
+		`{"field":"hot","flag":true}`,
+		`{"field":"hot","flag":true}`,
+		`{"field":"tail_2","flag":false}`,
+		`{"field":"tail_3","flag":false}`,
+		`{"field":"tail_4","flag":true}`,
+		`{"field":"tail_5","flag":false}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	fieldEntry := findPathEntry(idx, "$.field")
+	if fieldEntry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if fieldEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("$.field Mode = %v, want adaptive hybrid", fieldEntry.Mode)
+	}
+	flagEntry := findPathEntry(idx, "$.flag")
+	if flagEntry == nil {
+		t.Fatal("expected $.flag path entry")
+	}
+	if flagEntry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("$.flag Mode = %v, want adaptive hybrid", flagEntry.Mode)
+	}
+
+	tests := []struct {
+		name        string
+		pred        Predicate
+		wantExact   []int
+		mustContain []int
+		mustExclude []int
+	}{
+		{
+			name:      "all promoted",
+			pred:      IN("$.field", "hot"),
+			wantExact: []int{0, 1},
+		},
+		{
+			name:        "all tail",
+			pred:        IN("$.field", "tail_2", "tail_3"),
+			mustContain: []int{2, 3},
+			mustExclude: []int{0, 1},
+		},
+		{
+			name:        "mixed promoted and tail",
+			pred:        IN("$.field", "hot", "tail_4"),
+			mustContain: []int{0, 1, 4},
+		},
+		{
+			name:      "bool terms",
+			pred:      IN("$.flag", true),
+			wantExact: []int{0, 1, 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := idx.Evaluate([]Predicate{tt.pred}).ToSlice()
+			if tt.wantExact != nil {
+				if fmt.Sprint(got) != fmt.Sprint(tt.wantExact) {
+					t.Fatalf("%s = %v, want %v", tt.pred.Operator, got, tt.wantExact)
+				}
+				return
+			}
+			for _, rgID := range tt.mustContain {
+				if !containsInt(got, rgID) {
+					t.Fatalf("%s = %v, want RG %d present", tt.pred.Operator, got, rgID)
+				}
+			}
+			for _, rgID := range tt.mustExclude {
+				if containsInt(got, rgID) {
+					t.Fatalf("%s = %v, want RG %d absent", tt.pred.Operator, got, rgID)
+				}
+			}
+		})
+	}
+}
+
+func containsInt(values []int, want int) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestAdaptiveThresholdBoundarySelection(t *testing.T) {
+	tests := []struct {
+		name      string
+		threshold uint32
+		wantMode  PathMode
+	}{
+		{name: "below threshold stays exact", threshold: 3, wantMode: PathModeClassic},
+		{name: "at threshold stays exact", threshold: 2, wantMode: PathModeClassic},
+		{name: "above threshold becomes adaptive", threshold: 1, wantMode: PathModeAdaptiveHybrid},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig()
+			config.CardinalityThreshold = tt.threshold
+			config.AdaptiveMinRGCoverage = 2
+			config.AdaptivePromotedTermCap = 2
+			config.AdaptiveCoverageCeiling = 0.80
+			config.AdaptiveBucketCount = 4
+
+			builder := mustNewBuilder(t, config, 3)
+			docs := []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail"}`,
+			}
+			for rgID, doc := range docs {
+				if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+					t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+				}
+			}
+
+			entry := findPathEntry(builder.Finalize(), "$.field")
+			if entry == nil {
+				t.Fatal("expected $.field path entry")
+			}
+			if entry.Mode != tt.wantMode {
+				t.Fatalf("Mode = %v, want %v", entry.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
+func TestSelectAdaptivePromotedTermsHonorsCoverageFiltersAndSortOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	pd := builder.getOrCreatePath("$.field")
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "alpha", rgID, "$.field")
+	}
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "beta", rgID, "$.field")
+	}
+	builder.addStringTerm(pd, "gamma", 0, "$.field")
+	for rgID := 0; rgID < 5; rgID++ {
+		builder.addStringTerm(pd, "omega", rgID, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if len(got) != 2 {
+		t.Fatalf("len(promoted) = %d, want 2", len(got))
+	}
+	if _, ok := got["alpha"]; !ok {
+		t.Fatal("expected alpha to be promoted")
+	}
+	if _, ok := got["beta"]; !ok {
+		t.Fatal("expected beta to be promoted")
+	}
+	if _, ok := got["gamma"]; ok {
+		t.Fatal("gamma should be filtered out by min coverage")
+	}
+	if _, ok := got["omega"]; ok {
+		t.Fatal("omega should be filtered out by coverage ceiling")
+	}
+}
+
+func TestNewConfigAdaptiveOptionValidators(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ConfigOption
+	}{
+		{
+			name: "negative min coverage",
+			opts: []ConfigOption{WithAdaptiveMinRGCoverage(-1)},
+		},
+		{
+			name: "negative term cap",
+			opts: []ConfigOption{WithAdaptivePromotedTermCap(-1)},
+		},
+		{
+			name: "invalid coverage ceiling",
+			opts: []ConfigOption{WithAdaptiveCoverageCeiling(1)},
+		},
+		{
+			name: "zero bucket count",
+			opts: []ConfigOption{WithAdaptiveBucketCount(0)},
+		},
+		{
+			name: "non power of two bucket count",
+			opts: []ConfigOption{WithAdaptiveBucketCount(3)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := NewConfig(tt.opts...); err == nil {
+				t.Fatal("NewConfig() error = nil, want adaptive option validation failure")
+			}
+		})
+	}
+}
+
+func TestNewAdaptiveStringIndexValidatesInvariants(t *testing.T) {
+	rg0 := MustNewRGSet(2)
+	rg0.Set(0)
+	rg1 := MustNewRGSet(2)
+	rg1.Set(1)
+
+	bucket0 := MustNewRGSet(2)
+	bucket1 := MustNewRGSet(2)
+
+	if _, err := NewAdaptiveStringIndex([]string{"beta", "alpha"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want unsorted terms rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want mismatched bitmap length rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0}, []*RGSet{}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want empty bucket set rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha"}, []*RGSet{rg0}, []*RGSet{bucket0, bucket1, bucket0}); err == nil {
+		t.Fatal("NewAdaptiveStringIndex() error = nil, want non-power-of-two bucket count rejection")
+	}
+	if _, err := NewAdaptiveStringIndex([]string{"alpha", "beta"}, []*RGSet{rg0, rg1}, []*RGSet{bucket0, bucket1}); err != nil {
+		t.Fatalf("NewAdaptiveStringIndex() error = %v, want valid index", err)
+	}
+}
+
+func TestAdaptiveBucketIndexPanicsOnZeroBuckets(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("adaptiveBucketIndex() panic = nil, want panic for zero buckets")
+		}
+	}()
+
+	_ = adaptiveBucketIndex("alpha", 0)
 }
 
 func TestQueryNIN(t *testing.T) {

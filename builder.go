@@ -137,7 +137,7 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 
 func adaptiveBucketIndex(term string, bucketCount int) int {
 	if bucketCount <= 0 {
-		return 0
+		panic("adaptive bucket count must be greater than 0")
 	}
 	return int(xxhash.Sum64String(term) & uint64(bucketCount-1))
 }
@@ -204,33 +204,34 @@ func (b *GINBuilder) selectAdaptivePromotedTerms(pd *pathBuildData) map[string]s
 
 func (b *GINBuilder) buildAdaptiveStringIndex(pd *pathBuildData) *AdaptiveStringIndex {
 	promoted := b.selectAdaptivePromotedTerms(pd)
-	adaptive := &AdaptiveStringIndex{
-		Terms:           make([]string, 0, len(promoted)),
-		RGBitmaps:       make([]*RGSet, 0, len(promoted)),
-		BucketCount:     b.config.AdaptiveBucketCount,
-		BucketRGBitmaps: make([]*RGSet, b.config.AdaptiveBucketCount),
-	}
+	terms := make([]string, 0, len(promoted))
+	rgBitmaps := make([]*RGSet, 0, len(promoted))
+	bucketBitmaps := make([]*RGSet, b.config.AdaptiveBucketCount)
 
-	for bucketID := range adaptive.BucketRGBitmaps {
-		adaptive.BucketRGBitmaps[bucketID] = MustNewRGSet(b.numRGs)
+	for bucketID := range bucketBitmaps {
+		bucketBitmaps[bucketID] = MustNewRGSet(b.numRGs)
 	}
 
 	for term := range promoted {
-		adaptive.Terms = append(adaptive.Terms, term)
+		terms = append(terms, term)
 	}
-	sort.Strings(adaptive.Terms)
-	for _, term := range adaptive.Terms {
-		adaptive.RGBitmaps = append(adaptive.RGBitmaps, pd.stringTerms[term].Clone())
+	sort.Strings(terms)
+	for _, term := range terms {
+		rgBitmaps = append(rgBitmaps, pd.stringTerms[term].Clone())
 	}
 
 	for term, rgSet := range pd.stringTerms {
 		if _, ok := promoted[term]; ok {
 			continue
 		}
-		bucketID := adaptiveBucketIndex(term, adaptive.BucketCount)
-		adaptive.BucketRGBitmaps[bucketID] = adaptive.BucketRGBitmaps[bucketID].Union(rgSet)
+		bucketID := adaptiveBucketIndex(term, len(bucketBitmaps))
+		bucketBitmaps[bucketID] = bucketBitmaps[bucketID].Union(rgSet)
 	}
 
+	adaptive, err := NewAdaptiveStringIndex(terms, rgBitmaps, bucketBitmaps)
+	if err != nil {
+		panic(err)
+	}
 	return adaptive
 }
 
@@ -986,15 +987,18 @@ func (b *GINBuilder) Finalize() *GINIndex {
 		pd.pathID = uint16(i)
 
 		cardinality := uint32(pd.hll.Estimate())
+		mode := PathModeClassic
 		flags := uint8(0)
 		adaptivePromotedTerms := uint16(0)
 		adaptiveBucketCount := uint16(0)
 		highCardinality := cardinality > b.config.CardinalityThreshold
-		adaptiveEnabled := b.config.AdaptivePromotedTermCap > 0 && b.config.AdaptiveBucketCount > 0
-		if highCardinality && !adaptiveEnabled {
-			flags |= FlagBloomOnly
+		adaptiveEligible := b.config.AdaptiveEnabled() &&
+			(pd.observedTypes&(TypeString|TypeBool) != 0) &&
+			len(pd.stringTerms) > 0
+		if highCardinality && !adaptiveEligible {
+			mode = PathModeBloomOnly
 		} else if highCardinality {
-			flags |= FlagAdaptiveHybrid
+			mode = PathModeAdaptiveHybrid
 			adaptiveBucketCount = uint16(b.config.AdaptiveBucketCount)
 		}
 		if pd.trigrams != nil && pd.trigrams.TrigramCount() > 0 {
@@ -1006,17 +1010,18 @@ func (b *GINBuilder) Finalize() *GINIndex {
 			PathName:              path,
 			ObservedTypes:         pd.observedTypes,
 			Cardinality:           cardinality,
+			Mode:                  mode,
 			Flags:                 flags,
 			AdaptivePromotedTerms: adaptivePromotedTerms,
 			AdaptiveBucketCount:   adaptiveBucketCount,
 		}
 		if pd.observedTypes&TypeString != 0 || pd.observedTypes&TypeBool != 0 {
 			switch {
-			case flags&FlagAdaptiveHybrid != 0 && len(pd.stringTerms) > 0:
+			case mode == PathModeAdaptiveHybrid:
 				adaptive := b.buildAdaptiveStringIndex(pd)
 				idx.AdaptiveStringIndexes[pd.pathID] = adaptive
 				entry.AdaptivePromotedTerms = uint16(len(adaptive.Terms))
-			case flags&FlagBloomOnly == 0 && len(pd.stringTerms) > 0:
+			case mode == PathModeClassic && len(pd.stringTerms) > 0:
 				idx.StringIndexes[pd.pathID] = buildStringIndex(pd.stringTerms)
 			}
 

@@ -2,10 +2,13 @@ package gin
 
 import (
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
 )
+
+var adaptiveInvariantViolationLogger = log.Default()
 
 func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
 	if len(predicates) == 0 {
@@ -86,11 +89,11 @@ func (idx *GINIndex) lookupAdaptiveStringMatch(pathID uint16, term string) (bitm
 		return adaptive.RGBitmaps[termIdx].Clone(), true, true
 	}
 
-	if adaptive.BucketCount <= 0 || len(adaptive.BucketRGBitmaps) == 0 {
+	if len(adaptive.BucketRGBitmaps) == 0 {
 		return NoRGs(int(idx.Header.NumRowGroups)), false, true
 	}
 
-	bucketID := adaptiveBucketIndex(term, adaptive.BucketCount)
+	bucketID := adaptiveBucketIndex(term, len(adaptive.BucketRGBitmaps))
 	if bucketID < 0 || bucketID >= len(adaptive.BucketRGBitmaps) {
 		return NoRGs(int(idx.Header.NumRowGroups)), false, true
 	}
@@ -117,6 +120,16 @@ func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, te
 	return idx.lookupAdaptiveStringMatch(uint16(pathID), term)
 }
 
+func (idx *GINIndex) adaptiveInvariantAllRGs(entry *PathEntry, op string) *RGSet {
+	adaptiveInvariantViolationLogger.Printf(
+		"gin: adaptive path invariant violation for %q (id=%d) during %s; returning all row groups",
+		entry.PathName,
+		entry.PathID,
+		op,
+	)
+	return AllRGs(int(idx.Header.NumRowGroups))
+}
+
 func stringPredicateTerm(value any) (string, bool) {
 	switch v := value.(type) {
 	case string:
@@ -133,10 +146,11 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 
 	switch v := value.(type) {
 	case string:
-		if entry.Flags&FlagAdaptiveHybrid != 0 {
+		if entry.Mode == PathModeAdaptiveHybrid {
 			if match, _, ok := idx.evaluateAdaptiveStringTerm(pathID, entry, v); ok {
 				return match
 			}
+			return idx.adaptiveInvariantAllRGs(entry, "EQ")
 		}
 
 		bloomKey := entry.PathName + "=" + v
@@ -151,7 +165,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 			}
 		}
 
-		if entry.Flags&FlagBloomOnly != 0 {
+		if entry.Mode == PathModeBloomOnly {
 			return AllRGs(numRGs)
 		}
 		if si, ok := idx.StringIndexes[uint16(pathID)]; ok {
@@ -200,15 +214,17 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 }
 
 func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet {
-	if entry.Flags&FlagAdaptiveHybrid != 0 {
+	if entry.Mode == PathModeAdaptiveHybrid {
 		if term, ok := stringPredicateTerm(value); ok {
 			presentRGs := idx.evaluateIsNotNull(pathID)
-			if eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term); handled {
-				if !exact {
-					return presentRGs
-				}
-				return presentRGs.Intersect(eqResult.Invert())
+			eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
+			if !handled {
+				return idx.adaptiveInvariantAllRGs(entry, "NE")
 			}
+			if !exact {
+				return presentRGs
+			}
+			return presentRGs.Intersect(eqResult.Invert())
 		}
 	}
 
@@ -392,25 +408,41 @@ func (idx *GINIndex) evaluateIN(pathID int, entry *PathEntry, value any) *RGSet 
 		return AllRGs(numRGs)
 	}
 
+	if entry.Mode == PathModeAdaptiveHybrid {
+		return idx.evaluateAdaptiveIN(pathID, entry, values)
+	}
+	return idx.evaluateINNonAdaptive(pathID, entry, values)
+}
+
+func (idx *GINIndex) evaluateINNonAdaptive(pathID int, entry *PathEntry, values []any) *RGSet {
+	numRGs := int(idx.Header.NumRowGroups)
 	result := NoRGs(numRGs)
 	for _, v := range values {
-		if entry.Flags&FlagAdaptiveHybrid != 0 {
-			if term, ok := stringPredicateTerm(v); ok {
-				if rgSet, _, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term); handled {
-					result = result.Union(rgSet)
-					continue
-				}
-			}
-		}
-
 		rgSet := idx.evaluateEQ(pathID, entry, v)
 		result = result.Union(rgSet)
 	}
 	return result
 }
 
+func (idx *GINIndex) evaluateAdaptiveIN(pathID int, entry *PathEntry, values []any) *RGSet {
+	numRGs := int(idx.Header.NumRowGroups)
+	result := NoRGs(numRGs)
+	for _, v := range values {
+		term, ok := stringPredicateTerm(v)
+		if !ok {
+			return idx.evaluateINNonAdaptive(pathID, entry, values)
+		}
+		rgSet, _, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
+		if !handled {
+			return idx.adaptiveInvariantAllRGs(entry, "IN")
+		}
+		result = result.Union(rgSet)
+	}
+	return result
+}
+
 func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet {
-	if entry.Flags&FlagAdaptiveHybrid != 0 {
+	if entry.Mode == PathModeAdaptiveHybrid {
 		values, ok := value.([]any)
 		if !ok {
 			return AllRGs(int(idx.Header.NumRowGroups))
@@ -426,7 +458,7 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 			}
 			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
-				return presentRGs.Intersect(idx.evaluateIN(pathID, entry, value).Invert())
+				return idx.adaptiveInvariantAllRGs(entry, "NIN")
 			}
 			if !exact {
 				allExact = false

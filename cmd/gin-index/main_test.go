@@ -272,9 +272,9 @@ func TestPathInfoReportsAdaptiveMode(t *testing.T) {
 	idx.Header.NumPaths = 3
 	idx.Header.CardinalityThresh = config.CardinalityThreshold
 	idx.PathDirectory = []gin.PathEntry{
-		{PathID: 0, PathName: "$.exact", ObservedTypes: gin.TypeString, Cardinality: 3},
-		{PathID: 1, PathName: "$.bloom", ObservedTypes: gin.TypeString, Cardinality: 120, Flags: gin.FlagBloomOnly},
-		{PathID: 2, PathName: "$.adaptive", ObservedTypes: gin.TypeString, Cardinality: 240, Flags: gin.FlagAdaptiveHybrid, AdaptivePromotedTerms: 5, AdaptiveBucketCount: 128},
+		{PathID: 0, PathName: "$.exact", ObservedTypes: gin.TypeString, Cardinality: 3, Mode: gin.PathModeClassic},
+		{PathID: 1, PathName: "$.bloom", ObservedTypes: gin.TypeString, Cardinality: 120, Mode: gin.PathModeBloomOnly},
+		{PathID: 2, PathName: "$.adaptive", ObservedTypes: gin.TypeString, Cardinality: 240, Mode: gin.PathModeAdaptiveHybrid, AdaptivePromotedTerms: 5, AdaptiveBucketCount: 128},
 	}
 
 	var buf bytes.Buffer
@@ -311,6 +311,46 @@ func TestCLIInfoShowsAdaptiveSummary(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestPathInfoOmitsAdaptiveSummaryOutsideAdaptiveMode(t *testing.T) {
+	t.Parallel()
+
+	idx := gin.NewGINIndex()
+	idx.Header.NumRowGroups = 4
+	idx.Header.NumDocs = 4
+	idx.Header.NumPaths = 2
+	idx.PathDirectory = []gin.PathEntry{
+		{PathID: 0, PathName: "$.exact", ObservedTypes: gin.TypeString, Cardinality: 2, Mode: gin.PathModeClassic},
+		{PathID: 1, PathName: "$.bloom", ObservedTypes: gin.TypeString, Cardinality: 20, Mode: gin.PathModeBloomOnly},
+	}
+
+	var buf bytes.Buffer
+	writeIndexInfo(&buf, idx)
+	out := buf.String()
+	if strings.Contains(out, "promoted=") || strings.Contains(out, "buckets=") {
+		t.Fatalf("writeIndexInfo output unexpectedly included adaptive summary:\n%s", out)
+	}
+}
+
+func TestRunInfoReturnsNonZeroOnDecodeFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "broken.gin")
+	if err := os.WriteFile(indexPath, []byte("not-a-valid-index"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runInfo([]string{indexPath}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runInfo() code = 0, want non-zero for decode failure")
+	}
+	if !strings.Contains(stderr.String(), "Failed to decode index") {
+		t.Fatalf("stderr = %q, want decode failure", stderr.String())
 	}
 }
 

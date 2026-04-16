@@ -300,13 +300,19 @@ func querySingleFile(indexPath string, pred gin.Predicate, pqCfg gin.ParquetConf
 }
 
 func cmdInfo(args []string) {
+	if code := runInfo(args, os.Stdout, os.Stderr); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runInfo(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("info", flag.ExitOnError)
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
 	_ = fs.Parse(args)
 
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "Error: index path required")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "Error: index path required")
+		return 1
 	}
 
 	indexPath := fs.Arg(0)
@@ -314,38 +320,44 @@ func cmdInfo(args []string) {
 
 	files, err := resolveIndexFiles(indexPath)
 	if err != nil {
-		fatal("Failed to resolve files: %v", err)
+		fmt.Fprintf(stderr, "Error: Failed to resolve files: %v\n", err)
+		return 1
 	}
 
 	if len(files) == 0 {
-		fatal("No .gin files found in %s", indexPath)
+		fmt.Fprintf(stderr, "Error: No .gin files found in %s\n", indexPath)
+		return 1
 	}
 
+	exitCode := 0
 	for _, file := range files {
 		if len(files) > 1 {
-			fmt.Printf("=== %s ===\n", file)
+			fmt.Fprintf(stdout, "=== %s ===\n", file)
 		}
-		infoSingleFile(file, pqCfg)
+		if err := infoSingleFile(stdout, stderr, file, pqCfg); err != nil {
+			exitCode = 1
+		}
 		if len(files) > 1 {
-			fmt.Println()
+			fmt.Fprintln(stdout)
 		}
 	}
+	return exitCode
 }
 
-func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
+func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.ParquetConfig) error {
 	var idx *gin.GINIndex
 	var err error
 
 	if gin.IsS3Path(indexPath) {
 		bucket, s3Key, err := gin.ParseS3Path(indexPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Invalid S3 path: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Invalid S3 path: %v\n", err)
+			return err
 		}
 		s3Client, err := gin.NewS3ClientFromEnv()
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to create S3 client: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to create S3 client: %v\n", err)
+			return err
 		}
 		if strings.HasSuffix(s3Key, ".gin") {
 			idx, err = s3Client.ReadSidecar(bucket, strings.TrimSuffix(s3Key, ".gin"))
@@ -353,31 +365,32 @@ func infoSingleFile(indexPath string, pqCfg gin.ParquetConfig) {
 			idx, err = s3Client.LoadIndex(bucket, s3Key, pqCfg)
 		}
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-			return
+			fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+			return err
 		}
 	} else {
 		if strings.HasSuffix(indexPath, ".gin") {
 			data, err := readLocalIndexFile(indexPath)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to read index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to read index: %v\n", err)
+				return err
 			}
 			idx, err = gin.Decode(data)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to decode index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to decode index: %v\n", err)
+				return err
 			}
 		} else {
 			idx, err = gin.LoadIndex(indexPath, pqCfg)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "Error: Failed to load index: %v\n", err)
-				return
+				fmt.Fprintf(stderr, "Error: Failed to load index: %v\n", err)
+				return err
 			}
 		}
 	}
 
-	writeIndexInfo(os.Stdout, idx)
+	writeIndexInfo(stdout, idx)
+	return nil
 }
 
 func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
@@ -394,17 +407,9 @@ func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
 }
 
 func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
-	mode := "exact"
-	switch {
-	case pe.Flags&gin.FlagAdaptiveHybrid != 0:
-		mode = "adaptive-hybrid"
-	case pe.Flags&gin.FlagBloomOnly != 0:
-		mode = "bloom-only"
-	}
-
 	info := fmt.Sprintf("  %s (id=%d, types=%s, cardinality=%d, mode=%s",
-		pe.PathName, pe.PathID, describeTypes(pe.ObservedTypes), pe.Cardinality, mode)
-	if mode == "adaptive-hybrid" {
+		pe.PathName, pe.PathID, describeTypes(pe.ObservedTypes), pe.Cardinality, pe.Mode.String())
+	if pe.Mode == gin.PathModeAdaptiveHybrid {
 		info += fmt.Sprintf(", promoted=%d, buckets=%d, threshold=%d",
 			pe.AdaptivePromotedTerms, pe.AdaptiveBucketCount, idx.Header.CardinalityThresh)
 		if idx.Config != nil {

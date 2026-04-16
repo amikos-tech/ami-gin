@@ -25,9 +25,15 @@ const (
 )
 
 const (
-	FlagBloomOnly uint8 = 1 << iota
-	FlagAdaptiveHybrid
-	FlagTrigramIndex // path has trigram index for CONTAINS queries
+	FlagTrigramIndex uint8 = 1 << iota // path has trigram index for CONTAINS queries
+)
+
+type PathMode uint8
+
+const (
+	PathModeClassic PathMode = iota
+	PathModeBloomOnly
+	PathModeAdaptiveHybrid
 )
 
 type GINIndex struct {
@@ -63,6 +69,7 @@ type PathEntry struct {
 	PathName              string
 	ObservedTypes         uint8
 	Cardinality           uint32
+	Mode                  PathMode
 	Flags                 uint8
 	AdaptivePromotedTerms uint16
 	AdaptiveBucketCount   uint16
@@ -76,8 +83,52 @@ type StringIndex struct {
 type AdaptiveStringIndex struct {
 	Terms           []string
 	RGBitmaps       []*RGSet
-	BucketCount     int
 	BucketRGBitmaps []*RGSet
+}
+
+func (m PathMode) String() string {
+	switch m {
+	case PathModeClassic:
+		return "exact"
+	case PathModeBloomOnly:
+		return "bloom-only"
+	case PathModeAdaptiveHybrid:
+		return "adaptive-hybrid"
+	default:
+		return "unknown"
+	}
+}
+
+func NewAdaptiveStringIndex(terms []string, rgBitmaps []*RGSet, bucketBitmaps []*RGSet) (*AdaptiveStringIndex, error) {
+	if len(terms) != len(rgBitmaps) {
+		return nil, errors.Errorf("adaptive rgbitmap count %d does not match term count %d", len(rgBitmaps), len(terms))
+	}
+	if !sort.StringsAreSorted(terms) {
+		return nil, errors.New("adaptive terms must be sorted")
+	}
+	if len(bucketBitmaps) == 0 {
+		return nil, errors.New("adaptive bucket count must be greater than 0")
+	}
+	if !isPowerOfTwo(len(bucketBitmaps)) {
+		return nil, errors.Errorf("adaptive bucket count %d must be a power of two", len(bucketBitmaps))
+	}
+
+	for i, rgSet := range rgBitmaps {
+		if rgSet == nil {
+			return nil, errors.Errorf("adaptive promoted bitmap %d is nil", i)
+		}
+	}
+	for i, rgSet := range bucketBitmaps {
+		if rgSet == nil {
+			return nil, errors.Errorf("adaptive bucket bitmap %d is nil", i)
+		}
+	}
+
+	return &AdaptiveStringIndex{
+		Terms:           terms,
+		RGBitmaps:       rgBitmaps,
+		BucketRGBitmaps: bucketBitmaps,
+	}, nil
 }
 
 type NumericValueType uint8
@@ -352,6 +403,10 @@ func DefaultConfig() GINConfig {
 	}
 }
 
+func (c GINConfig) AdaptiveEnabled() bool {
+	return c.AdaptivePromotedTermCap > 0 && c.AdaptiveBucketCount > 0
+}
+
 func NewGINIndex() *GINIndex {
 	return &GINIndex{
 		Header: Header{
@@ -381,8 +436,7 @@ func (c GINConfig) validate() error {
 		return errors.New("adaptive bucket count must be non-negative")
 	}
 
-	adaptiveEnabled := c.AdaptivePromotedTermCap > 0 && c.AdaptiveBucketCount > 0
-	if adaptiveEnabled {
+	if c.AdaptiveEnabled() {
 		if c.AdaptiveCoverageCeiling <= 0 || c.AdaptiveCoverageCeiling >= 1 {
 			return errors.New("adaptive coverage ceiling must be greater than 0 and less than 1")
 		}
@@ -471,6 +525,36 @@ func (idx *GINIndex) validatePathReferences() error {
 			return err
 		}
 	}
+
+	for i := range idx.PathDirectory {
+		entry := idx.PathDirectory[i]
+		_, hasStringIdx := idx.StringIndexes[entry.PathID]
+		_, hasAdaptiveIdx := idx.AdaptiveStringIndexes[entry.PathID]
+
+		switch entry.Mode {
+		case PathModeClassic:
+			if hasAdaptiveIdx {
+				return errors.Wrapf(ErrInvalidFormat, "exact path %d must not have adaptive section", entry.PathID)
+			}
+		case PathModeBloomOnly:
+			if hasStringIdx {
+				return errors.Wrapf(ErrInvalidFormat, "bloom-only path %d must not have string index", entry.PathID)
+			}
+			if hasAdaptiveIdx {
+				return errors.Wrapf(ErrInvalidFormat, "bloom-only path %d must not have adaptive section", entry.PathID)
+			}
+		case PathModeAdaptiveHybrid:
+			if !hasAdaptiveIdx {
+				return errors.Wrapf(ErrInvalidFormat, "adaptive path %d missing adaptive section", entry.PathID)
+			}
+			if hasStringIdx {
+				return errors.Wrapf(ErrInvalidFormat, "adaptive path %d must not have exact string index", entry.PathID)
+			}
+		default:
+			return errors.Wrapf(ErrInvalidFormat, "path %d has unknown mode %d", entry.PathID, entry.Mode)
+		}
+	}
+
 	return nil
 }
 

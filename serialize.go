@@ -7,6 +7,7 @@ import (
 	stderrors "errors"
 	"io"
 	"math"
+	"sort"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/klauspost/compress/zstd"
@@ -397,6 +398,9 @@ func writePathDirectory(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, entry.Cardinality); err != nil {
 			return err
 		}
+		if err := binary.Write(w, binary.LittleEndian, entry.Mode); err != nil {
+			return err
+		}
 		if err := binary.Write(w, binary.LittleEndian, entry.Flags); err != nil {
 			return err
 		}
@@ -426,6 +430,9 @@ func readPathDirectory(r io.Reader, idx *GINIndex) error {
 			return err
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Cardinality); err != nil {
+			return err
+		}
+		if err := binary.Read(r, binary.LittleEndian, &entry.Mode); err != nil {
 			return err
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Flags); err != nil {
@@ -562,23 +569,29 @@ func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
 		if adaptive == nil {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive string index for path %d is nil", pathID)
 		}
+		bucketCount := len(adaptive.BucketRGBitmaps)
 		if len(adaptive.Terms) > maxAdaptiveTermsPerPath {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive term count %d for path %d exceeds max %d", len(adaptive.Terms), pathID, maxAdaptiveTermsPerPath)
 		}
 		if len(adaptive.RGBitmaps) != len(adaptive.Terms) {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive rgbitmap count %d does not match term count %d for path %d", len(adaptive.RGBitmaps), len(adaptive.Terms), pathID)
 		}
-		if adaptive.BucketCount <= 0 {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be greater than 0", adaptive.BucketCount, pathID)
+		if bucketCount <= 0 {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be greater than 0", bucketCount, pathID)
 		}
-		if adaptive.BucketCount > maxAdaptiveBucketsPerPath {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d exceeds max %d", adaptive.BucketCount, pathID, maxAdaptiveBucketsPerPath)
+		if bucketCount > maxAdaptiveBucketsPerPath {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d exceeds max %d", bucketCount, pathID, maxAdaptiveBucketsPerPath)
 		}
-		if !isPowerOfTwo(adaptive.BucketCount) {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", adaptive.BucketCount, pathID)
+		if !isPowerOfTwo(bucketCount) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", bucketCount, pathID)
 		}
-		if len(adaptive.BucketRGBitmaps) != adaptive.BucketCount {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket rgbitmap count %d does not match bucket count %d for path %d", len(adaptive.BucketRGBitmaps), adaptive.BucketCount, pathID)
+		if !sort.StringsAreSorted(adaptive.Terms) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive terms for path %d must be sorted", pathID)
+		}
+		for i, rgSet := range adaptive.RGBitmaps {
+			if rgSet == nil {
+				return errors.Wrapf(ErrInvalidFormat, "adaptive term bitmap %d for path %d is nil", i, pathID)
+			}
 		}
 
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
@@ -587,7 +600,7 @@ func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, uint32(len(adaptive.Terms))); err != nil {
 			return err
 		}
-		if err := binary.Write(w, binary.LittleEndian, uint32(adaptive.BucketCount)); err != nil {
+		if err := binary.Write(w, binary.LittleEndian, uint32(bucketCount)); err != nil {
 			return err
 		}
 		for i, term := range adaptive.Terms {
@@ -631,8 +644,11 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 		if int(pathID) >= len(idx.PathDirectory) {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive string index path id %d out of range", pathID)
 		}
-		if idx.PathDirectory[pathID].Flags&FlagAdaptiveHybrid == 0 {
-			return errors.Wrapf(ErrInvalidFormat, "adaptive section path %d is missing adaptive flag", pathID)
+		if idx.PathDirectory[pathID].Mode != PathModeAdaptiveHybrid {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive section path %d is missing adaptive mode", pathID)
+		}
+		if _, exists := idx.AdaptiveStringIndexes[pathID]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate adaptive section for path %d", pathID)
 		}
 
 		var numTerms uint32
@@ -657,12 +673,9 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", bucketCount, pathID)
 		}
 
-		adaptive := &AdaptiveStringIndex{
-			Terms:           make([]string, numTerms),
-			RGBitmaps:       make([]*RGSet, numTerms),
-			BucketCount:     int(bucketCount),
-			BucketRGBitmaps: make([]*RGSet, bucketCount),
-		}
+		terms := make([]string, numTerms)
+		rgBitmaps := make([]*RGSet, numTerms)
+		bucketBitmaps := make([]*RGSet, bucketCount)
 		for j := uint32(0); j < numTerms; j++ {
 			var termLen uint16
 			if err := binary.Read(r, binary.LittleEndian, &termLen); err != nil {
@@ -672,20 +685,25 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 			if _, err := io.ReadFull(r, termBytes); err != nil {
 				return err
 			}
-			adaptive.Terms[j] = string(termBytes)
+			terms[j] = string(termBytes)
 
 			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err
 			}
-			adaptive.RGBitmaps[j] = rgSet
+			rgBitmaps[j] = rgSet
 		}
 		for bucketID := uint32(0); bucketID < bucketCount; bucketID++ {
 			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err
 			}
-			adaptive.BucketRGBitmaps[bucketID] = rgSet
+			bucketBitmaps[bucketID] = rgSet
+		}
+
+		adaptive, err := NewAdaptiveStringIndex(terms, rgBitmaps, bucketBitmaps)
+		if err != nil {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d invalid: %v", pathID, err)
 		}
 
 		idx.AdaptiveStringIndexes[pathID] = adaptive
@@ -695,7 +713,7 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 
 	for i := range idx.PathDirectory {
 		entry := &idx.PathDirectory[i]
-		if entry.Flags&FlagAdaptiveHybrid == 0 {
+		if entry.Mode != PathModeAdaptiveHybrid {
 			continue
 		}
 		if _, ok := idx.AdaptiveStringIndexes[entry.PathID]; !ok {
