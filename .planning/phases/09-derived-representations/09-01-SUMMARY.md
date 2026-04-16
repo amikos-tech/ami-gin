@@ -48,7 +48,7 @@ completed: 2026-04-16
 
 ## Task Commits
 
-1. **Task 1: Validate additive representation registration against Wave 1 builder semantics** - validated against the starting branch state, which already contained the additive registration/config surface and compile-safe alias-bearing helper signatures.
+1. **Task 1: Add additive representation registration types and alias-bearing helper APIs** - `ddaeab6` (feat)
 2. **Task 2: Fan out raw-plus-companion staging and enforce strict companion failures** - `d670028` (feat)
 
 ## Files Created/Modified
@@ -97,6 +97,7 @@ None - no external service configuration required.
 PASSED
 
 - `FOUND: .planning/phases/09-derived-representations/09-01-SUMMARY.md`
+- `FOUND: ddaeab6`
 - `FOUND: d670028`
 - `FOUND: go test ./... -count=1`
 
