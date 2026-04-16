@@ -320,6 +320,30 @@ func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
 	}
 }
 
+func TestAddDocumentRefusesAfterMergeFailurePoisonsBuilder(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument(seed) failed: %v", err)
+	}
+
+	// Simulate a mid-loop mergeStagedPaths failure by poisoning the builder
+	// directly. The natural trigger path (mixed numeric promotion) is caught
+	// by validateStagedPaths' preview before mergeStagedPaths runs, so poison
+	// is defensive; we still need to prove the refusal contract.
+	builder.poisonErr = stderrors.New("simulated merge failure")
+
+	err := builder.AddDocument(1, []byte(`{"name":"bob"}`))
+	if err == nil {
+		t.Fatal("AddDocument after poison = nil, want wrapped poison error")
+	}
+	if !strings.Contains(err.Error(), "builder poisoned") {
+		t.Fatalf("AddDocument error = %q, want 'builder poisoned' context", err.Error())
+	}
+	if !strings.Contains(err.Error(), "simulated merge failure") {
+		t.Fatalf("AddDocument error = %q, want original cause preserved", err.Error())
+	}
+}
+
 func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
 	config := DefaultConfig()
 	config.CardinalityThreshold = 1

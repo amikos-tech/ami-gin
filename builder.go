@@ -28,6 +28,11 @@ type GINBuilder struct {
 	docIDToPos map[DocID]int
 	posToDocID []DocID
 	nextPos    int
+	// poisonErr is non-nil once a merge step has failed partway through
+	// mutating shared state. Subsequent AddDocument calls refuse to compound
+	// corruption; Finalize remains callable so callers can discard the
+	// builder gracefully.
+	poisonErr error
 }
 
 type pathBuildData struct {
@@ -280,6 +285,9 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 }
 
 func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
+	if b.poisonErr != nil {
+		return errors.Wrap(b.poisonErr, "builder poisoned by prior merge failure; discard and rebuild")
+	}
 	pos, exists := b.docIDToPos[docID]
 	if !exists {
 		pos = b.nextPos
@@ -733,6 +741,12 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		return err
 	}
 	if err := b.mergeStagedPaths(state); err != nil {
+		// mergeStagedPaths mutates pathData, bloom, and presentRGs path-by-path
+		// in a sorted loop. A mid-loop failure leaves earlier paths merged for
+		// this document while later ones are untouched, so the builder's state
+		// no longer reflects any single consistent document set. Flag it so
+		// subsequent AddDocument calls can't compound the corruption.
+		b.poisonErr = err
 		return err
 	}
 
