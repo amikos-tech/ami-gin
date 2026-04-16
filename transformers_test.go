@@ -2,6 +2,7 @@ package gin
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,26 @@ func requirePathID(t *testing.T, idx *GINIndex, path string) uint16 {
 		t.Fatalf("pathLookup[%q] missing", path)
 	}
 	return pathID
+}
+
+func mustRoundTripIndex(t *testing.T, idx *GINIndex) *GINIndex {
+	t.Helper()
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	return decoded
+}
+
+func requirePredicateResult(t *testing.T, idx *GINIndex, predicates []Predicate, want []int, label string) {
+	t.Helper()
+	if got := idx.Evaluate(predicates).ToSlice(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
 }
 
 func TestISODateToEpochMs(t *testing.T) {
@@ -1302,5 +1323,185 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 	after := decoded.evaluateIntOnlyEQ(derivedIndex, int(decoded.Header.NumRowGroups), 9007199254740991)
 	if after.Count() != 1 || !after.IsSet(1) || after.IsSet(0) {
 		t.Fatalf("decoded derived EQ($.build_id#build_number, 9007199254740991) = %v, want [1]", after.ToSlice())
+	}
+}
+
+func TestDateTransformerAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithISODateTransformer("$.created_at", "epoch_ms"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"created_at":"2024-01-15T10:30:00Z"}`},
+		{1, `{"created_at":"2024-07-10T09:00:00Z"}`},
+		{2, `{"created_at":"2024-09-01T08:00:00Z"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.created_at", "2024-07-10T09:00:00Z")`,
+			predicates: []Predicate{EQ("$.created_at", "2024-07-10T09:00:00Z")},
+			want:       []int{1},
+		},
+		{
+			label:      `alias GTE("$.created_at", As("epoch_ms", july2024))`,
+			predicates: []Predicate{GTE("$.created_at", As("epoch_ms", july2024))},
+			want:       []int{1, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
+	}
+}
+
+func TestNormalizedTextAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"email":"Alice@Example.COM"}`},
+		{1, `{"email":"bob@company.io"}`},
+		{2, `{"email":"CHARLIE@EXAMPLE.COM"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.email", "Alice@Example.COM")`,
+			predicates: []Predicate{EQ("$.email", "Alice@Example.COM")},
+			want:       []int{0},
+		},
+		{
+			label:      `raw EQ("$.email", "alice@example.com")`,
+			predicates: []Predicate{EQ("$.email", "alice@example.com")},
+			want:       []int{},
+		},
+		{
+			label:      `alias EQ("$.email", As("lower", "alice@example.com"))`,
+			predicates: []Predicate{EQ("$.email", As("lower", "alice@example.com"))},
+			want:       []int{0},
+		},
+		{
+			label:      `alias EQ("$.email", As("domain", "example.com"))`,
+			predicates: []Predicate{EQ("$.email", As("domain", "example.com"))},
+			want:       []int{0, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
+	}
+}
+
+func TestRegexExtractAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithRegexExtractTransformer("$.message", "error_code", `ERROR\[(\w+)\]:`, 1),
+		WithRegexExtractIntTransformer("$.order_id", "order_number", `order-(\d+)`, 1),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"message":"ERROR[E1001]: Connection timeout","order_id":"order-100"}`},
+		{1, `{"message":"ERROR[W2002]: Retry scheduled","order_id":"order-250"}`},
+		{2, `{"message":"ERROR[E1001]: Disk full","order_id":"order-400"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.message", "ERROR[E1001]: Connection timeout")`,
+			predicates: []Predicate{EQ("$.message", "ERROR[E1001]: Connection timeout")},
+			want:       []int{0},
+		},
+		{
+			label:      `alias EQ("$.message", As("error_code", "E1001"))`,
+			predicates: []Predicate{EQ("$.message", As("error_code", "E1001"))},
+			want:       []int{0, 2},
+		},
+		{
+			label:      `alias GTE("$.order_id", As("order_number", 200.0))`,
+			predicates: []Predicate{GTE("$.order_id", As("order_number", float64(200)))},
+			want:       []int{1, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
 	}
 }
