@@ -14,7 +14,9 @@ const (
 	// with the target binary. Version history:
 	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
 	//       (phase 08 adaptive high-cardinality indexing)
-	//   v5: adaptive string index section + SerializedConfig adaptive fields
+	//   v5: never released; payloads are always rejected. Was an in-tree
+	//       iteration of the adaptive string index section before the wire
+	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
 	Version = uint16(6)
 )
@@ -412,7 +414,10 @@ func WithAdaptiveCoverageCeiling(ceiling float64) ConfigOption {
 }
 
 // WithAdaptiveBucketCount sets the fan-out of the long-tail bucket layer.
-// Must be a positive power of two. Zero disables adaptive mode.
+// Must be a positive power of two. To disable adaptive mode, omit this
+// option (and WithAdaptivePromotedTermCap) or build a GINConfig literal
+// with AdaptiveBucketCount/AdaptivePromotedTermCap set to 0; this option
+// rejects 0 to keep the builder path explicit.
 func WithAdaptiveBucketCount(bucketCount int) ConfigOption {
 	return func(c *GINConfig) error {
 		if bucketCount <= 0 {
@@ -479,6 +484,11 @@ func NewGINIndex() *GINIndex {
 }
 
 func (c GINConfig) validate() error {
+	// Zero is the disable sentinel for AdaptivePromotedTermCap and
+	// AdaptiveBucketCount; AdaptiveEnabled() reports false when either is 0.
+	// The functional options reject 0 to keep the builder path explicit, but
+	// validate() must accept 0 so struct-literal callers can disable adaptive
+	// mode without invoking the options.
 	if c.AdaptiveMinRGCoverage < 0 {
 		return errors.New("adaptive min RG coverage must be non-negative")
 	}
