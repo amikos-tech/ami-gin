@@ -11,14 +11,16 @@ import (
 
 var (
 	adaptiveInvariantLoggerMu sync.RWMutex
-	adaptiveInvariantLogger   = log.Default()
+	// adaptiveInvariantLogger is nil by default to follow the Go library
+	// convention of not writing to stderr unless the consumer opts in. Set
+	// it via SetAdaptiveInvariantLogger to surface invariant violations.
+	adaptiveInvariantLogger *log.Logger
 )
 
-// SetAdaptiveInvariantLogger overrides the logger used to surface adaptive
-// index invariant violations (e.g. a path flagged PathModeAdaptiveHybrid with
-// no matching AdaptiveStringIndexes section). Pass nil to silence violations.
-// Safe for concurrent use; library consumers can route violations into their
-// own structured logging pipeline.
+// SetAdaptiveInvariantLogger installs a logger that surfaces adaptive index
+// invariant violations (e.g. a path flagged PathModeAdaptiveHybrid with no
+// matching AdaptiveStringIndexes section). The default is nil (silent); pass
+// log.Default() or your own *log.Logger to opt in. Safe for concurrent use.
 func SetAdaptiveInvariantLogger(l *log.Logger) {
 	adaptiveInvariantLoggerMu.Lock()
 	adaptiveInvariantLogger = l
@@ -114,13 +116,10 @@ func (idx *GINIndex) lookupAdaptiveStringMatch(pathID uint16, term string) (bitm
 		return NoRGs(int(idx.Header.NumRowGroups)), false, true
 	}
 
+	// NewAdaptiveStringIndex enforces a power-of-two bucket count and non-nil
+	// bucket bitmaps, and adaptiveBucketIndex masks with bucketCount-1, so the
+	// index is always within range and the bitmap is never nil here.
 	bucketID := adaptiveBucketIndex(term, len(adaptive.BucketRGBitmaps))
-	if bucketID < 0 || bucketID >= len(adaptive.BucketRGBitmaps) {
-		return NoRGs(int(idx.Header.NumRowGroups)), false, true
-	}
-	if adaptive.BucketRGBitmaps[bucketID] == nil {
-		return NoRGs(int(idx.Header.NumRowGroups)), false, true
-	}
 	return adaptive.BucketRGBitmaps[bucketID].Clone(), false, true
 }
 
@@ -477,7 +476,9 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 		for _, v := range values {
 			term, ok := stringPredicateTerm(v)
 			if !ok {
-				return presentRGs.Intersect(idx.evaluateIN(pathID, entry, value).Invert())
+				// Non-string element forces the non-adaptive path; pass the
+				// already-extracted slice to skip a redundant adaptive walk.
+				return presentRGs.Intersect(idx.evaluateINNonAdaptive(pathID, entry, values).Invert())
 			}
 			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
