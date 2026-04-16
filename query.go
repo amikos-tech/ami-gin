@@ -50,39 +50,72 @@ func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
 }
 
 func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
-	pathID, entry := idx.findPath(p.Path)
+	pathID, entry, rawValue := idx.resolvePredicatePath(p.Path, p.Value)
 	if pathID < 0 {
 		return AllRGs(int(idx.Header.NumRowGroups))
 	}
 
 	switch p.Operator {
 	case OpEQ:
-		return idx.evaluateEQ(pathID, entry, p.Value)
+		return idx.evaluateEQ(pathID, entry, rawValue)
 	case OpNE:
-		return idx.evaluateNE(pathID, entry, p.Value)
+		return idx.evaluateNE(pathID, entry, rawValue)
 	case OpGT:
-		return idx.evaluateGT(pathID, p.Value)
+		return idx.evaluateGT(pathID, rawValue)
 	case OpGTE:
-		return idx.evaluateGTE(pathID, p.Value)
+		return idx.evaluateGTE(pathID, rawValue)
 	case OpLT:
-		return idx.evaluateLT(pathID, p.Value)
+		return idx.evaluateLT(pathID, rawValue)
 	case OpLTE:
-		return idx.evaluateLTE(pathID, p.Value)
+		return idx.evaluateLTE(pathID, rawValue)
 	case OpIN:
-		return idx.evaluateIN(pathID, entry, p.Value)
+		return idx.evaluateIN(pathID, entry, rawValue)
 	case OpNIN:
-		return idx.evaluateNIN(pathID, entry, p.Value)
+		return idx.evaluateNIN(pathID, entry, rawValue)
 	case OpIsNull:
 		return idx.evaluateIsNull(pathID)
 	case OpIsNotNull:
 		return idx.evaluateIsNotNull(pathID)
 	case OpContains:
-		return idx.evaluateContains(pathID, entry, p.Value)
+		return idx.evaluateContains(pathID, entry, rawValue)
 	case OpRegex:
-		return idx.evaluateRegex(pathID, entry, p.Value)
+		return idx.evaluateRegex(pathID, entry, rawValue)
 	default:
 		return AllRGs(int(idx.Header.NumRowGroups))
 	}
+}
+
+func (idx *GINIndex) resolvePredicatePath(path string, value any) (int, *PathEntry, any) {
+	canonicalPath, err := canonicalizeSupportedPath(path)
+	if err != nil {
+		return -1, nil, value
+	}
+
+	rawValue := value
+	if representation, ok := value.(RepresentationValue); ok {
+		rawValue = representation.Value
+		aliases := idx.representationLookup[canonicalPath]
+		if len(aliases) == 0 {
+			return -1, nil, rawValue
+		}
+		pathID, ok := aliases[representation.Alias]
+		if !ok {
+			return -1, nil, rawValue
+		}
+		if int(pathID) >= len(idx.PathDirectory) {
+			return -1, nil, rawValue
+		}
+		return int(pathID), &idx.PathDirectory[pathID], rawValue
+	}
+
+	pathID, ok := idx.pathLookup[canonicalPath]
+	if !ok {
+		return -1, nil, rawValue
+	}
+	if int(pathID) >= len(idx.PathDirectory) {
+		return -1, nil, rawValue
+	}
+	return int(pathID), &idx.PathDirectory[pathID], rawValue
 }
 
 func (idx *GINIndex) findPath(path string) (int, *PathEntry) {

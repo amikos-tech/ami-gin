@@ -14,7 +14,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-const maxConfigSize = 1 << 20 // 1MB max config size
+const (
+	maxConfigSize                = 1 << 20 // 1MB max config size
+	maxRepresentationSectionSize = 1 << 20 // 1MB max representation metadata size
+)
 
 const (
 	// maxDecodedIndexSize caps zstd.DecodeAll's output buffer to defend against
@@ -107,6 +110,14 @@ type SerializedConfig struct {
 	AdaptiveBucketCount     int               `json:"adaptive_bucket_count"`
 	FTSPaths                []string          `json:"fts_paths,omitempty"`
 	Transformers            []TransformerSpec `json:"transformers,omitempty"`
+}
+
+type serializedRepresentation struct {
+	SourcePath   string          `json:"source_path"`
+	Alias        string          `json:"alias"`
+	TargetPath   string          `json:"target_path"`
+	Transformer  TransformerSpec `json:"transformer"`
+	Serializable bool            `json:"serializable"`
 }
 
 func writeRGSet(w io.Writer, rs *RGSet) error {
@@ -220,6 +231,9 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if err := writeConfig(&buf, idx.Config); err != nil {
 		return nil, errors.Wrap(err, "write config")
 	}
+	if err := writeRepresentations(&buf, idx); err != nil {
+		return nil, errors.Wrap(err, "write representations")
+	}
 
 	if level == CompressionNone {
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
@@ -327,9 +341,17 @@ func Decode(data []byte) (*GINIndex, error) {
 		return nil, errors.Wrap(err, "read config")
 	}
 	idx.Config = cfg
+	representations, err := readRepresentations(buf)
+	if err != nil {
+		return nil, errors.Wrap(err, "read representations")
+	}
+	idx.representations = representations
 
 	if err := idx.rebuildPathLookup(); err != nil {
 		return nil, errors.Wrap(err, "rebuild path lookup")
+	}
+	if err := idx.rebuildRepresentationLookup(); err != nil {
+		return nil, errors.Wrap(err, "rebuild representation lookup")
 	}
 
 	return idx, nil
@@ -1361,4 +1383,100 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func writeRepresentations(w io.Writer, idx *GINIndex) error {
+	representations := idx.representations
+	if len(representations) == 0 {
+		representations = collectSerializedRepresentationsFromConfig(idx.Config)
+	}
+	if len(representations) == 0 {
+		return binary.Write(w, binary.LittleEndian, uint32(0))
+	}
+
+	for _, representation := range representations {
+		if !representation.Serializable {
+			return errors.Errorf("representation %s on %s is not serializable", representation.Alias, representation.SourcePath)
+		}
+	}
+
+	data, err := json.Marshal(representations)
+	if err != nil {
+		return errors.Wrap(err, "marshal representations")
+	}
+	if len(data) > maxRepresentationSectionSize {
+		return errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", len(data), maxRepresentationSectionSize)
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
+	var sectionLen uint32
+	if err := binary.Read(r, binary.LittleEndian, &sectionLen); err != nil {
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "missing representation metadata length")
+		}
+		return nil, err
+	}
+
+	if sectionLen == 0 {
+		return nil, nil
+	}
+	if sectionLen > maxRepresentationSectionSize {
+		return nil, errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", sectionLen, maxRepresentationSectionSize)
+	}
+
+	data := make([]byte, sectionLen)
+	if _, err := io.ReadFull(r, data); err != nil {
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "truncated representation metadata payload")
+		}
+		return nil, err
+	}
+
+	var representations []serializedRepresentation
+	if err := json.Unmarshal(data, &representations); err != nil {
+		return nil, errors.Wrap(err, "unmarshal representations")
+	}
+
+	seen := make(map[string]map[string]struct{})
+	for i := range representations {
+		representation := &representations[i]
+		canonicalPath, err := canonicalizeSupportedPath(representation.SourcePath)
+		if err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize representation source path %q: %v", representation.SourcePath, err)
+		}
+		if representation.Alias == "" {
+			return nil, errors.Wrapf(ErrInvalidFormat, "missing representation alias for %s", canonicalPath)
+		}
+		if !representation.Serializable {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation %s on %s is not serializable", representation.Alias, canonicalPath)
+		}
+		wantTarget := representationTargetPath(canonicalPath, representation.Alias)
+		if representation.TargetPath != wantTarget {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation target path %q for %s alias %q does not match %q", representation.TargetPath, canonicalPath, representation.Alias, wantTarget)
+		}
+		if representation.Transformer.Name == "" {
+			return nil, errors.Wrapf(ErrInvalidFormat, "missing representation transformer name for %s alias %q", canonicalPath, representation.Alias)
+		}
+		if representation.Transformer.Path != canonicalPath {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation transformer path %q for %s alias %q does not match source", representation.Transformer.Path, canonicalPath, representation.Alias)
+		}
+
+		if seen[canonicalPath] == nil {
+			seen[canonicalPath] = make(map[string]struct{})
+		}
+		if _, exists := seen[canonicalPath][representation.Alias]; exists {
+			return nil, errors.Wrapf(ErrInvalidFormat, "duplicate representation alias %q for %s", representation.Alias, canonicalPath)
+		}
+		seen[canonicalPath][representation.Alias] = struct{}{}
+		representation.SourcePath = canonicalPath
+	}
+
+	return representations, nil
 }

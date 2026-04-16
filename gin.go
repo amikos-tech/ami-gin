@@ -13,13 +13,15 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v7: explicit representation metadata for derived alias routing
+	//       (phase 09 derived representations)
 	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
 	//       (phase 08 adaptive high-cardinality indexing)
 	//   v5: never released; payloads are always rejected. Was an in-tree
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(6)
+	Version = uint16(7)
 )
 
 const (
@@ -74,6 +76,9 @@ type GINIndex struct {
 	DocIDMapping          []DocID
 	Config                *GINConfig
 	pathLookup            map[string]uint16
+	representationLookup  map[string]map[string]uint16
+	representationInfos   map[string][]RepresentationInfo
+	representations       []serializedRepresentation
 }
 
 type Header struct {
@@ -245,10 +250,25 @@ type Predicate struct {
 	Value    any
 }
 
+type RepresentationValue struct {
+	Alias string
+	Value any
+}
+
+func As(alias string, value any) RepresentationValue {
+	return RepresentationValue{Alias: alias, Value: value}
+}
+
 // FieldTransformer transforms a value before indexing.
 // Returns (transformedValue, ok). If ok=false, the companion representation
 // could not be produced from the source value.
 type FieldTransformer func(value any) (any, bool)
+
+type RepresentationInfo struct {
+	SourcePath   string
+	Alias        string
+	Transformer  string
+}
 
 type RepresentationSpec struct {
 	SourcePath   string
@@ -558,6 +578,8 @@ func NewGINIndex() *GINIndex {
 		StringLengthIndexes:   make(map[uint16]*StringLengthIndex),
 		PathCardinality:       make(map[uint16]*HyperLogLog),
 		pathLookup:            make(map[string]uint16),
+		representationLookup:  make(map[string]map[string]uint16),
+		representationInfos:   make(map[string][]RepresentationInfo),
 	}
 }
 
@@ -654,6 +676,94 @@ func (idx *GINIndex) rebuildPathLookup() error {
 	idx.PathDirectory = canonicalDirectory
 	idx.pathLookup = lookup
 	return nil
+}
+
+func (idx *GINIndex) rebuildRepresentationLookup() error {
+	lookup := make(map[string]map[string]uint16)
+	infos := make(map[string][]RepresentationInfo)
+	representations := idx.representations
+	if len(representations) == 0 {
+		representations = collectSerializedRepresentationsFromConfig(idx.Config)
+		idx.representations = representations
+	}
+	if len(representations) == 0 {
+		idx.representationLookup = lookup
+		idx.representationInfos = infos
+		return nil
+	}
+
+	for _, representation := range representations {
+		sourcePath := representation.SourcePath
+		targetPath := representation.TargetPath
+		pathID, ok := idx.pathLookup[targetPath]
+		if !ok {
+			return errors.Wrapf(ErrInvalidFormat, "representation target path %q for %s alias %q not found", targetPath, sourcePath, representation.Alias)
+		}
+
+		if lookup[sourcePath] == nil {
+			lookup[sourcePath] = make(map[string]uint16)
+		}
+		if _, exists := lookup[sourcePath][representation.Alias]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate representation alias %q for %s", representation.Alias, sourcePath)
+		}
+		lookup[sourcePath][representation.Alias] = pathID
+		infos[sourcePath] = append(infos[sourcePath], RepresentationInfo{
+			SourcePath:  sourcePath,
+			Alias:       representation.Alias,
+			Transformer: representation.Transformer.Name,
+		})
+	}
+
+	idx.representationLookup = lookup
+	idx.representationInfos = infos
+	return nil
+}
+
+func collectSerializedRepresentationsFromConfig(cfg *GINConfig) []serializedRepresentation {
+	if cfg == nil || len(cfg.representationSpecs) == 0 {
+		return nil
+	}
+
+	sourcePaths := make([]string, 0, len(cfg.representationSpecs))
+	for sourcePath := range cfg.representationSpecs {
+		sourcePaths = append(sourcePaths, sourcePath)
+	}
+	sort.Strings(sourcePaths)
+
+	representations := make([]serializedRepresentation, 0)
+	for _, sourcePath := range sourcePaths {
+		sortedRepresentations := append([]RepresentationSpec(nil), cfg.representationSpecs[sourcePath]...)
+		sort.Slice(sortedRepresentations, func(i, j int) bool {
+			return sortedRepresentations[i].Alias < sortedRepresentations[j].Alias
+		})
+		for _, representation := range sortedRepresentations {
+			representations = append(representations, serializedRepresentation{
+				SourcePath:   representation.SourcePath,
+				Alias:        representation.Alias,
+				TargetPath:   representation.TargetPath,
+				Transformer:  representation.Transformer,
+				Serializable: representation.Serializable,
+			})
+		}
+	}
+
+	return representations
+}
+
+func (idx *GINIndex) Representations(path string) []RepresentationInfo {
+	canonicalPath, err := canonicalizeSupportedPath(path)
+	if err != nil {
+		return nil
+	}
+
+	representations := idx.representationInfos[canonicalPath]
+	if len(representations) == 0 {
+		return nil
+	}
+
+	out := make([]RepresentationInfo, len(representations))
+	copy(out, representations)
+	return out
 }
 
 func (idx *GINIndex) validatePathReferences() error {

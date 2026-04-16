@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -2149,6 +2150,128 @@ func TestRebuildPathLookupValidationErrorPreservesExistingLookupOnError(t *testi
 func TestValidateJSONPathRejectsInternalRepresentationPaths(t *testing.T) {
 	if err := ValidateJSONPath("__derived:$.email#lower"); err == nil {
 		t.Fatal("ValidateJSONPath(internal path) error = nil, want rejection")
+	}
+}
+
+func TestQueryAliasRoutingUsesAsWrapper(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 3)
+	docs := []string{
+		`{"email":"Alice@Example.COM"}`,
+		`{"email":"bob@other.dev"}`,
+		`{"email":"CHARLIE@EXAMPLE.COM"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(%d) error = %v", i, err)
+		}
+	}
+
+	idx := builder.Finalize()
+
+	lower := idx.Evaluate([]Predicate{EQ("$.email", As("lower", "alice@example.com"))}).ToSlice()
+	if got := fmt.Sprint(lower); got != fmt.Sprint([]int{0}) {
+		t.Fatalf(`EQ("$.email", As("lower", ...)) = %v, want [0]`, lower)
+	}
+
+	domain := idx.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
+	if got := fmt.Sprint(domain); got != fmt.Sprint([]int{0, 2}) {
+		t.Fatalf(`EQ("$.email", As("domain", ...)) = %v, want [0 2]`, domain)
+	}
+}
+
+func TestRawPathQueriesRemainDefaultWithDerivedAliases(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 2)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument(0) error = %v", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"email":"BOB@EXAMPLE.COM"}`)); err != nil {
+		t.Fatalf("AddDocument(1) error = %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	raw := idx.Evaluate([]Predicate{EQ("$.email", "alice@example.com")}).ToSlice()
+	if len(raw) != 0 {
+		t.Fatalf(`EQ("$.email", "alice@example.com") = %v, want []`, raw)
+	}
+
+	aliased := idx.Evaluate([]Predicate{EQ("$.email", As("lower", "alice@example.com"))}).ToSlice()
+	if got := fmt.Sprint(aliased); got != fmt.Sprint([]int{0}) {
+		t.Fatalf(`EQ("$.email", As("lower", "alice@example.com")) = %v, want [0]`, aliased)
+	}
+}
+
+func TestRepresentationsIntrospectionListsAliases(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	idx := builder.Finalize()
+	got := idx.Representations("$['email']")
+	want := []RepresentationInfo{
+		{SourcePath: "$.email", Alias: "domain", Transformer: "email_domain"},
+		{SourcePath: "$.email", Alias: "lower", Transformer: "to_lower"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Representations($['email']) = %#v, want %#v", got, want)
+	}
+}
+
+func TestFinalizePopulatesRepresentationLookup(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	idx := builder.Finalize()
+	lookup := idx.representationLookup["$.email"]
+	if len(lookup) != 2 {
+		t.Fatalf(`representationLookup["$.email"] len = %d, want 2`, len(lookup))
+	}
+
+	for alias, target := range map[string]string{
+		"lower":  "__derived:$.email#lower",
+		"domain": "__derived:$.email#domain",
+	} {
+		pathID, ok := lookup[alias]
+		if !ok {
+			t.Fatalf(`representationLookup["$.email"]["%s"] missing`, alias)
+		}
+		if got := idx.PathDirectory[pathID].PathName; got != target {
+			t.Fatalf(`representationLookup["$.email"]["%s"] -> %q, want %q`, alias, got, target)
+		}
 	}
 }
 

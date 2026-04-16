@@ -773,6 +773,11 @@ func TestBenchmarkAddDocumentLegacyMatchesReferenceNumericPath(t *testing.T) {
 				}
 			}
 
+			legacyBuilder.config.representationSpecs = nil
+			legacyBuilder.config.representationTransformers = nil
+			referenceBuilder.config.representationSpecs = nil
+			referenceBuilder.config.representationTransformers = nil
+
 			legacyIdx := legacyBuilder.Finalize()
 			referenceIdx := referenceBuilder.Finalize()
 

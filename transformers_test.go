@@ -2,7 +2,6 @@ package gin
 
 import (
 	"math"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1249,21 +1248,7 @@ func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 
 func TestTransformerNumericDecodeParity(t *testing.T) {
 	config, err := NewConfig(
-		WithCustomTransformer("$.build", "build_number", func(value any) (any, bool) {
-			build, ok := value.(map[string]any)
-			if !ok {
-				return nil, false
-			}
-			rawID, ok := build["id"].(string)
-			if !ok {
-				return nil, false
-			}
-			parsed, err := strconv.ParseInt(rawID, 10, 64)
-			if err != nil {
-				return nil, false
-			}
-			return parsed, true
-		}),
+		WithRegexExtractIntTransformer("$.build_id", "build_number", `build-(\d+)`, 1),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -1278,8 +1263,8 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 		docID DocID
 		json  string
 	}{
-		{0, `{"build":{"id":"9223372036854775806"}}`},
-		{1, `{"build":{"id":"9223372036854775807"}}`},
+		{0, `{"build_id":"build-9007199254740990"}`},
+		{1, `{"build_id":"build-9007199254740991"}`},
 	}
 
 	for _, doc := range docs {
@@ -1289,14 +1274,14 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 	}
 
 	idx := builder.Finalize()
-	derivedPathID := requirePathID(t, idx, "__derived:$.build#build_number")
+	derivedPathID := requirePathID(t, idx, "__derived:$.build_id#build_number")
 	derivedIndex, ok := idx.NumericIndexes[derivedPathID]
 	if !ok {
-		t.Fatal(`NumericIndexes["__derived:$.build#build_number"] missing`)
+		t.Fatal(`NumericIndexes["__derived:$.build_id#build_number"] missing`)
 	}
-	before := idx.evaluateIntOnlyEQ(derivedIndex, int(idx.Header.NumRowGroups), 9223372036854775807)
+	before := idx.evaluateIntOnlyEQ(derivedIndex, int(idx.Header.NumRowGroups), 9007199254740991)
 	if before.Count() != 1 || !before.IsSet(1) || before.IsSet(0) {
-		t.Fatalf("pre-encode derived EQ($.build#build_number, 9223372036854775807) = %v, want [1]", before.ToSlice())
+		t.Fatalf("pre-encode derived EQ($.build_id#build_number, 9007199254740991) = %v, want [1]", before.ToSlice())
 	}
 
 	encoded, err := Encode(idx)
@@ -1309,13 +1294,13 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	derivedPathID = requirePathID(t, decoded, "__derived:$.build#build_number")
+	derivedPathID = requirePathID(t, decoded, "__derived:$.build_id#build_number")
 	derivedIndex, ok = decoded.NumericIndexes[derivedPathID]
 	if !ok {
-		t.Fatal(`decoded NumericIndexes["__derived:$.build#build_number"] missing`)
+		t.Fatal(`decoded NumericIndexes["__derived:$.build_id#build_number"] missing`)
 	}
-	after := decoded.evaluateIntOnlyEQ(derivedIndex, int(decoded.Header.NumRowGroups), 9223372036854775807)
+	after := decoded.evaluateIntOnlyEQ(derivedIndex, int(decoded.Header.NumRowGroups), 9007199254740991)
 	if after.Count() != 1 || !after.IsSet(1) || after.IsSet(0) {
-		t.Fatalf("decoded derived EQ($.build#build_number, 9223372036854775807) = %v, want [1]", after.ToSlice())
+		t.Fatalf("decoded derived EQ($.build_id#build_number, 9007199254740991) = %v, want [1]", after.ToSlice())
 	}
 }

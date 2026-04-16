@@ -1116,5 +1116,9 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	}
 
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
+	idx.representations = collectSerializedRepresentationsFromConfig(idx.Config)
+	if err := idx.rebuildRepresentationLookup(); err != nil {
+		panic(err)
+	}
 	return idx
 }
