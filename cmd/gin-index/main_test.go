@@ -20,7 +20,7 @@ type cliTestRecord struct {
 	Attributes string `parquet:"attributes"`
 }
 
-func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord, rowsPerRG int64) {
+func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord) {
 	t.Helper()
 
 	f, err := os.Create(path)
@@ -30,7 +30,7 @@ func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord, ro
 	defer f.Close()
 
 	writer := parquet.NewGenericWriter[cliTestRecord](f,
-		parquet.MaxRowsPerRowGroup(rowsPerRG),
+		parquet.MaxRowsPerRowGroup(1),
 	)
 
 	for _, record := range records {
@@ -523,7 +523,7 @@ func TestRunBuildReportsPartialFailures(t *testing.T) {
 	tmpDir := t.TempDir()
 	createCLIParquetFile(t, filepath.Join(tmpDir, "good.parquet"), []cliTestRecord{
 		{ID: 1, Attributes: `{"brand":"Toyota"}`},
-	}, 1)
+	})
 	if err := os.WriteFile(filepath.Join(tmpDir, "bad.parquet"), []byte("not-a-parquet-file"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
@@ -546,7 +546,7 @@ func TestRunExtractReportsPartialFailures(t *testing.T) {
 	goodParquet := filepath.Join(tmpDir, "good.parquet")
 	createCLIParquetFile(t, goodParquet, []cliTestRecord{
 		{ID: 1, Attributes: `{"status":"ok"}`},
-	}, 1)
+	})
 	idx, err := gin.BuildFromParquet(goodParquet, "attributes", gin.DefaultConfig())
 	if err != nil {
 		t.Fatalf("BuildFromParquet() error = %v", err)
@@ -618,7 +618,7 @@ func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
 			createCLIParquetFile(t, parquetFile, []cliTestRecord{
 				{ID: 1, Attributes: `{"brand":"Toyota"}`},
 				{ID: 2, Attributes: `{"brand":"Tesla"}`},
-			}, 1)
+			})
 
 			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
 				t.Fatalf("chmod parquet file: %v", err)
@@ -660,7 +660,7 @@ func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
 			createCLIParquetFile(t, parquetFile, []cliTestRecord{
 				{ID: 1, Attributes: `{"status":"ok"}`},
 				{ID: 2, Attributes: `{"status":"warn"}`},
-			}, 1)
+			})
 
 			if err := os.Chmod(parquetFile, tt.sourceMode); err != nil {
 				t.Fatalf("chmod parquet file: %v", err)
@@ -697,7 +697,7 @@ func TestLocalOutputMode(t *testing.T) {
 	parquetFile := filepath.Join(tmpDir, "data.parquet")
 	createCLIParquetFile(t, parquetFile, []cliTestRecord{
 		{ID: 1, Attributes: `{"brand":"Toyota"}`},
-	}, 1)
+	})
 
 	if err := os.Chmod(parquetFile, 0o755); err != nil {
 		t.Fatalf("chmod parquet file: %v", err)

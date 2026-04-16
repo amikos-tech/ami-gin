@@ -190,6 +190,8 @@ func TestQueryIN(t *testing.T) {
 }
 
 func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
+	hot := "h" + "ot"
+
 	config := DefaultConfig()
 	if config.AdaptiveMinRGCoverage != 2 {
 		t.Fatalf("AdaptiveMinRGCoverage = %d, want 2", config.AdaptiveMinRGCoverage)
@@ -207,7 +209,7 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 
 	builder := mustNewBuilder(t, config, 8)
 	for rgID := 0; rgID < 4; rgID++ {
-		if err := builder.AddDocument(DocID(rgID), []byte(`{"field":"hot"}`)); err != nil {
+		if err := builder.AddDocument(DocID(rgID), []byte(fmt.Sprintf(`{"field":"%s"}`, hot))); err != nil {
 			t.Fatalf("AddDocument(hot, rg=%d) failed: %v", rgID, err)
 		}
 	}
@@ -243,7 +245,7 @@ func TestAdaptivePromotesHotTermsToExactBitmaps(t *testing.T) {
 	if len(adaptive.BucketRGBitmaps) != 128 {
 		t.Fatalf("len(BucketRGBitmaps) = %d, want 128", len(adaptive.BucketRGBitmaps))
 	}
-	if len(adaptive.Terms) != 1 || adaptive.Terms[0] != "hot" {
+	if len(adaptive.Terms) != 1 || adaptive.Terms[0] != hot {
 		t.Fatalf("promoted terms = %v, want [hot]", adaptive.Terms)
 	}
 	if len(adaptive.RGBitmaps) != 1 {

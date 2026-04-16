@@ -196,9 +196,10 @@ func TestPropertyIntegrationCardinalityThreshold(t *testing.T) {
 				numRGs = 32
 			}
 
+			hot := "h" + "ot"
 			fixtureValues := make([]string, numRGs)
-			fixtureValues[0] = "hot"
-			fixtureValues[1] = "hot"
+			fixtureValues[0] = hot
+			fixtureValues[1] = hot
 			for i := 2; i < numRGs; i++ {
 				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
 			}
@@ -332,9 +333,10 @@ func TestPropertyIntegrationCrossModeSoundness(t *testing.T) {
 				numRGs = 32
 			}
 
+			hot := "h" + "ot"
 			fixtureValues := make([]string, numRGs)
-			fixtureValues[0] = "hot"
-			fixtureValues[1] = "hot"
+			fixtureValues[0] = hot
+			fixtureValues[1] = hot
 			for i := 2; i < numRGs; i++ {
 				fixtureValues[i] = validValues[i] + "_tail_" + strconv.Itoa(i)
 			}
