@@ -127,6 +127,18 @@ func (m PathMode) String() string {
 	}
 }
 
+// IsValid reports whether m is one of the declared PathMode constants.
+// Decoders should call this on every byte read from disk before trusting
+// the value; values outside the declared range indicate a corrupt payload.
+func (m PathMode) IsValid() bool {
+	switch m {
+	case PathModeClassic, PathModeBloomOnly, PathModeAdaptiveHybrid:
+		return true
+	default:
+		return false
+	}
+}
+
 // NewAdaptiveStringIndex validates and constructs an adaptive string index.
 func NewAdaptiveStringIndex(terms []string, rgBitmaps []*RGSet, bucketBitmaps []*RGSet) (*AdaptiveStringIndex, error) {
 	if len(terms) != len(rgBitmaps) {

@@ -453,6 +453,9 @@ func readPathDirectory(r io.Reader, idx *GINIndex) error {
 		if err := binary.Read(r, binary.LittleEndian, &entry.Mode); err != nil {
 			return err
 		}
+		if !entry.Mode.IsValid() {
+			return errors.Wrapf(ErrInvalidFormat, "path %q has unknown mode %d", entry.PathName, entry.Mode)
+		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Flags); err != nil {
 			return err
 		}

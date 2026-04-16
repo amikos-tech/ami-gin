@@ -130,6 +130,30 @@ func TestDecodeLegacyRejected(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsUnknownPathMode(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	builder.AddDocument(0, []byte(`{"x": "alice"}`))
+	idx := builder.Finalize()
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("encode failed: %v", err)
+	}
+
+	// Header layout: 4 (uncompressedMagic) + 4 (MagicBytes) + 2 (Version) + 2 (Flags) +
+	// 4 (NumRowGroups) + 8 (NumDocs) + 4 (NumPaths) + 4 (CardinalityThreshold) = 32.
+	// First PathEntry: 2 (PathID) + 2 (pathLen) + pathLen (pathBytes "$.x"=3) +
+	// 1 (ObservedTypes) + 4 (Cardinality) = 12. Mode byte lives at 32+12 = 44.
+	modeOffset := 32 + 2 + 2 + len("$.x") + 1 + 4
+	data[modeOffset] = 99
+
+	if _, err := Decode(data); err == nil {
+		t.Fatal("Decode() error = nil, want ErrInvalidFormat for unknown path mode")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
 func TestDecodeRejectsLegacyV5PayloadAfterWireFormatChange(t *testing.T) {
 	data := legacyV5HeaderOnlyPayload(t)
 

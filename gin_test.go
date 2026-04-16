@@ -835,6 +835,26 @@ func TestPathModeStringMapping(t *testing.T) {
 	}
 }
 
+func TestPathModeIsValid(t *testing.T) {
+	tests := []struct {
+		mode PathMode
+		want bool
+	}{
+		{mode: PathModeClassic, want: true},
+		{mode: PathModeBloomOnly, want: true},
+		{mode: PathModeAdaptiveHybrid, want: true},
+		{mode: PathMode(3), want: false},
+		{mode: PathMode(99), want: false},
+		{mode: PathMode(255), want: false},
+	}
+
+	for _, tt := range tests {
+		if got := tt.mode.IsValid(); got != tt.want {
+			t.Fatalf("PathMode(%d).IsValid() = %v, want %v", tt.mode, got, tt.want)
+		}
+	}
+}
+
 func TestAdaptiveNegativePredicatesMixedPromotedAndTailStayConservative(t *testing.T) {
 	config := DefaultConfig()
 	config.CardinalityThreshold = 1
