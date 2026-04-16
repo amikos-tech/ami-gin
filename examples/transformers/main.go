@@ -21,9 +21,9 @@ func main() {
 func run() error {
 	// Configure field transformers to convert date strings to epoch milliseconds
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.created_at", gin.ISODateToEpochMs),
-		gin.WithFieldTransformer("$.birth_date", gin.DateToEpochMs),
-		gin.WithFieldTransformer("$.custom_ts", gin.CustomDateToEpochMs("2006/01/02 15:04")),
+		gin.WithISODateTransformer("$.created_at", "epoch_ms"),
+		gin.WithDateTransformer("$.birth_date", "epoch_ms"),
+		gin.WithCustomDateTransformer("$.custom_ts", "epoch_ms", "2006/01/02 15:04"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")

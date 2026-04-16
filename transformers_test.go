@@ -170,8 +170,8 @@ func TestCustomDateToEpochMs(t *testing.T) {
 
 func TestDateTransformerIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.created_at", ISODateToEpochMs),
-		WithFieldTransformer("$.birth_date", DateToEpochMs),
+		WithISODateTransformer("$.created_at", "epoch_ms"),
+		WithDateTransformer("$.birth_date", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -255,7 +255,7 @@ func TestDateTransformerIntegration(t *testing.T) {
 
 func TestDateTransformerRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.timestamp", ISODateToEpochMs),
+		WithISODateTransformer("$.timestamp", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -311,7 +311,7 @@ func TestDateTransformerRangeQuery(t *testing.T) {
 
 func TestDateTransformerCanonicalConfigPath(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['created_at']", ISODateToEpochMs),
+		WithISODateTransformer("$['created_at']", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -362,7 +362,7 @@ func TestDateTransformerCanonicalConfigPath(t *testing.T) {
 
 func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['timestamp']", ISODateToEpochMs),
+		WithISODateTransformer("$['timestamp']", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -412,7 +412,7 @@ func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
 
 func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.items[*].metrics", func(value any) (any, bool) {
+		WithCustomTransformer("$.items[*].metrics", "summary", func(value any) (any, bool) {
 			metrics, ok := value.(map[string]any)
 			if !ok {
 				return nil, false
@@ -807,7 +807,7 @@ func TestBoolNormalize(t *testing.T) {
 
 func TestIPv4ToIntRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.client_ip", IPv4ToInt),
+		WithIPv4Transformer("$.client_ip", "ipv4_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -856,7 +856,7 @@ func TestIPv4ToIntRangeQuery(t *testing.T) {
 
 func TestSemVerToIntRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.version", SemVerToInt),
+		WithSemVerTransformer("$.version", "semver_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -899,7 +899,7 @@ func TestSemVerToIntRangeQuery(t *testing.T) {
 
 func TestToLowerIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.email", ToLower),
+		WithToLowerTransformer("$.email", "lower"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -1053,7 +1053,7 @@ func TestInSubnetPanic(t *testing.T) {
 
 func TestInSubnetIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.client_ip", IPv4ToInt),
+		WithIPv4Transformer("$.client_ip", "ipv4_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -1104,7 +1104,7 @@ func TestInSubnetIntegration(t *testing.T) {
 
 func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['metrics']", func(value any) (any, bool) {
+		WithCustomTransformer("$['metrics']", "total", func(value any) (any, bool) {
 			metrics, ok := value.(map[string]any)
 			if !ok {
 				return nil, false
@@ -1153,7 +1153,7 @@ func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 
 func TestTransformerNumericDecodeParity(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.build", func(value any) (any, bool) {
+		WithCustomTransformer("$.build", "build_number", func(value any) (any, bool) {
 			build, ok := value.(map[string]any)
 			if !ok {
 				return nil, false

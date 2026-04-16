@@ -1896,6 +1896,49 @@ func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
 	}
 }
 
+func TestConfigAllowsMultipleTransformersPerSourcePath(t *testing.T) {
+	cfg, err := NewConfig(
+		WithToLowerTransformer("$['email']", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	specs := cfg.representationSpecs["$.email"]
+	if len(specs) != 2 {
+		t.Fatalf("representationSpecs[$.email] len = %d, want 2", len(specs))
+	}
+
+	if got := specs[0].TargetPath; got != "__derived:$.email#lower" {
+		t.Fatalf("representationSpecs[$.email][0].TargetPath = %q, want %q", got, "__derived:$.email#lower")
+	}
+	if got := specs[1].TargetPath; got != "__derived:$.email#domain" {
+		t.Fatalf("representationSpecs[$.email][1].TargetPath = %q, want %q", got, "__derived:$.email#domain")
+	}
+
+	regs := cfg.representationTransformers["$.email"]
+	if len(regs) != 2 {
+		t.Fatalf("representationTransformers[$.email] len = %d, want 2", len(regs))
+	}
+	if regs[0].Alias != "lower" || regs[1].Alias != "domain" {
+		t.Fatalf("representationTransformers[$.email] aliases = [%q %q], want [lower domain]", regs[0].Alias, regs[1].Alias)
+	}
+}
+
+func TestConfigRejectsDuplicateTransformerAlias(t *testing.T) {
+	_, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$['email']", "lower"),
+	)
+	if err == nil {
+		t.Fatal("NewConfig() error = nil, want duplicate alias failure")
+	}
+	if !strings.Contains(err.Error(), "duplicate transformer alias") {
+		t.Fatalf("NewConfig() error = %v, want duplicate transformer alias", err)
+	}
+}
+
 func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 

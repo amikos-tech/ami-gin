@@ -47,7 +47,7 @@ func ipRangeExample() error {
 	fmt.Println("--- 1. IPv4ToInt + InSubnet: IP Subnet Queries ---")
 
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.client_ip", gin.IPv4ToInt),
+		gin.WithIPv4Transformer("$.client_ip", "ipv4_int"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -97,7 +97,7 @@ func semverExample() error {
 	fmt.Println("--- 2. SemVerToInt: Version Range Queries ---")
 
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.version", gin.SemVerToInt),
+		gin.WithSemVerTransformer("$.version", "semver_int"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -149,8 +149,8 @@ func caseInsensitiveExample() error {
 	fmt.Println("--- 3. ToLower: Case-Insensitive Queries ---")
 
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.email", gin.ToLower),
-		gin.WithFieldTransformer("$.username", gin.ToLower),
+		gin.WithToLowerTransformer("$.email", "lower"),
+		gin.WithToLowerTransformer("$.username", "lower"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -199,7 +199,7 @@ func emailDomainExample() error {
 	fmt.Println("--- 4. EmailDomain: Filter by Email Domain ---")
 
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.email", gin.EmailDomain),
+		gin.WithEmailDomainTransformer("$.email", "domain"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -243,9 +243,9 @@ func regexExtractExample() error {
 
 	config, err := gin.NewConfig(
 		// Extract error code from log messages: "ERROR[E1234]: msg" -> "E1234"
-		gin.WithFieldTransformer("$.message", gin.RegexExtract(`ERROR\[(\w+)\]:`, 1)),
+		gin.WithRegexExtractTransformer("$.message", "error_code", `ERROR\[(\w+)\]:`, 1),
 		// Extract order number from order IDs: "order-12345" -> 12345 (as float64)
-		gin.WithFieldTransformer("$.order_id", gin.RegexExtractInt(`order-(\d+)`, 1)),
+		gin.WithRegexExtractIntTransformer("$.order_id", "order_number", `order-(\d+)`, 1),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -288,7 +288,7 @@ func durationExample() error {
 	fmt.Println("--- 6. DurationToMs: Latency Range Queries ---")
 
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.latency", gin.DurationToMs),
+		gin.WithDurationTransformer("$.latency", "duration_ms"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")

@@ -1233,13 +1233,22 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 		FTSPaths:                cfg.ftsPaths,
 	}
 
-	transformerPaths := make([]string, 0, len(cfg.transformerSpecs))
-	for path := range cfg.transformerSpecs {
+	transformerPaths := make([]string, 0, len(cfg.representationSpecs))
+	for path := range cfg.representationSpecs {
 		transformerPaths = append(transformerPaths, path)
 	}
 	sort.Strings(transformerPaths)
 	for _, path := range transformerPaths {
-		sc.Transformers = append(sc.Transformers, cfg.transformerSpecs[path])
+		representations := append([]RepresentationSpec(nil), cfg.representationSpecs[path]...)
+		sort.Slice(representations, func(i, j int) bool {
+			return representations[i].Alias < representations[j].Alias
+		})
+		for _, representation := range representations {
+			if !representation.Serializable {
+				continue
+			}
+			sc.Transformers = append(sc.Transformers, representation.Transformer)
+		}
 	}
 
 	data, err := json.Marshal(sc)
@@ -1314,25 +1323,36 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if len(sc.Transformers) > 0 {
-		cfg.fieldTransformers = make(map[string]FieldTransformer)
-		cfg.transformerSpecs = make(map[string]TransformerSpec)
-		seenTransformerPaths := make(map[string]string, len(sc.Transformers))
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
 				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
 			}
-			if firstPath, exists := seenTransformerPaths[canonicalPath]; exists {
-				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical transformer path %q from %q and %q", canonicalPath, firstPath, spec.Path)
+			alias := spec.Alias
+			if alias == "" {
+				alias = spec.Name
 			}
-			seenTransformerPaths[canonicalPath] = spec.Path
+			if alias == "" {
+				return nil, errors.Wrapf(ErrInvalidFormat, "missing transformer alias for path %q", spec.Path)
+			}
+			targetPath := spec.TargetPath
+			if targetPath == "" {
+				targetPath = representationTargetPath(canonicalPath, alias)
+			}
+			if targetPath != representationTargetPath(canonicalPath, alias) {
+				return nil, errors.Wrapf(ErrInvalidFormat, "transformer target path %q for %s alias %q does not match %q", targetPath, canonicalPath, alias, representationTargetPath(canonicalPath, alias))
+			}
+
 			spec.Path = canonicalPath
+			spec.Alias = alias
+			spec.TargetPath = targetPath
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
 				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
 			}
-			cfg.fieldTransformers[canonicalPath] = fn
-			cfg.transformerSpecs[canonicalPath] = spec
+			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, fn); err != nil {
+				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
+			}
 		}
 	}
 

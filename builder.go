@@ -436,10 +436,7 @@ func sortedObjectKeys(values map[string]any) []string {
 }
 
 func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
-	if b.config.fieldTransformers == nil {
-		return nil, false, nil
-	}
-	transformer, ok := b.config.fieldTransformers[canonicalPath]
+	registration, ok := b.config.firstRepresentation(canonicalPath)
 	if !ok {
 		return nil, false, nil
 	}
@@ -447,7 +444,7 @@ func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath
 	if err != nil {
 		return nil, false, err
 	}
-	if transformed, ok := transformer(prepareTransformerValue(value)); ok {
+	if transformed, ok := registration.FieldTransformer(prepareTransformerValue(value)); ok {
 		return transformed, true, nil
 	}
 	return value, true, nil
@@ -503,9 +500,9 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 
 func (b *GINBuilder) stageMaterializedValue(path string, value any, state *documentBuildState, allowTransform bool) error {
 	canonicalPath := normalizeWalkPath(path)
-	if allowTransform && b.config.fieldTransformers != nil {
-		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
-			if transformed, ok := transformer(prepareTransformerValue(value)); ok {
+	if allowTransform {
+		if registration, ok := b.config.firstRepresentation(canonicalPath); ok {
+			if transformed, ok := registration.FieldTransformer(prepareTransformerValue(value)); ok {
 				value = transformed
 			}
 		}

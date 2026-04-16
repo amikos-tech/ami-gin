@@ -40,8 +40,8 @@ func TestSortedObjectKeys(t *testing.T) {
 
 func TestAddDocumentReportsLexicographicallyFirstObjectFieldError(t *testing.T) {
 	cfg, err := NewConfig(
-		WithFieldTransformer("$.a", func(value any) (any, bool) { return complex(1, 0), true }),
-		WithFieldTransformer("$.z", func(value any) (any, bool) { return complex(1, 0), true }),
+		WithCustomTransformer("$.a", "invalid", func(value any) (any, bool) { return complex(1, 0), true }),
+		WithCustomTransformer("$.z", "invalid", func(value any) (any, bool) { return complex(1, 0), true }),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)

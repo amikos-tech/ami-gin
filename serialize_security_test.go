@@ -1258,11 +1258,19 @@ func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
 	}
 }
 
-func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
+func TestReadConfigRejectsDuplicateTransformerAlias(t *testing.T) {
+	lower := NewTransformerSpec("$.foo", TransformerToLower, nil)
+	lower.Alias = "lower"
+	lower.TargetPath = representationTargetPath("$.foo", "lower")
+
+	duplicateAlias := NewTransformerSpec("$['foo']", TransformerEmailDomain, nil)
+	duplicateAlias.Alias = "lower"
+	duplicateAlias.TargetPath = representationTargetPath("$.foo", "lower")
+
 	sc := SerializedConfig{
 		Transformers: []TransformerSpec{
-			NewTransformerSpec("$.foo", TransformerToLower, nil),
-			NewTransformerSpec("$['foo']", TransformerEmailDomain, nil),
+			lower,
+			duplicateAlias,
 		},
 	}
 
@@ -1281,7 +1289,7 @@ func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
 
 	_, err = readConfig(&buf)
 	if err == nil {
-		t.Fatal("expected canonical transformer collision error, got nil")
+		t.Fatal("expected duplicate transformer alias error, got nil")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)

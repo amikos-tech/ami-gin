@@ -472,11 +472,11 @@ func generatePhase07TransformerDocs(n int) [][]byte {
 
 func newPhase07TransformerBenchmarkConfig() GINConfig {
 	cfg, err := NewConfig(
-		WithISODateTransformer("$.timestamp"),
-		WithDateTransformer("$.event_date"),
-		WithSemVerTransformer("$.version"),
-		WithIPv4Transformer("$.client_ip"),
-		WithRegexExtractIntTransformer("$.build_ref", `build-(\d+)`, 1),
+		WithISODateTransformer("$.timestamp", "epoch_ms"),
+		WithDateTransformer("$.event_date", "epoch_ms"),
+		WithSemVerTransformer("$.version", "semver_int"),
+		WithIPv4Transformer("$.client_ip", "ipv4_int"),
+		WithRegexExtractIntTransformer("$.build_ref", "build_number", `build-(\d+)`, 1),
 	)
 	if err != nil {
 		panic(err)
@@ -514,11 +514,9 @@ func benchmarkAddDocumentLegacy(builder *GINBuilder, docID DocID, jsonDoc []byte
 func benchmarkWalkJSONLegacy(builder *GINBuilder, path string, value any, rgID int) {
 	canonicalPath := normalizeWalkPath(path)
 
-	if builder.config.fieldTransformers != nil {
-		if transformer, ok := builder.config.fieldTransformers[canonicalPath]; ok {
-			if transformed, ok := transformer(value); ok {
-				value = transformed
-			}
+	if registration, ok := builder.config.firstRepresentation(canonicalPath); ok {
+		if transformed, ok := registration.FieldTransformer(value); ok {
+			value = transformed
 		}
 	}
 
@@ -619,11 +617,9 @@ func benchmarkAddDocumentLegacyReference(builder *GINBuilder, docID DocID, jsonD
 func benchmarkWalkJSONLegacyReference(builder *GINBuilder, path string, value any, rgID int) {
 	canonicalPath := normalizeWalkPath(path)
 
-	if builder.config.fieldTransformers != nil {
-		if transformer, ok := builder.config.fieldTransformers[canonicalPath]; ok {
-			if transformed, ok := transformer(value); ok {
-				value = transformed
-			}
+	if registration, ok := builder.config.firstRepresentation(canonicalPath); ok {
+		if transformed, ok := registration.FieldTransformer(value); ok {
+			value = transformed
 		}
 	}
 
