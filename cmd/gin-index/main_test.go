@@ -354,6 +354,67 @@ func TestRunInfoReturnsNonZeroOnDecodeFailure(t *testing.T) {
 	}
 }
 
+func TestRunBuildReturnsNonZeroOnBuildFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "broken.parquet")
+	if err := os.WriteFile(parquetPath, []byte("not-a-parquet-file"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-c", "attributes", parquetPath}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild() code = 0, want non-zero for build failure")
+	}
+	if !strings.Contains(stderr.String(), "Failed to build index") {
+		t.Fatalf("stderr = %q, want build failure", stderr.String())
+	}
+}
+
+func TestRunQueryReturnsNonZeroOnDecodeFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	indexPath := filepath.Join(tmpDir, "broken.gin")
+	if err := os.WriteFile(indexPath, []byte("not-a-valid-index"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runQuery([]string{indexPath, `$.brand = "Toyota"`}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runQuery() code = 0, want non-zero for decode failure")
+	}
+	if !strings.Contains(stderr.String(), "Failed to decode index") {
+		t.Fatalf("stderr = %q, want decode failure", stderr.String())
+	}
+}
+
+func TestRunExtractReturnsNonZeroOnExtractFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "broken.parquet")
+	outputPath := filepath.Join(tmpDir, "out.gin")
+	if err := os.WriteFile(parquetPath, []byte("not-a-parquet-file"), 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExtract([]string{"-o", outputPath, parquetPath}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExtract() code = 0, want non-zero for extract failure")
+	}
+	if !strings.Contains(stderr.String(), "Failed to read embedded index") {
+		t.Fatalf("stderr = %q, want extract failure", stderr.String())
+	}
+}
+
 func TestArtifactFileMode(t *testing.T) {
 	t.Parallel()
 

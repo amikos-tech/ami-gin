@@ -566,6 +566,70 @@ func TestAdaptiveThresholdBoundarySelection(t *testing.T) {
 	}
 }
 
+func TestAdaptiveCardinalitySweepAtFixedThreshold(t *testing.T) {
+	tests := []struct {
+		name         string
+		docs         []string
+		wantMode     PathMode
+		wantAdaptive bool
+	}{
+		{
+			name: "below threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+			},
+			wantMode: PathModeClassic,
+		},
+		{
+			name: "at threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail"}`,
+			},
+			wantMode: PathModeClassic,
+		},
+		{
+			name: "above threshold",
+			docs: []string{
+				`{"field":"hot"}`,
+				`{"field":"hot"}`,
+				`{"field":"tail_a"}`,
+				`{"field":"tail_b"}`,
+			},
+			wantMode: PathModeAdaptiveHybrid,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := DefaultConfig()
+			config.CardinalityThreshold = 2
+			config.AdaptiveMinRGCoverage = 2
+			config.AdaptivePromotedTermCap = 2
+			config.AdaptiveCoverageCeiling = 0.80
+			config.AdaptiveBucketCount = 4
+
+			builder := mustNewBuilder(t, config, len(tt.docs))
+			for rgID, doc := range tt.docs {
+				if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+					t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+				}
+			}
+
+			entry := findPathEntry(builder.Finalize(), "$.field")
+			if entry == nil {
+				t.Fatal("expected $.field path entry")
+			}
+			if entry.Mode != tt.wantMode {
+				t.Fatalf("Mode = %v, want %v", entry.Mode, tt.wantMode)
+			}
+		})
+	}
+}
+
 func TestSelectAdaptivePromotedTermsHonorsCoverageFiltersAndSortOrder(t *testing.T) {
 	config := DefaultConfig()
 	config.AdaptiveMinRGCoverage = 2
@@ -601,6 +665,81 @@ func TestSelectAdaptivePromotedTermsHonorsCoverageFiltersAndSortOrder(t *testing
 	}
 	if _, ok := got["omega"]; ok {
 		t.Fatal("omega should be filtered out by coverage ceiling")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsMinCoverage(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.99
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	builder.addStringTerm(pd, "single", 0, "$.field")
+	builder.addStringTerm(pd, "double", 0, "$.field")
+	builder.addStringTerm(pd, "double", 1, "$.field")
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if _, ok := got["single"]; ok {
+		t.Fatal("single should be filtered out by min coverage")
+	}
+	if _, ok := got["double"]; !ok {
+		t.Fatal("double should satisfy min coverage")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsCoverageCeiling(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 1
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.50
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	for rgID := 0; rgID < 3; rgID++ {
+		builder.addStringTerm(pd, "too_hot", rgID, "$.field")
+	}
+	for rgID := 0; rgID < 2; rgID++ {
+		builder.addStringTerm(pd, "okay", rgID, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if _, ok := got["too_hot"]; ok {
+		t.Fatal("too_hot should be filtered out by coverage ceiling")
+	}
+	if _, ok := got["okay"]; !ok {
+		t.Fatal("okay should satisfy coverage ceiling")
+	}
+}
+
+func TestSelectAdaptivePromotedTermsRespectsCapAndStableSortOrder(t *testing.T) {
+	config := DefaultConfig()
+	config.AdaptiveMinRGCoverage = 1
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.99
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 4)
+	pd := builder.getOrCreatePath("$.field")
+	for _, term := range []string{"beta", "alpha", "gamma"} {
+		builder.addStringTerm(pd, term, 0, "$.field")
+	}
+
+	got := builder.selectAdaptivePromotedTerms(pd)
+	if len(got) != 2 {
+		t.Fatalf("len(promoted) = %d, want 2", len(got))
+	}
+	if _, ok := got["alpha"]; !ok {
+		t.Fatal("alpha should win tie-break by lexical order")
+	}
+	if _, ok := got["beta"]; !ok {
+		t.Fatal("beta should win tie-break by lexical order")
+	}
+	if _, ok := got["gamma"]; ok {
+		t.Fatal("gamma should be dropped by cap")
 	}
 }
 
@@ -674,6 +813,35 @@ func TestAdaptiveBucketIndexPanicsOnZeroBuckets(t *testing.T) {
 	}()
 
 	_ = adaptiveBucketIndex("alpha", 0)
+}
+
+func TestAdaptiveNegativePredicatesMixedPromotedAndTailStayConservative(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 1
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 2
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 4
+
+	builder := mustNewBuilder(t, config, 6)
+	docs := []string{
+		`{"field":"hot"}`,
+		`{"field":"hot"}`,
+		`{"field":"tail_2"}`,
+		`{"field":"tail_3"}`,
+		`{"field":"tail_4"}`,
+		`{"field":"tail_5"}`,
+	}
+	for rgID, doc := range docs {
+		if err := builder.AddDocument(DocID(rgID), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) failed: %v", rgID, err)
+		}
+	}
+
+	idx := builder.Finalize()
+	if got := idx.Evaluate([]Predicate{NIN("$.field", "hot", "tail_2")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("NIN mixed promoted+tail result = %v, want all present RGs", got)
+	}
 }
 
 func TestQueryNIN(t *testing.T) {

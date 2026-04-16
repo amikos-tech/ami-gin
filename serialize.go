@@ -153,6 +153,9 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if level < 0 || level > 19 {
 		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
 	}
+	if err := idx.validatePathReferences(); err != nil {
+		return nil, errors.Wrap(err, "validate path references")
+	}
 
 	var buf bytes.Buffer
 
@@ -380,6 +383,13 @@ func readHeader(r io.Reader, idx *GINIndex) error {
 	return binary.Read(r, binary.LittleEndian, &idx.Header.CardinalityThresh)
 }
 
+func rejectDuplicateSectionPath[T any](kind string, sections map[uint16]T, pathID uint16) error {
+	if _, exists := sections[pathID]; exists {
+		return errors.Wrapf(ErrInvalidFormat, "duplicate %s for path %d", kind, pathID)
+	}
+	return nil
+}
+
 func writePathDirectory(w io.Writer, idx *GINIndex) error {
 	for _, entry := range idx.PathDirectory {
 		if err := binary.Write(w, binary.LittleEndian, entry.PathID); err != nil {
@@ -527,6 +537,9 @@ func readStringIndexes(r io.Reader, idx *GINIndex) error {
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
 			return err
 		}
+		if err := rejectDuplicateSectionPath("string index", idx.StringIndexes, pathID); err != nil {
+			return err
+		}
 		var numTerms uint32
 		if err := binary.Read(r, binary.LittleEndian, &numTerms); err != nil {
 			return err
@@ -647,8 +660,8 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 		if idx.PathDirectory[pathID].Mode != PathModeAdaptiveHybrid {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive section path %d is missing adaptive mode", pathID)
 		}
-		if _, exists := idx.AdaptiveStringIndexes[pathID]; exists {
-			return errors.Wrapf(ErrInvalidFormat, "duplicate adaptive section for path %d", pathID)
+		if err := rejectDuplicateSectionPath("adaptive section", idx.AdaptiveStringIndexes, pathID); err != nil {
+			return err
 		}
 
 		var numTerms uint32
@@ -706,6 +719,12 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d invalid: %v", pathID, err)
 		}
 
+		if entry := idx.PathDirectory[pathID]; entry.AdaptivePromotedTerms != 0 && entry.AdaptivePromotedTerms != uint16(numTerms) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d directory promoted count %d does not match section %d", pathID, entry.AdaptivePromotedTerms, numTerms)
+		}
+		if entry := idx.PathDirectory[pathID]; entry.AdaptiveBucketCount != 0 && entry.AdaptiveBucketCount != uint16(bucketCount) {
+			return errors.Wrapf(ErrInvalidFormat, "adaptive path %d directory bucket count %d does not match section %d", pathID, entry.AdaptiveBucketCount, bucketCount)
+		}
 		idx.AdaptiveStringIndexes[pathID] = adaptive
 		idx.PathDirectory[pathID].AdaptivePromotedTerms = uint16(numTerms)
 		idx.PathDirectory[pathID].AdaptiveBucketCount = uint16(bucketCount)
@@ -771,6 +790,9 @@ func readStringLengthIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
+			return err
+		}
+		if err := rejectDuplicateSectionPath("string length index", idx.StringLengthIndexes, pathID); err != nil {
 			return err
 		}
 		sli := &StringLengthIndex{}
@@ -870,6 +892,9 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
 			return err
 		}
+		if err := rejectDuplicateSectionPath("numeric index", idx.NumericIndexes, pathID); err != nil {
+			return err
+		}
 		ni := &NumericIndex{}
 		if err := binary.Read(r, binary.LittleEndian, &ni.ValueType); err != nil {
 			return err
@@ -955,6 +980,9 @@ func readNullIndexes(r io.Reader, idx *GINIndex) error {
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
 			return err
 		}
+		if err := rejectDuplicateSectionPath("null index", idx.NullIndexes, pathID); err != nil {
+			return err
+		}
 		nullBitmap, err := readRGSet(r, idx.Header.NumRowGroups)
 		if err != nil {
 			return err
@@ -1024,6 +1052,9 @@ func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
+			return err
+		}
+		if err := rejectDuplicateSectionPath("trigram index", idx.TrigramIndexes, pathID); err != nil {
 			return err
 		}
 		var numRGs uint32
@@ -1110,6 +1141,9 @@ func readHyperLogLogs(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
+			return err
+		}
+		if err := rejectDuplicateSectionPath("hyperloglog", idx.PathCardinality, pathID); err != nil {
 			return err
 		}
 		var precision uint8

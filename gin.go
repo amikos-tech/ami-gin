@@ -9,7 +9,7 @@ import (
 
 const (
 	MagicBytes = "GIN\x01"
-	Version    = uint16(5)
+	Version    = uint16(6)
 )
 
 const (
@@ -28,11 +28,17 @@ const (
 	FlagTrigramIndex uint8 = 1 << iota // path has trigram index for CONTAINS queries
 )
 
+// PathMode is the exclusive storage mode for a path entry.
+// The zero value is the classic exact mode.
 type PathMode uint8
 
 const (
+	// PathModeClassic keeps the full exact string index for a path.
+	// Its user-facing string label remains "exact" for CLI continuity.
 	PathModeClassic PathMode = iota
+	// PathModeBloomOnly stores no exact term index and answers via bloom-filter fallback.
 	PathModeBloomOnly
+	// PathModeAdaptiveHybrid stores promoted exact terms plus lossy tail buckets.
 	PathModeAdaptiveHybrid
 )
 
@@ -65,10 +71,11 @@ type Header struct {
 }
 
 type PathEntry struct {
-	PathID                uint16
-	PathName              string
-	ObservedTypes         uint8
-	Cardinality           uint32
+	PathID        uint16
+	PathName      string
+	ObservedTypes uint8
+	Cardinality   uint32
+	// Mode is the exclusive string-evaluation mode for this path.
 	Mode                  PathMode
 	Flags                 uint8
 	AdaptivePromotedTerms uint16
@@ -86,6 +93,7 @@ type AdaptiveStringIndex struct {
 	BucketRGBitmaps []*RGSet
 }
 
+// String returns the user-facing label used in CLI output and diagnostics.
 func (m PathMode) String() string {
 	switch m {
 	case PathModeClassic:
@@ -99,6 +107,7 @@ func (m PathMode) String() string {
 	}
 }
 
+// NewAdaptiveStringIndex validates and constructs an adaptive string index.
 func NewAdaptiveStringIndex(terms []string, rgBitmaps []*RGSet, bucketBitmaps []*RGSet) (*AdaptiveStringIndex, error) {
 	if len(terms) != len(rgBitmaps) {
 		return nil, errors.Errorf("adaptive rgbitmap count %d does not match term count %d", len(rgBitmaps), len(terms))
@@ -403,6 +412,7 @@ func DefaultConfig() GINConfig {
 	}
 }
 
+// AdaptiveEnabled reports whether adaptive high-cardinality indexing is enabled.
 func (c GINConfig) AdaptiveEnabled() bool {
 	return c.AdaptivePromotedTermCap > 0 && c.AdaptiveBucketCount > 0
 }

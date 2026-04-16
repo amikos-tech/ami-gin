@@ -39,6 +39,47 @@ func buildAdaptiveSerializationFixture(t *testing.T, config GINConfig) *GINIndex
 	return builder.Finalize()
 }
 
+func legacyV5HeaderOnlyPayload(t *testing.T) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if _, err := buf.WriteString(uncompressedMagic); err != nil {
+		t.Fatalf("WriteString(uncompressedMagic) error = %v", err)
+	}
+	if _, err := buf.WriteString(MagicBytes); err != nil {
+		t.Fatalf("WriteString(MagicBytes) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(5)); err != nil {
+		t.Fatalf("binary.Write(version) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(flags) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+		t.Fatalf("binary.Write(numRowGroups) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint64(0)); err != nil {
+		t.Fatalf("binary.Write(numDocs) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+		t.Fatalf("binary.Write(cardinalityThreshold) error = %v", err)
+	}
+	return buf.Bytes()
+}
+
+func mustAdaptiveIndex(t *testing.T, terms []string, rgBitmaps []*RGSet, bucketBitmaps []*RGSet) *AdaptiveStringIndex {
+	t.Helper()
+
+	adaptive, err := NewAdaptiveStringIndex(terms, rgBitmaps, bucketBitmaps)
+	if err != nil {
+		t.Fatalf("NewAdaptiveStringIndex() error = %v", err)
+	}
+	return adaptive
+}
+
 func TestDecodeVersionMismatch(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.AddDocument(0, []byte(`{"name": "alice", "age": 30}`))
@@ -86,6 +127,18 @@ func TestDecodeLegacyRejected(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
+	}
+}
+
+func TestDecodeRejectsLegacyV5PayloadAfterWireFormatChange(t *testing.T) {
+	data := legacyV5HeaderOnlyPayload(t)
+
+	_, err := Decode(data)
+	if err == nil {
+		t.Fatal("Decode() error = nil, want ErrVersionMismatch for legacy v5 payload")
+	}
+	if !stderrors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("expected ErrVersionMismatch, got %v", err)
 	}
 }
 
@@ -288,6 +341,29 @@ func TestAdaptiveRoundTripPreservesQueryResults(t *testing.T) {
 	}
 }
 
+func TestEncodeRejectsInvalidAdaptivePathReference(t *testing.T) {
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 1
+	idx.Header.NumPaths = 1
+	idx.GlobalBloom = MustNewBloomFilter(64, 3)
+	idx.PathDirectory = []PathEntry{{
+		PathID:   0,
+		PathName: "$.field",
+		Mode:     PathModeAdaptiveHybrid,
+	}}
+
+	_, err := EncodeWithLevel(idx, CompressionNone)
+	if err == nil {
+		t.Fatal("EncodeWithLevel() error = nil, want invalid adaptive path reference rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "adaptive path 0 missing adaptive section") {
+		t.Fatalf("EncodeWithLevel() error = %v, want missing adaptive section context", err)
+	}
+}
+
 func TestDecodeRejectsOversizedAdaptiveBucketSection(t *testing.T) {
 	var buf bytes.Buffer
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
@@ -447,6 +523,327 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tt.wantContains) {
 				t.Fatalf("error = %v, want substring %q", err, tt.wantContains)
+			}
+		})
+	}
+}
+
+func TestDecodeRejectsAdaptiveDirectorySectionCountMismatch(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(pathID) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numTerms) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+		t.Fatalf("binary.Write(bucketCount) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(len("hot"))); err != nil {
+		t.Fatalf("binary.Write(termLen) error = %v", err)
+	}
+	if _, err := buf.WriteString("hot"); err != nil {
+		t.Fatalf("WriteString(term) error = %v", err)
+	}
+	if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
+		t.Fatalf("writeRGSet(promoted) error = %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
+			t.Fatalf("writeRGSet(bucket=%d) error = %v", i, err)
+		}
+	}
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 4
+	idx.PathDirectory = []PathEntry{{
+		PathID:                0,
+		PathName:              "$.field",
+		Mode:                  PathModeAdaptiveHybrid,
+		AdaptivePromotedTerms: 3,
+		AdaptiveBucketCount:   4,
+	}}
+
+	err := readAdaptiveStringIndexes(&buf, idx)
+	if err == nil {
+		t.Fatal("expected mismatch error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "directory") {
+		t.Fatalf("error = %v, want directory mismatch context", err)
+	}
+}
+
+func TestDecodeRejectsOversizedAdaptiveTermSection(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(pathID) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(maxAdaptiveTermsPerPath+1)); err != nil {
+		t.Fatalf("binary.Write(numTerms) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+		t.Fatalf("binary.Write(bucketCount) error = %v", err)
+	}
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 1
+	idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+
+	err := readAdaptiveStringIndexes(&buf, idx)
+	if err == nil {
+		t.Fatal("expected error for oversized adaptive term section, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsAdaptivePathIDOutOfRange(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(1)); err != nil {
+		t.Fatalf("binary.Write(pathID) error = %v", err)
+	}
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 1
+	idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+
+	err := readAdaptiveStringIndexes(&buf, idx)
+	if err == nil {
+		t.Fatal("expected out-of-range error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsTruncatedAdaptiveTerm(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numPaths) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(pathID) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numTerms) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+		t.Fatalf("binary.Write(bucketCount) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(4)); err != nil {
+		t.Fatalf("binary.Write(termLen) error = %v", err)
+	}
+	if _, err := buf.WriteString("abc"); err != nil {
+		t.Fatalf("WriteString(term) error = %v", err)
+	}
+
+	idx := NewGINIndex()
+	idx.Header.NumRowGroups = 1
+	idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
+
+	err := readAdaptiveStringIndexes(&buf, idx)
+	if err == nil {
+		t.Fatal("expected truncation error, got nil")
+	}
+	if !stderrors.Is(err, io.ErrUnexpectedEOF) && !stderrors.Is(err, io.EOF) {
+		t.Fatalf("expected EOF-class error, got %v", err)
+	}
+}
+
+func TestDecodeRejectsDuplicatePathSectionsAcrossReaders(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(*testing.T) error
+	}{
+		{
+			name: "string indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+				}
+				return readStringIndexes(&buf, NewGINIndex())
+			},
+		},
+		{
+			name: "string length indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+				}
+				return readStringLengthIndexes(&buf, NewGINIndex(), 0)
+			},
+		},
+		{
+			name: "numeric indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					binary.Write(&buf, binary.LittleEndian, NumericValueTypeIntOnly)
+					binary.Write(&buf, binary.LittleEndian, int64(0))
+					binary.Write(&buf, binary.LittleEndian, int64(0))
+					binary.Write(&buf, binary.LittleEndian, uint64(0))
+					binary.Write(&buf, binary.LittleEndian, uint64(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+				}
+				return readNumericIndexes(&buf, NewGINIndex(), 0)
+			},
+		},
+		{
+			name: "null indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 1
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					writeRGSet(&buf, MustNewRGSet(1))
+					writeRGSet(&buf, MustNewRGSet(1))
+				}
+				return readNullIndexes(&buf, idx)
+			},
+		},
+		{
+			name: "trigram indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 1
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(1))
+					binary.Write(&buf, binary.LittleEndian, uint8(3))
+					binary.Write(&buf, binary.LittleEndian, uint8(0))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
+				}
+				return readTrigramIndexes(&buf, idx)
+			},
+		},
+		{
+			name: "hyperloglogs",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					binary.Write(&buf, binary.LittleEndian, uint8(4))
+					binary.Write(&buf, binary.LittleEndian, uint32(16))
+					buf.Write(make([]byte, 16))
+				}
+				return readHyperLogLogs(&buf, NewGINIndex())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run(t)
+			if err == nil {
+				t.Fatal("expected duplicate-path rejection, got nil")
+			}
+			if !stderrors.Is(err, ErrInvalidFormat) {
+				t.Fatalf("expected ErrInvalidFormat, got %v", err)
+			}
+			if !strings.Contains(err.Error(), "duplicate") {
+				t.Fatalf("error = %v, want duplicate context", err)
+			}
+		})
+	}
+}
+
+func TestValidatePathReferencesRejectsModeMismatches(t *testing.T) {
+	tests := []struct {
+		name string
+		idx  func() *GINIndex
+		want string
+	}{
+		{
+			name: "classic path with adaptive section",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathModeClassic}}
+				adaptive, err := NewAdaptiveStringIndex([]string{"hot"}, []*RGSet{MustNewRGSet(1)}, []*RGSet{MustNewRGSet(1)})
+				if err != nil {
+					t.Fatalf("NewAdaptiveStringIndex() error = %v", err)
+				}
+				idx.AdaptiveStringIndexes[0] = adaptive
+				return idx
+			},
+			want: "must not have adaptive section",
+		},
+		{
+			name: "bloom-only path with exact string index",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathModeBloomOnly}}
+				idx.StringIndexes[0] = &StringIndex{}
+				return idx
+			},
+			want: "must not have string index",
+		},
+		{
+			name: "adaptive path with exact string index",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathModeAdaptiveHybrid}}
+				idx.StringIndexes[0] = &StringIndex{}
+				idx.AdaptiveStringIndexes[0] = mustAdaptiveIndex(t, []string{"hot"}, []*RGSet{MustNewRGSet(1)}, []*RGSet{MustNewRGSet(1)})
+				return idx
+			},
+			want: "must not have exact string index",
+		},
+		{
+			name: "unknown mode",
+			idx: func() *GINIndex {
+				idx := NewGINIndex()
+				idx.PathDirectory = []PathEntry{{PathID: 0, PathName: "$.field", Mode: PathMode(99)}}
+				return idx
+			},
+			want: "unknown mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.idx().validatePathReferences()
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !stderrors.Is(err, ErrInvalidFormat) {
+				t.Fatalf("expected ErrInvalidFormat, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want substring %q", err, tt.want)
 			}
 		})
 	}
@@ -682,12 +1079,7 @@ func TestDecodeRejectsOutOfRangeNumericIndexPathID(t *testing.T) {
 	}
 	idx.NumericIndexes[outOfRangePathID(t, idx)] = numeric
 
-	data, err := EncodeWithLevel(idx, CompressionNone)
-	if err != nil {
-		t.Fatalf("encode failed: %v", err)
-	}
-
-	_, err = Decode(data)
+	_, err := EncodeWithLevel(idx, CompressionNone)
 	if err == nil {
 		t.Fatal("expected error for out-of-range numeric index path id, got nil")
 	}
