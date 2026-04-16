@@ -230,7 +230,7 @@ func (b *GINBuilder) buildAdaptiveStringIndex(pd *pathBuildData) *AdaptiveString
 			continue
 		}
 		bucketID := adaptiveBucketIndex(term, len(bucketBitmaps))
-		bucketBitmaps[bucketID] = bucketBitmaps[bucketID].Union(rgSet)
+		bucketBitmaps[bucketID].UnionWith(rgSet)
 	}
 
 	adaptive, err := NewAdaptiveStringIndex(terms, rgBitmaps, bucketBitmaps)
