@@ -310,11 +310,15 @@ func isInternalRepresentationPath(path string) bool {
 	return strings.HasPrefix(path, internalRepresentationPathPrefix)
 }
 
-func (c *GINConfig) firstRepresentation(canonicalPath string) (registeredRepresentation, bool) {
+func (c *GINConfig) representations(canonicalPath string) []registeredRepresentation {
 	if c == nil || c.representationTransformers == nil {
-		return registeredRepresentation{}, false
+		return nil
 	}
-	registrations := c.representationTransformers[canonicalPath]
+	return c.representationTransformers[canonicalPath]
+}
+
+func (c *GINConfig) firstRepresentation(canonicalPath string) (registeredRepresentation, bool) {
+	registrations := c.representations(canonicalPath)
 	if len(registrations) == 0 {
 		return registeredRepresentation{}, false
 	}
@@ -631,7 +635,10 @@ func (idx *GINIndex) rebuildPathLookup() error {
 		}
 
 		rawPath := entry.PathName
-		canonical := NormalizePath(rawPath)
+		canonical := rawPath
+		if !isInternalRepresentationPath(rawPath) {
+			canonical = NormalizePath(rawPath)
+		}
 		if firstPath, exists := originals[canonical]; exists {
 			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, rawPath)
 		}

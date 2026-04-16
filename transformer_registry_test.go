@@ -387,9 +387,11 @@ func TestConfigSerializationNumericTransformerPath(t *testing.T) {
 		t.Fatalf("decoded semver transformer = %v, want 2001003", transformed)
 	}
 
-	result := decoded.Evaluate([]Predicate{EQ("$.version", int64(2001003))})
+	pathID := requirePathID(t, decoded, "__derived:$.version#semver_int")
+	entry := &decoded.PathDirectory[pathID]
+	result := decoded.evaluateEQ(int(pathID), entry, float64(2001003))
 	if !result.IsSet(0) || result.IsSet(1) {
-		t.Fatalf("decoded numeric transformer query result = %v, want [0]", result.ToSlice())
+		t.Fatalf("decoded derived transformer query result = %v, want [0]", result.ToSlice())
 	}
 }
 

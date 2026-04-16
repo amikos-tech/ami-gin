@@ -347,7 +347,7 @@ func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state 
 	if transformed, handled, err := b.decodeTransformedValue(decoder, canonicalPath); err != nil {
 		return errors.Wrapf(err, "parse transformed subtree at %s", canonicalPath)
 	} else if handled {
-		return b.stageMaterializedValue(path, transformed, state, false)
+		return b.stageMaterializedValue(path, transformed, state, true)
 	}
 
 	token, err := decoder.Token()
@@ -436,16 +436,12 @@ func sortedObjectKeys(values map[string]any) []string {
 }
 
 func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
-	registration, ok := b.config.firstRepresentation(canonicalPath)
-	if !ok {
+	if len(b.config.representations(canonicalPath)) == 0 {
 		return nil, false, nil
 	}
 	value, err := decodeAny(decoder)
 	if err != nil {
 		return nil, false, err
-	}
-	if transformed, ok := registration.FieldTransformer(prepareTransformerValue(value)); ok {
-		return transformed, true, nil
 	}
 	return value, true, nil
 }
@@ -501,10 +497,8 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 func (b *GINBuilder) stageMaterializedValue(path string, value any, state *documentBuildState, allowTransform bool) error {
 	canonicalPath := normalizeWalkPath(path)
 	if allowTransform {
-		if registration, ok := b.config.firstRepresentation(canonicalPath); ok {
-			if transformed, ok := registration.FieldTransformer(prepareTransformerValue(value)); ok {
-				value = transformed
-			}
+		if err := b.stageCompanionRepresentations(canonicalPath, value, state); err != nil {
+			return err
 		}
 	}
 
@@ -576,6 +570,26 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	default:
 		return errors.Errorf("unsupported transformed value type %T at %s", value, canonicalPath)
 	}
+}
+
+func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value any, state *documentBuildState) error {
+	registrations := b.config.representations(canonicalPath)
+	if len(registrations) == 0 {
+		return nil
+	}
+
+	prepared := prepareTransformerValue(value)
+	for _, registration := range registrations {
+		transformed, ok := registration.FieldTransformer(prepared)
+		if !ok {
+			return errors.Errorf("transform %s for %s failed", registration.Alias, canonicalPath)
+		}
+		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {

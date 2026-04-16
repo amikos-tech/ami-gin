@@ -1939,6 +1939,66 @@ func TestConfigRejectsDuplicateTransformerAlias(t *testing.T) {
 	}
 }
 
+func TestBuilderIndexesRawAndCompanionRepresentations(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 2)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument(0) error = %v", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"email":"bob@other.com"}`)); err != nil {
+		t.Fatalf("AddDocument(1) error = %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", "Alice@Example.COM")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0}) {
+		t.Fatalf(`EQ("$.email", "Alice@Example.COM") = %v, want [0]`, got)
+	}
+
+	rawPathID, ok := idx.pathLookup["$.email"]
+	if !ok {
+		t.Fatal(`pathLookup["$.email"] missing`)
+	}
+	rawIndex, ok := idx.StringIndexes[rawPathID]
+	if !ok {
+		t.Fatal(`StringIndexes["$.email"] missing`)
+	}
+	if got := fmt.Sprint(rawIndex.Terms); got != fmt.Sprint([]string{"Alice@Example.COM", "bob@other.com"}) {
+		t.Fatalf("raw terms = %s, want %v", got, []string{"Alice@Example.COM", "bob@other.com"})
+	}
+
+	lowerPathID, ok := idx.pathLookup["__derived:$.email#lower"]
+	if !ok {
+		t.Fatal(`pathLookup["__derived:$.email#lower"] missing`)
+	}
+	lowerIndex, ok := idx.StringIndexes[lowerPathID]
+	if !ok {
+		t.Fatal(`StringIndexes["__derived:$.email#lower"] missing`)
+	}
+	if got := fmt.Sprint(lowerIndex.Terms); got != fmt.Sprint([]string{"alice@example.com", "bob@other.com"}) {
+		t.Fatalf("lower terms = %s, want %v", got, []string{"alice@example.com", "bob@other.com"})
+	}
+
+	domainPathID, ok := idx.pathLookup["__derived:$.email#domain"]
+	if !ok {
+		t.Fatal(`pathLookup["__derived:$.email#domain"] missing`)
+	}
+	domainIndex, ok := idx.StringIndexes[domainPathID]
+	if !ok {
+		t.Fatal(`StringIndexes["__derived:$.email#domain"] missing`)
+	}
+	if got := fmt.Sprint(domainIndex.Terms); got != fmt.Sprint([]string{"example.com", "other.com"}) {
+		t.Fatalf("domain terms = %s, want %v", got, []string{"example.com", "other.com"})
+	}
+}
+
 func TestBuilderCanonicalizesSupportedPathVariants(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 
@@ -1982,6 +2042,24 @@ func TestRebuildPathLookupRejectsDuplicateCanonicalPaths(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("rebuildPathLookup() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestRebuildPathLookupPreservesInternalRepresentationPaths(t *testing.T) {
+	idx := NewGINIndex()
+	idx.PathDirectory = []PathEntry{
+		{PathID: 0, PathName: "$.email"},
+		{PathID: 1, PathName: "__derived:$.email#lower"},
+	}
+
+	if err := idx.rebuildPathLookup(); err != nil {
+		t.Fatalf("rebuildPathLookup() error = %v", err)
+	}
+	if got := idx.PathDirectory[1].PathName; got != "__derived:$.email#lower" {
+		t.Fatalf("PathDirectory[1].PathName = %q, want %q", got, "__derived:$.email#lower")
+	}
+	if got, ok := idx.pathLookup["__derived:$.email#lower"]; !ok || got != 1 {
+		t.Fatalf(`pathLookup["__derived:$.email#lower"] = (%d, %v), want (1, true)`, got, ok)
 	}
 }
 
@@ -2065,6 +2143,12 @@ func TestRebuildPathLookupValidationErrorPreservesExistingLookupOnError(t *testi
 	}
 	if _, ok := idx.pathLookup["$.foo_renamed"]; ok {
 		t.Fatal("pathLookup unexpectedly contains rebuilt key after validation error")
+	}
+}
+
+func TestValidateJSONPathRejectsInternalRepresentationPaths(t *testing.T) {
+	if err := ValidateJSONPath("__derived:$.email#lower"); err == nil {
+		t.Fatal("ValidateJSONPath(internal path) error = nil, want rejection")
 	}
 }
 

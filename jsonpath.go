@@ -2,6 +2,7 @@ package gin
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ohler55/ojg/jp"
 )
@@ -21,6 +22,9 @@ func (e *JSONPathError) Error() string {
 func ValidateJSONPath(path string) error {
 	if path == "" {
 		return &JSONPathError{Path: path, Message: "empty path"}
+	}
+	if strings.HasPrefix(path, internalRepresentationPathPrefix) {
+		return &JSONPathError{Path: path, Message: "reserved internal representation path namespace"}
 	}
 
 	if path[0] != '$' {
