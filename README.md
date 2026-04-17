@@ -144,125 +144,114 @@ idx.Evaluate([]gin.Predicate{
 })
 ```
 
-### Date Range Queries with Field Transformers
+### Derived Representation Queries
 
-Transform date strings into numeric epoch milliseconds for efficient range queries:
+Derived representations add companion indexes without dropping the raw source value. Raw-path queries stay raw by default; query a companion explicitly with `gin.As(alias, value)`. Hidden internal target paths are not part of the public query contract.
 
 ```go
-// Configure transformers for date fields
 config, _ := gin.NewConfig(
-    gin.WithFieldTransformer("$.created_at", gin.ISODateToEpochMs),  // RFC3339
-    gin.WithFieldTransformer("$.birth_date", gin.DateToEpochMs),     // YYYY-MM-DD
-    gin.WithFieldTransformer("$.custom_ts", gin.CustomDateToEpochMs("2006/01/02 15:04")),
+    gin.WithISODateTransformer("$.created_at", "epoch_ms"),
+    gin.WithToLowerTransformer("$.email", "lower"),
+    gin.WithEmailDomainTransformer("$.email", "domain"),
+    gin.WithRegexExtractTransformer("$.message", "error_code", `ERROR\[(\w+)\]:`, 1),
 )
 builder, _ := gin.NewBuilder(config, numRGs)
 
-// Add documents - dates are automatically transformed to epoch ms
-builder.AddDocument(0, []byte(`{"created_at": "2024-01-15T10:30:00Z", "birth_date": "1990-05-20"}`))
-builder.AddDocument(1, []byte(`{"created_at": "2024-06-15T14:00:00Z", "birth_date": "1985-03-10"}`))
+builder.AddDocument(0, []byte(`{
+    "created_at": "2024-07-10T09:00:00Z",
+    "email": "Alice@Example.COM",
+    "message": "ERROR[E1001]: Connection timeout"
+}`))
 
 idx := builder.Finalize()
 
-// Query with epoch milliseconds
-july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-result := idx.Evaluate([]gin.Predicate{gin.GT("$.created_at", july2024)})
+// Raw source-path queries still use the original value.
+raw := idx.Evaluate([]gin.Predicate{
+    gin.EQ("$.created_at", "2024-07-10T09:00:00Z"),
+})
 
-// Date range: Q1 2024
-jan := float64(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-apr := float64(time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-result = idx.Evaluate([]gin.Predicate{
-    gin.GTE("$.created_at", jan),
-    gin.LT("$.created_at", apr),
+// Alias queries opt into the derived companion explicitly.
+july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+dateResult := idx.Evaluate([]gin.Predicate{
+    gin.GTE("$.created_at", gin.As("epoch_ms", july2024)),
+})
+lowerResult := idx.Evaluate([]gin.Predicate{
+    gin.EQ("$.email", gin.As("lower", "alice@example.com")),
+})
+domainResult := idx.Evaluate([]gin.Predicate{
+    gin.EQ("$.email", gin.As("domain", "example.com")),
+})
+errorResult := idx.Evaluate([]gin.Predicate{
+    gin.EQ("$.message", gin.As("error_code", "E1001")),
 })
 ```
 
-**Built-in date transformers:**
-- `ISODateToEpochMs` - RFC3339/ISO8601 (`2024-01-15T10:30:00Z`)
-- `DateToEpochMs` - Date only (`2024-01-15`)
-- `CustomDateToEpochMs(layout)` - Custom Go time layout
+**Built-in additive helpers:**
+- Date/time: `WithISODateTransformer(path, alias)`, `WithDateTransformer(path, alias)`, `WithCustomDateTransformer(path, alias, layout)`
+- String normalization: `WithToLowerTransformer(path, alias)`, `WithEmailDomainTransformer(path, alias)`, `WithURLHostTransformer(path, alias)`
+- Extracted subfields: `WithRegexExtractTransformer(path, alias, pattern, group)`, `WithRegexExtractIntTransformer(path, alias, pattern, group)`
+- Numeric companions: `WithIPv4Transformer(path, alias)`, `WithSemVerTransformer(path, alias)`, `WithDurationTransformer(path, alias)`, `WithNumericBucketTransformer(path, alias, size)`, `WithBoolNormalizeTransformer(path, alias)`
 
-**Built-in string transformers:**
-- `ToLower` - Lowercase normalization for case-insensitive queries
-- `EmailDomain` - Extract and lowercase domain from email (`alice@Example.COM` → `example.com`)
-- `URLHost` - Extract and lowercase host from URL (`https://API.Example.COM/v1` → `api.example.com`)
-- `RegexExtract(pattern, group)` - Extract substring via regex capture group
-- `RegexExtractInt(pattern, group)` - Extract and convert to numeric
-
-**Built-in numeric transformers:**
-- `IPv4ToInt` - IPv4 address to uint32 for range queries (`192.168.1.1` → `3232235777`)
-- `SemVerToInt` - Semantic version to integer (`2.1.3` → `2001003`)
-- `DurationToMs` - Go duration string to milliseconds (`1h30m` → `5400000`)
-- `NumericBucket(size)` - Bucket values for histograms (`150` with size `100` → `100`)
-- `BoolNormalize` - Normalize boolean-like values (`"yes"`, `"1"`, `"on"` → `true`)
-
-**IP subnet helpers (for use with IPv4ToInt):**
-- `CIDRToRange(cidr)` - Parse CIDR notation, returns `(start, end float64, err)`
-- `InSubnet(path, cidr)` - Returns `[]Predicate` for subnet membership check
-
-**Custom transformers:**
+**Custom companions:**
 ```go
-// Create your own transformer
 myTransformer := func(v any) (any, bool) {
     s, ok := v.(string)
     if !ok {
         return nil, false
     }
-    // Your transformation logic
-    return transformedValue, true
+    return strings.ToUpper(s), true
 }
-config, _ := gin.NewConfig(gin.WithFieldTransformer("$.my_field", myTransformer))
+
+config, _ := gin.NewConfig(
+    gin.WithCustomTransformer("$.my_field", "upper", myTransformer),
+)
 ```
 
-**Example: IP subnet queries (network/security logs)**
+`WithCustomTransformer(...)` works for in-memory indexes, but opaque custom companions are not serializable. `Encode()` rejects them because the function cannot be reconstructed on `Decode()`.
+
+**Example: IP subnet queries**
 ```go
 config, _ := gin.NewConfig(
-    gin.WithFieldTransformer("$.client_ip", gin.IPv4ToInt),
+    gin.WithIPv4Transformer("$.client_ip", "ipv4_int"),
 )
-// "192.168.1.1" indexed as 3232235777
 
-// Query: Find IPs in 192.168.1.0/24 subnet using InSubnet helper
-result := idx.Evaluate(gin.InSubnet("$.client_ip", "192.168.1.0/24"))
-
-// Or use CIDRToRange for manual control
-start, end, _ := gin.CIDRToRange("10.0.0.0/8")
-result = idx.Evaluate([]gin.Predicate{
-    gin.GTE("$.client_ip", start),
-    gin.LTE("$.client_ip", end),
+start, end, _ := gin.CIDRToRange("192.168.1.0/24")
+result := idx.Evaluate([]gin.Predicate{
+    gin.GTE("$.client_ip", gin.As("ipv4_int", start)),
+    gin.LTE("$.client_ip", gin.As("ipv4_int", end)),
 })
 ```
 
-**Example: Version range queries (software metadata)**
+**Example: Version range queries**
 ```go
 config, _ := gin.NewConfig(
-    gin.WithFieldTransformer("$.version", gin.SemVerToInt),
+    gin.WithSemVerTransformer("$.version", "semver_int"),
 )
-// "v2.1.3" indexed as 2001003
 
-// Query: Find versions >= 2.0.0
 result := idx.Evaluate([]gin.Predicate{
-    gin.GTE("$.version", float64(2000000)),
+    gin.GTE("$.version", gin.As("semver_int", float64(2000000))),
 })
 ```
 
 **Example: Case-insensitive email queries**
 ```go
 config, _ := gin.NewConfig(
-    gin.WithFieldTransformer("$.email", gin.ToLower),
+    gin.WithToLowerTransformer("$.email", "lower"),
 )
-// "Alice@Example.COM" indexed as "alice@example.com"
+
 result := idx.Evaluate([]gin.Predicate{
-    gin.EQ("$.email", "alice@example.com"),
+    gin.EQ("$.email", gin.As("lower", "alice@example.com")),
 })
 ```
 
 **Example: Extract error codes from log messages**
 ```go
 config, _ := gin.NewConfig(
-    gin.WithFieldTransformer("$.message", gin.RegexExtract(`ERROR\[(\w+)\]:`, 1)),
+    gin.WithRegexExtractTransformer("$.message", "error_code", `ERROR\[(\w+)\]:`, 1),
 )
-// "ERROR[E1234]: Connection failed" indexed as "E1234"
+
 result := idx.Evaluate([]gin.Predicate{
-    gin.EQ("$.message", "E1234"),
+    gin.EQ("$.message", gin.As("error_code", "E1234")),
 })
 ```
 

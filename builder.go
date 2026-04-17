@@ -347,7 +347,7 @@ func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state 
 	if transformed, handled, err := b.decodeTransformedValue(decoder, canonicalPath); err != nil {
 		return errors.Wrapf(err, "parse transformed subtree at %s", canonicalPath)
 	} else if handled {
-		return b.stageMaterializedValue(path, transformed, state, false)
+		return b.stageMaterializedValue(path, transformed, state, true)
 	}
 
 	token, err := decoder.Token()
@@ -436,19 +436,12 @@ func sortedObjectKeys(values map[string]any) []string {
 }
 
 func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
-	if b.config.fieldTransformers == nil {
-		return nil, false, nil
-	}
-	transformer, ok := b.config.fieldTransformers[canonicalPath]
-	if !ok {
+	if len(b.config.representations(canonicalPath)) == 0 {
 		return nil, false, nil
 	}
 	value, err := decodeAny(decoder)
 	if err != nil {
 		return nil, false, err
-	}
-	if transformed, ok := transformer(prepareTransformerValue(value)); ok {
-		return transformed, true, nil
 	}
 	return value, true, nil
 }
@@ -503,11 +496,9 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 
 func (b *GINBuilder) stageMaterializedValue(path string, value any, state *documentBuildState, allowTransform bool) error {
 	canonicalPath := normalizeWalkPath(path)
-	if allowTransform && b.config.fieldTransformers != nil {
-		if transformer, ok := b.config.fieldTransformers[canonicalPath]; ok {
-			if transformed, ok := transformer(prepareTransformerValue(value)); ok {
-				value = transformed
-			}
+	if allowTransform {
+		if err := b.stageCompanionRepresentations(canonicalPath, value, state); err != nil {
+			return err
 		}
 	}
 
@@ -579,6 +570,29 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	default:
 		return errors.Errorf("unsupported transformed value type %T at %s", value, canonicalPath)
 	}
+}
+
+func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value any, state *documentBuildState) error {
+	registrations := b.config.representations(canonicalPath)
+	if len(registrations) == 0 {
+		return nil
+	}
+
+	prepared := prepareTransformerValue(value)
+	for _, registration := range registrations {
+		transformed, ok := registration.FieldTransformer(prepared)
+		if !ok {
+			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == TransformerFailureSoft {
+				continue
+			}
+			return errors.Errorf("companion transformer %q on %s failed to produce a value", registration.Alias, canonicalPath)
+		}
+		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
@@ -1105,5 +1119,12 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	}
 
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
+	idx.representations = collectMaterializedRepresentationsFromConfig(idx.Config, idx.pathLookup)
+	if err := idx.rebuildRepresentationLookup(); err != nil {
+		// Finalize() only panics here on broken builder invariants. User-driven
+		// cases such as missing derived values are filtered out above when we
+		// collect only materialized representations.
+		panic(err)
+	}
 	return idx
 }

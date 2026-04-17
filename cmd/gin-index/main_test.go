@@ -401,6 +401,38 @@ func TestPathInfoOmitsAdaptiveSummaryOutsideAdaptiveMode(t *testing.T) {
 	}
 }
 
+func TestCLIInfoSuppressesInternalRepresentationPaths(t *testing.T) {
+	t.Parallel()
+
+	config, err := gin.NewConfig(
+		gin.WithToLowerTransformer("$.email", "lower"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+
+	builder, err := gin.NewBuilder(config, 1)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument: %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	var buf bytes.Buffer
+	writeIndexInfo(&buf, idx)
+	out := buf.String()
+
+	if strings.Contains(out, "__derived:") {
+		t.Fatalf("writeIndexInfo output leaked internal representation path:\n%s", out)
+	}
+	if !strings.Contains(out, "representations=lower:to_lower") {
+		t.Fatalf("writeIndexInfo output missing rendered representation metadata:\n%s", out)
+	}
+}
+
 func TestRunInfoReturnsNonZeroOnDecodeFailure(t *testing.T) {
 	t.Parallel()
 

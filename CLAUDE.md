@@ -76,10 +76,11 @@ The `Regex` operator uses trigram index for candidate row-group selection before
 
 ### Field Transformers
 
-Transform values before indexing via `GINConfig.fieldTransformers`. Use cases: date range queries, IP subnet filtering, version comparisons, case-insensitive search.
+Transform values into derived companion indexes via config options like `WithISODateTransformer`, `WithToLowerTransformer`, and `WithCustomTransformer`. Raw source values stay indexed on the original path; query a derived companion explicitly with `As(alias, value)`. Internal companion paths are encoded as `__derived:<source>#<alias>` and are not part of the public query API. Use cases: date range queries, IP subnet filtering, version comparisons, case-insensitive search.
 
 **Types:**
-- `FieldTransformer` - `func(value any) (any, bool)` - returns transformed value and success flag
+- `FieldTransformer` - `func(value any) (any, bool)` - returns transformed value and success flag; `ok=false` skips the derived companion for that document while raw indexing continues
+- `RepresentationValue` - created with `As(alias, value)` to route a predicate to a derived companion index
 
 **Built-in transformers:**
 
@@ -95,17 +96,18 @@ Transform values before indexing via `GINConfig.fieldTransformers`. Use cases: d
 | Numeric | `RegexExtractInt(pattern, group)` | Extract + convert to float64 | `order-12345` → `12345` |
 | Numeric | `IPv4ToInt` | IPv4 to uint32 for ranges | `192.168.1.1` → `3232235777` |
 | Helper | `CIDRToRange(cidr)` | Parse CIDR to start/end float64 | `192.168.1.0/24` → `(start, end)` |
-| Helper | `InSubnet(path, cidr)` | Returns []Predicate for subnet check | `InSubnet("$.ip", "10.0.0.0/8")` |
+| Helper | `InSubnet(path, cidr)` | Returns []Predicate using the default `ipv4_int` alias | `InSubnet("$.ip", "10.0.0.0/8")` |
+| Helper | `InSubnetAs(path, alias, cidr)` | Returns []Predicate for custom IPv4 companion aliases | `InSubnetAs("$.ip", "ip_num", "10.0.0.0/8")` |
 | Numeric | `SemVerToInt` | Semver to int (major*1M+minor*1K+patch) | `v2.1.3` → `2001003` |
 | Numeric | `DurationToMs` | Go duration to ms | `1h30m` → `5400000` |
 | Numeric | `NumericBucket(size)` | Bucket values | `150` with size `100` → `100` |
 | Boolean | `BoolNormalize` | Normalize boolean-like values | `"yes"`, `"1"`, `"on"` → `true` |
 
 **Files:**
-- `gin.go` - `FieldTransformer` type, `GINConfig.fieldTransformers`, `WithFieldTransformer` option
+- `gin.go` - `FieldTransformer`, `RepresentationValue`, `As()`, config options, and derived representation metadata
 - `transformers.go` - All built-in transformers
 - `transformers_test.go` - Unit and integration tests
-- `builder.go` - Transformer application in `decodeTransformedValue()` and `stageMaterializedValue()` before type switch
+- `builder.go` - Derived companion staging in `stageCompanionRepresentations()` before `stageMaterializedValue()`
 
 ## Go Conventions
 
@@ -329,7 +331,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 ## Layers
 - Purpose: Define index build parameters and field transformers
 - Location: `gin.go` (types + options), `transformers.go` (built-in transformers), `transformer_registry.go` (serializable transformer registry)
-- Contains: `GINConfig`, `ConfigOption` functions (`WithFieldTransformer`, `WithISODateTransformer`, etc.), `FieldTransformer` type, `TransformerSpec` for serialization
+- Contains: `GINConfig`, `ConfigOption` functions (`WithCustomTransformer`, `WithISODateTransformer`, etc.), `FieldTransformer`, `As()`, and `TransformerSpec` for serialization
 - Depends on: Nothing (leaf layer)
 - Used by: Builder, Serialize
 - Purpose: Ingest JSON documents, walk their structure, populate index data structures

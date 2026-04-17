@@ -6,6 +6,41 @@ import (
 	"time"
 )
 
+func countRegisteredRepresentations(cfg *GINConfig) int {
+	if cfg == nil {
+		return 0
+	}
+	total := 0
+	for _, specs := range cfg.representationSpecs {
+		total += len(specs)
+	}
+	return total
+}
+
+func requireRepresentationSpec(t *testing.T, cfg *GINConfig, path, alias string) RepresentationSpec {
+	t.Helper()
+	specs := cfg.representationSpecs[path]
+	for _, spec := range specs {
+		if spec.Alias == alias {
+			return spec
+		}
+	}
+	t.Fatalf("expected representation spec for %s alias %q, got %v", path, alias, specs)
+	return RepresentationSpec{}
+}
+
+func requireRegisteredRepresentation(t *testing.T, cfg *GINConfig, path, alias string) registeredRepresentation {
+	t.Helper()
+	registrations := cfg.representationTransformers[path]
+	for _, registration := range registrations {
+		if registration.Alias == alias {
+			return registration
+		}
+	}
+	t.Fatalf("expected registered representation for %s alias %q, got %v", path, alias, registrations)
+	return registeredRepresentation{}
+}
+
 func TestTransformerReconstruction(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -162,8 +197,8 @@ func TestUnknownTransformer(t *testing.T) {
 
 func TestConfigSerialization(t *testing.T) {
 	cfg, err := NewConfig(
-		WithISODateTransformer("$.timestamp"),
-		WithToLowerTransformer("$.email"),
+		WithISODateTransformer("$.timestamp", "epoch_ms"),
+		WithToLowerTransformer("$.email", "lower"),
 		WithFTSPaths("$.description", "$.title"),
 	)
 	if err != nil {
@@ -210,14 +245,14 @@ func TestConfigSerialization(t *testing.T) {
 	if len(decoded.Config.ftsPaths) != 2 {
 		t.Errorf("ftsPaths len = %d, want 2", len(decoded.Config.ftsPaths))
 	}
-	if len(decoded.Config.fieldTransformers) != 2 {
-		t.Errorf("fieldTransformers len = %d, want 2", len(decoded.Config.fieldTransformers))
+	if countRegisteredRepresentations(decoded.Config) != 2 {
+		t.Errorf("registered representations = %d, want 2", countRegisteredRepresentations(decoded.Config))
 	}
 }
 
 func TestConfigSerializationCanonicalPaths(t *testing.T) {
 	cfg, err := NewConfig(
-		WithISODateTransformer("$['timestamp']"),
+		WithISODateTransformer("$['timestamp']", "epoch_ms"),
 		WithFTSPaths("$['description']", `$["title"]`),
 	)
 	if err != nil {
@@ -254,22 +289,18 @@ func TestConfigSerializationCanonicalPaths(t *testing.T) {
 		t.Fatalf("decoded ftsPaths = %v, want %v", got, want)
 	}
 
-	if _, ok := decoded.Config.fieldTransformers["$.timestamp"]; !ok {
-		t.Fatalf("expected decoded fieldTransformers to contain canonical key $.timestamp, got %v", decoded.Config.fieldTransformers)
+	spec := requireRepresentationSpec(t, decoded.Config, "$.timestamp", "epoch_ms")
+	if spec.SourcePath != "$.timestamp" {
+		t.Fatalf("decoded transformer spec source path = %q, want %.12s", spec.SourcePath, "$.timestamp")
 	}
-
-	spec, ok := decoded.Config.transformerSpecs["$.timestamp"]
-	if !ok {
-		t.Fatalf("expected decoded transformerSpecs to contain canonical key $.timestamp, got %v", decoded.Config.transformerSpecs)
-	}
-	if spec.Path != "$.timestamp" {
-		t.Fatalf("decoded transformer spec path = %q, want %.12s", spec.Path, "$.timestamp")
+	if spec.TargetPath != "__derived:$.timestamp#epoch_ms" {
+		t.Fatalf("decoded transformer spec target path = %q, want %q", spec.TargetPath, "__derived:$.timestamp#epoch_ms")
 	}
 }
 
 func TestConfigSerializationCanonicalQueryBehavior(t *testing.T) {
 	cfg, err := NewConfig(
-		WithISODateTransformer("$['timestamp']"),
+		WithISODateTransformer("$['timestamp']", "epoch_ms"),
 		WithFTSPaths("$['description']", `$["title"]`),
 	)
 	if err != nil {
@@ -317,7 +348,7 @@ func TestConfigSerializationCanonicalQueryBehavior(t *testing.T) {
 }
 
 func TestConfigSerializationNumericTransformerPath(t *testing.T) {
-	cfg, err := NewConfig(WithSemVerTransformer("$.version"))
+	cfg, err := NewConfig(WithSemVerTransformer("$.version", "semver_int"))
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
 	}
@@ -347,12 +378,8 @@ func TestConfigSerializationNumericTransformerPath(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	fn, ok := decoded.Config.fieldTransformers["$.version"]
-	if !ok {
-		t.Fatalf("expected decoded fieldTransformers to contain $.version, got %v", decoded.Config.fieldTransformers)
-	}
-
-	transformed, ok := fn("v2.1.3")
+	registration := requireRegisteredRepresentation(t, decoded.Config, "$.version", "semver_int")
+	transformed, ok := registration.FieldTransformer("v2.1.3")
 	if !ok {
 		t.Fatal("decoded semver transformer rejected valid input")
 	}
@@ -360,17 +387,19 @@ func TestConfigSerializationNumericTransformerPath(t *testing.T) {
 		t.Fatalf("decoded semver transformer = %v, want 2001003", transformed)
 	}
 
-	result := decoded.Evaluate([]Predicate{EQ("$.version", int64(2001003))})
+	pathID := requirePathID(t, decoded, "__derived:$.version#semver_int")
+	entry := &decoded.PathDirectory[pathID]
+	result := decoded.evaluateEQ(int(pathID), entry, float64(2001003))
 	if !result.IsSet(0) || result.IsSet(1) {
-		t.Fatalf("decoded numeric transformer query result = %v, want [0]", result.ToSlice())
+		t.Fatalf("decoded derived transformer query result = %v, want [0]", result.ToSlice())
 	}
 }
 
 func TestTransformerRoundTrip(t *testing.T) {
 	cfg, err := NewConfig(
-		WithISODateTransformer("$.created_at"),
-		WithRegexExtractTransformer("$.log", `ERROR\[(\w+)\]:`, 1),
-		WithNumericBucketTransformer("$.price", 10),
+		WithISODateTransformer("$.created_at", "epoch_ms"),
+		WithRegexExtractTransformer("$.log", "error_code", `ERROR\[(\w+)\]:`, 1),
+		WithNumericBucketTransformer("$.price", "bucket_10", 10),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
@@ -402,27 +431,23 @@ func TestTransformerRoundTrip(t *testing.T) {
 		t.Fatal("decoded config is nil")
 	}
 
-	if len(decoded.Config.transformerSpecs) != 3 {
-		t.Errorf("transformerSpecs len = %d, want 3", len(decoded.Config.transformerSpecs))
+	if countRegisteredRepresentations(decoded.Config) != 3 {
+		t.Errorf("registered representations = %d, want 3", countRegisteredRepresentations(decoded.Config))
 	}
 
-	spec, ok := decoded.Config.transformerSpecs["$.created_at"]
-	if !ok {
-		t.Error("missing transformer spec for $.created_at")
-	} else if spec.ID != TransformerISODateToEpochMs {
-		t.Errorf("$.created_at transformer ID = %d, want %d", spec.ID, TransformerISODateToEpochMs)
+	spec := requireRepresentationSpec(t, decoded.Config, "$.created_at", "epoch_ms")
+	if spec.Transformer.ID != TransformerISODateToEpochMs {
+		t.Errorf("$.created_at transformer ID = %d, want %d", spec.Transformer.ID, TransformerISODateToEpochMs)
 	}
 
-	spec, ok = decoded.Config.transformerSpecs["$.log"]
-	if !ok {
-		t.Error("missing transformer spec for $.log")
-	} else if spec.ID != TransformerRegexExtract {
-		t.Errorf("$.log transformer ID = %d, want %d", spec.ID, TransformerRegexExtract)
+	spec = requireRepresentationSpec(t, decoded.Config, "$.log", "error_code")
+	if spec.Transformer.ID != TransformerRegexExtract {
+		t.Errorf("$.log transformer ID = %d, want %d", spec.Transformer.ID, TransformerRegexExtract)
 	}
 
 	// Test that reconstructed transformer works
-	fn := decoded.Config.fieldTransformers["$.created_at"]
-	result, ok := fn("2024-01-15T10:30:00Z")
+	registration := requireRegisteredRepresentation(t, decoded.Config, "$.created_at", "epoch_ms")
+	result, ok := registration.FieldTransformer("2024-01-15T10:30:00Z")
 	if !ok {
 		t.Error("reconstructed transformer failed")
 	}
@@ -431,8 +456,8 @@ func TestTransformerRoundTrip(t *testing.T) {
 	}
 
 	// Test regex transformer
-	fn = decoded.Config.fieldTransformers["$.log"]
-	result, ok = fn("ERROR[AUTH]: invalid")
+	registration = requireRegisteredRepresentation(t, decoded.Config, "$.log", "error_code")
+	result, ok = registration.FieldTransformer("ERROR[AUTH]: invalid")
 	if !ok {
 		t.Error("reconstructed regex transformer failed")
 	}

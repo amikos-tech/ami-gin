@@ -3,6 +3,7 @@ package gin
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -12,17 +13,26 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v8: explicit companion transformer failure modes in serialized config
+	//       and representation metadata (strict by default, soft-fail opt-in)
+	//   v7: explicit representation metadata for derived alias routing
+	//       (phase 09 derived representations)
 	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
 	//       (phase 08 adaptive high-cardinality indexing)
 	//   v5: never released; payloads are always rejected. Was an in-tree
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(6)
+	Version = uint16(8)
 )
 
 const (
 	FlagHasDocIDMap uint16 = 1 << iota
+)
+
+const (
+	internalRepresentationPathPrefix    = "__derived:"
+	internalRepresentationPathSeparator = "#"
 )
 
 const (
@@ -68,6 +78,9 @@ type GINIndex struct {
 	DocIDMapping          []DocID
 	Config                *GINConfig
 	pathLookup            map[string]uint16
+	representationLookup  map[string]map[string]uint16
+	representationInfos   map[string][]RepresentationInfo
+	representations       []RepresentationSpec
 }
 
 type Header struct {
@@ -239,25 +252,109 @@ type Predicate struct {
 	Value    any
 }
 
+type RepresentationValue struct {
+	Alias string
+	Value any
+}
+
+func As(alias string, value any) RepresentationValue {
+	if err := validateRepresentationAlias(alias); err != nil {
+		panic(err.Error())
+	}
+	return RepresentationValue{Alias: alias, Value: value}
+}
+
 // FieldTransformer transforms a value before indexing.
-// Returns (transformedValue, ok). If ok=false, original value is indexed.
+// Returns (transformedValue, ok). If ok=false, the companion representation
+// follows the registration's configured failure mode. Strict is the default.
 type FieldTransformer func(value any) (any, bool)
 
+type TransformerFailureMode string
+
+const (
+	TransformerFailureStrict TransformerFailureMode = "strict"
+	TransformerFailureSoft   TransformerFailureMode = "soft_fail"
+)
+
+type transformerRegistrationOptions struct {
+	failureMode TransformerFailureMode
+}
+
+type TransformerOption func(*transformerRegistrationOptions) error
+
+func normalizeTransformerFailureMode(mode TransformerFailureMode) TransformerFailureMode {
+	if mode == "" {
+		return TransformerFailureStrict
+	}
+	return mode
+}
+
+func validateTransformerFailureMode(mode TransformerFailureMode) error {
+	switch normalizeTransformerFailureMode(mode) {
+	case TransformerFailureStrict, TransformerFailureSoft:
+		return nil
+	default:
+		return errors.Errorf("invalid transformer failure mode %q", mode)
+	}
+}
+
+func resolveTransformerOptions(opts ...TransformerOption) (transformerRegistrationOptions, error) {
+	options := transformerRegistrationOptions{
+		failureMode: TransformerFailureStrict,
+	}
+	for _, opt := range opts {
+		if err := opt(&options); err != nil {
+			return transformerRegistrationOptions{}, err
+		}
+	}
+	options.failureMode = normalizeTransformerFailureMode(options.failureMode)
+	return options, nil
+}
+
+func WithTransformerFailureMode(mode TransformerFailureMode) TransformerOption {
+	return func(options *transformerRegistrationOptions) error {
+		if err := validateTransformerFailureMode(mode); err != nil {
+			return err
+		}
+		options.failureMode = normalizeTransformerFailureMode(mode)
+		return nil
+	}
+}
+
+type RepresentationInfo struct {
+	SourcePath  string
+	Alias       string
+	Transformer string
+}
+
+type RepresentationSpec struct {
+	SourcePath   string          `json:"source_path"`
+	Alias        string          `json:"alias"`
+	TargetPath   string          `json:"target_path"`
+	Transformer  TransformerSpec `json:"transformer"`
+	Serializable bool            `json:"serializable"`
+}
+
+type registeredRepresentation struct {
+	RepresentationSpec
+	FieldTransformer FieldTransformer
+}
+
 type GINConfig struct {
-	CardinalityThreshold    uint32
-	BloomFilterSize         uint32
-	BloomFilterHashes       uint8
-	EnableTrigrams          bool
-	TrigramMinLength        int
-	HLLPrecision            uint8
-	PrefixBlockSize         int
-	AdaptiveMinRGCoverage   int
-	AdaptivePromotedTermCap int
-	AdaptiveCoverageCeiling float64
-	AdaptiveBucketCount     int
-	ftsPaths                []string                    // paths to enable FTS on; empty means all paths
-	fieldTransformers       map[string]FieldTransformer // path -> transformer
-	transformerSpecs        map[string]TransformerSpec  // path -> spec for serialization
+	CardinalityThreshold       uint32
+	BloomFilterSize            uint32
+	BloomFilterHashes          uint8
+	EnableTrigrams             bool
+	TrigramMinLength           int
+	HLLPrecision               uint8
+	PrefixBlockSize            int
+	AdaptiveMinRGCoverage      int
+	AdaptivePromotedTermCap    int
+	AdaptiveCoverageCeiling    float64
+	AdaptiveBucketCount        int
+	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
+	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
+	representationTransformers map[string][]registeredRepresentation // canonical source path -> runtime companion transformers
 }
 
 type ConfigOption func(*GINConfig) error
@@ -282,96 +379,175 @@ func WithFTSPaths(paths ...string) ConfigOption {
 	}
 }
 
+func representationTargetPath(sourcePath, alias string) string {
+	return internalRepresentationPathPrefix + sourcePath + internalRepresentationPathSeparator + alias
+}
+
+func isInternalRepresentationPath(path string) bool {
+	return strings.HasPrefix(path, internalRepresentationPathPrefix)
+}
+
+func (c *GINConfig) representations(canonicalPath string) []registeredRepresentation {
+	if c == nil || c.representationTransformers == nil {
+		return nil
+	}
+	return c.representationTransformers[canonicalPath]
+}
+
+func validateRepresentationAlias(alias string) error {
+	if alias == "" {
+		return errors.New("representation alias required")
+	}
+	if strings.Contains(alias, internalRepresentationPathSeparator) {
+		return errors.Errorf("representation alias %q must not contain %q", alias, internalRepresentationPathSeparator)
+	}
+	return nil
+}
+
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode TransformerFailureMode, fn FieldTransformer) error {
+	if err := validateRepresentationAlias(alias); err != nil {
+		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
+	}
+	if fn == nil {
+		return errors.Errorf("transformer alias %q for %s requires a function", alias, canonicalPath)
+	}
+	if err := validateTransformerFailureMode(failureMode); err != nil {
+		return errors.Wrapf(err, "transformer alias %q for %s", alias, canonicalPath)
+	}
+	if c.representationSpecs == nil {
+		c.representationSpecs = make(map[string][]RepresentationSpec)
+	}
+	if c.representationTransformers == nil {
+		c.representationTransformers = make(map[string][]registeredRepresentation)
+	}
+
+	for _, existing := range c.representationSpecs[canonicalPath] {
+		if existing.Alias == alias {
+			return errors.Errorf("duplicate transformer alias %q for %s", alias, canonicalPath)
+		}
+	}
+
+	targetPath := representationTargetPath(canonicalPath, alias)
+	failureMode = normalizeTransformerFailureMode(failureMode)
+	transformerSpec.Path = canonicalPath
+	transformerSpec.Alias = alias
+	transformerSpec.TargetPath = targetPath
+	transformerSpec.FailureMode = failureMode
+
+	spec := RepresentationSpec{
+		SourcePath:   canonicalPath,
+		Alias:        alias,
+		TargetPath:   targetPath,
+		Transformer:  transformerSpec,
+		Serializable: serializable,
+	}
+	c.representationSpecs[canonicalPath] = append(c.representationSpecs[canonicalPath], spec)
+	c.representationTransformers[canonicalPath] = append(c.representationTransformers[canonicalPath], registeredRepresentation{
+		RepresentationSpec: spec,
+		FieldTransformer:   fn,
+	})
+	return nil
+}
+
 func WithFieldTransformer(path string, fn FieldTransformer) ConfigOption {
 	return func(c *GINConfig) error {
-		canonicalPath, err := canonicalizeSupportedPath(path)
-		if err != nil {
-			return err
-		}
-		if c.fieldTransformers == nil {
-			c.fieldTransformers = make(map[string]FieldTransformer)
-		}
-		c.fieldTransformers[canonicalPath] = fn
-		return nil
+		return errors.Errorf("WithFieldTransformer(%q, fn) is no longer supported; use WithCustomTransformer(path, alias, fn)", path)
 	}
 }
 
-func WithRegisteredTransformer(path string, id TransformerID, params []byte) ConfigOption {
+func WithCustomTransformer(path, alias string, fn FieldTransformer, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
+		options, err := resolveTransformerOptions(opts...)
+		if err != nil {
+			return err
+		}
 		canonicalPath, err := canonicalizeSupportedPath(path)
 		if err != nil {
 			return err
 		}
-		if c.fieldTransformers == nil {
-			c.fieldTransformers = make(map[string]FieldTransformer)
+		spec := NewTransformerSpec(canonicalPath, TransformerUnknown, nil)
+		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn)
+	}
+}
+
+func withRegisteredTransformerJSON(path, alias string, id TransformerID, params any, opts ...TransformerOption) ConfigOption {
+	return func(c *GINConfig) error {
+		payload, err := jsonMarshal(params)
+		if err != nil {
+			return errors.Wrapf(err, "marshal transformer params for %s alias %q", path, alias)
 		}
-		if c.transformerSpecs == nil {
-			c.transformerSpecs = make(map[string]TransformerSpec)
+		return WithRegisteredTransformer(path, alias, id, payload, opts...)(c)
+	}
+}
+
+func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte, opts ...TransformerOption) ConfigOption {
+	return func(c *GINConfig) error {
+		options, err := resolveTransformerOptions(opts...)
+		if err != nil {
+			return err
+		}
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return err
 		}
 		fn, err := ReconstructTransformer(id, params)
 		if err != nil {
 			return err
 		}
-		c.fieldTransformers[canonicalPath] = fn
-		c.transformerSpecs[canonicalPath] = NewTransformerSpec(canonicalPath, id, params)
-		return nil
+		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, params), true, options.failureMode, fn)
 	}
 }
 
-func WithISODateTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerISODateToEpochMs, nil)
+func WithISODateTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerISODateToEpochMs, nil, opts...)
 }
 
-func WithDateTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerDateToEpochMs, nil)
+func WithDateTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerDateToEpochMs, nil, opts...)
 }
 
-func WithCustomDateTransformer(path, layout string) ConfigOption {
-	params, _ := jsonMarshal(CustomDateParams{Layout: layout})
-	return WithRegisteredTransformer(path, TransformerCustomDateToEpochMs, params)
+func WithCustomDateTransformer(path, alias, layout string, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerCustomDateToEpochMs, CustomDateParams{Layout: layout}, opts...)
 }
 
-func WithToLowerTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerToLower, nil)
+func WithToLowerTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerToLower, nil, opts...)
 }
 
-func WithIPv4Transformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerIPv4ToInt, nil)
+func WithIPv4Transformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerIPv4ToInt, nil, opts...)
 }
 
-func WithSemVerTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerSemVerToInt, nil)
+func WithSemVerTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerSemVerToInt, nil, opts...)
 }
 
-func WithRegexExtractTransformer(path, pattern string, group int) ConfigOption {
-	params, _ := jsonMarshal(RegexParams{Pattern: pattern, Group: group})
-	return WithRegisteredTransformer(path, TransformerRegexExtract, params)
+func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
-func WithRegexExtractIntTransformer(path, pattern string, group int) ConfigOption {
-	params, _ := jsonMarshal(RegexParams{Pattern: pattern, Group: group})
-	return WithRegisteredTransformer(path, TransformerRegexExtractInt, params)
+func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
-func WithDurationTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerDurationToMs, nil)
+func WithDurationTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerDurationToMs, nil, opts...)
 }
 
-func WithEmailDomainTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerEmailDomain, nil)
+func WithEmailDomainTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerEmailDomain, nil, opts...)
 }
 
-func WithURLHostTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerURLHost, nil)
+func WithURLHostTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerURLHost, nil, opts...)
 }
 
-func WithNumericBucketTransformer(path string, size float64) ConfigOption {
-	params, _ := jsonMarshal(NumericBucketParams{Size: size})
-	return WithRegisteredTransformer(path, TransformerNumericBucket, params)
+func WithNumericBucketTransformer(path, alias string, size float64, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerNumericBucket, NumericBucketParams{Size: size}, opts...)
 }
 
-func WithBoolNormalizeTransformer(path string) ConfigOption {
-	return WithRegisteredTransformer(path, TransformerBoolNormalize, nil)
+func WithBoolNormalizeTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerBoolNormalize, nil, opts...)
 }
 
 // WithAdaptiveMinRGCoverage sets the minimum number of row groups a term must
@@ -480,6 +656,8 @@ func NewGINIndex() *GINIndex {
 		StringLengthIndexes:   make(map[uint16]*StringLengthIndex),
 		PathCardinality:       make(map[uint16]*HyperLogLog),
 		pathLookup:            make(map[string]uint16),
+		representationLookup:  make(map[string]map[string]uint16),
+		representationInfos:   make(map[string][]RepresentationInfo),
 	}
 }
 
@@ -513,6 +691,32 @@ func (c GINConfig) validate() error {
 			return errors.Errorf("adaptive bucket count must be <= %d", maxAdaptiveBucketsPerPath)
 		}
 	}
+
+	for canonicalPath, specs := range c.representationSpecs {
+		seenAliases := make(map[string]struct{}, len(specs))
+		for _, spec := range specs {
+			if spec.SourcePath != canonicalPath {
+				return errors.Errorf("transformer source path %q stored under %q", spec.SourcePath, canonicalPath)
+			}
+			if err := validateRepresentationAlias(spec.Alias); err != nil {
+				return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
+			}
+			if _, exists := seenAliases[spec.Alias]; exists {
+				return errors.Errorf("duplicate transformer alias %q for %s", spec.Alias, canonicalPath)
+			}
+			seenAliases[spec.Alias] = struct{}{}
+			if want := representationTargetPath(canonicalPath, spec.Alias); spec.TargetPath != want {
+				return errors.Errorf("transformer target path %q for %s alias %q must equal %q", spec.TargetPath, canonicalPath, spec.Alias, want)
+			}
+			if err := validateTransformerFailureMode(spec.Transformer.FailureMode); err != nil {
+				return errors.Wrapf(err, "transformer failure mode invalid for %s alias %q", canonicalPath, spec.Alias)
+			}
+		}
+		if len(c.representationTransformers[canonicalPath]) != len(specs) {
+			return errors.Errorf("transformer function count mismatch for %s", canonicalPath)
+		}
+	}
+
 	return nil
 }
 
@@ -534,7 +738,10 @@ func (idx *GINIndex) rebuildPathLookup() error {
 		}
 
 		rawPath := entry.PathName
-		canonical := NormalizePath(rawPath)
+		canonical := rawPath
+		if !isInternalRepresentationPath(rawPath) {
+			canonical = NormalizePath(rawPath)
+		}
 		if firstPath, exists := originals[canonical]; exists {
 			return errors.Wrapf(ErrInvalidFormat, "duplicate canonical path %q from %q and %q", canonical, firstPath, rawPath)
 		}
@@ -550,6 +757,102 @@ func (idx *GINIndex) rebuildPathLookup() error {
 	idx.PathDirectory = canonicalDirectory
 	idx.pathLookup = lookup
 	return nil
+}
+
+func (idx *GINIndex) rebuildRepresentationLookup() error {
+	lookup := make(map[string]map[string]uint16)
+	infos := make(map[string][]RepresentationInfo)
+	representations := idx.representations
+	if representations == nil {
+		// Fallback for hand-constructed GINIndex not produced by Finalize() or Decode().
+		representations = collectRepresentationsFromConfig(idx.Config)
+		idx.representations = representations
+	}
+	if len(representations) == 0 {
+		idx.representationLookup = lookup
+		idx.representationInfos = infos
+		return nil
+	}
+
+	for _, representation := range representations {
+		sourcePath := representation.SourcePath
+		targetPath := representation.TargetPath
+		pathID, ok := idx.pathLookup[targetPath]
+		if !ok {
+			return errors.Wrapf(ErrInvalidFormat, "representation target path %q for %s alias %q not found", targetPath, sourcePath, representation.Alias)
+		}
+
+		if lookup[sourcePath] == nil {
+			lookup[sourcePath] = make(map[string]uint16)
+		}
+		if _, exists := lookup[sourcePath][representation.Alias]; exists {
+			return errors.Wrapf(ErrInvalidFormat, "duplicate representation alias %q for %s", representation.Alias, sourcePath)
+		}
+		lookup[sourcePath][representation.Alias] = pathID
+		infos[sourcePath] = append(infos[sourcePath], RepresentationInfo{
+			SourcePath:  sourcePath,
+			Alias:       representation.Alias,
+			Transformer: representation.Transformer.Name,
+		})
+	}
+
+	idx.representationLookup = lookup
+	idx.representationInfos = infos
+	return nil
+}
+
+func collectRepresentationsFromConfig(cfg *GINConfig) []RepresentationSpec {
+	if cfg == nil || len(cfg.representationSpecs) == 0 {
+		return nil
+	}
+
+	sourcePaths := make([]string, 0, len(cfg.representationSpecs))
+	for sourcePath := range cfg.representationSpecs {
+		sourcePaths = append(sourcePaths, sourcePath)
+	}
+	sort.Strings(sourcePaths)
+
+	representations := make([]RepresentationSpec, 0)
+	for _, sourcePath := range sourcePaths {
+		sortedRepresentations := append([]RepresentationSpec(nil), cfg.representationSpecs[sourcePath]...)
+		sort.Slice(sortedRepresentations, func(i, j int) bool {
+			return sortedRepresentations[i].Alias < sortedRepresentations[j].Alias
+		})
+		representations = append(representations, sortedRepresentations...)
+	}
+
+	return representations
+}
+
+func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map[string]uint16) []RepresentationSpec {
+	representations := collectRepresentationsFromConfig(cfg)
+	if len(representations) == 0 {
+		return nil
+	}
+
+	materialized := make([]RepresentationSpec, 0, len(representations))
+	for _, representation := range representations {
+		if _, ok := pathLookup[representation.TargetPath]; ok {
+			materialized = append(materialized, representation)
+		}
+	}
+	return materialized
+}
+
+func (idx *GINIndex) Representations(path string) []RepresentationInfo {
+	canonicalPath, err := canonicalizeSupportedPath(path)
+	if err != nil {
+		return nil
+	}
+
+	representations := idx.representationInfos[canonicalPath]
+	if len(representations) == 0 {
+		return nil
+	}
+
+	out := make([]RepresentationInfo, len(representations))
+	copy(out, representations)
+	return out
 }
 
 func (idx *GINIndex) validatePathReferences() error {

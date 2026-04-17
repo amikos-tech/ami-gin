@@ -12,19 +12,31 @@ import (
 )
 
 const (
-	propertyTestDefaultMinSuccessfulTests = 1000
-	propertyTestHLLMinSuccessfulTests     = 250
-	propertyTestHLLEstimateSampleSize     = 256
+	propertyTestDefaultMinSuccessfulTests  = 1000
+	propertyTestShortMinSuccessfulTests    = 100
+	propertyTestHLLMinSuccessfulTests      = 250
+	propertyTestHLLShortMinSuccessfulTests = 50
+	propertyTestHLLEstimateSampleSize      = 256
 )
 
-func propertyTestParametersWithMinSuccessfulTests(minSuccessfulTests int) *gopter.TestParameters {
+func propertyTestMinSuccessfulTestsForMode(short bool, normal, shortBudget int) int {
+	if !short {
+		return normal
+	}
+	if shortBudget <= 0 || shortBudget > normal {
+		return normal
+	}
+	return shortBudget
+}
+
+func propertyTestParametersWithBudgets(normal, shortBudget int) *gopter.TestParameters {
 	params := gopter.DefaultTestParameters()
-	params.MinSuccessfulTests = minSuccessfulTests
+	params.MinSuccessfulTests = propertyTestMinSuccessfulTestsForMode(testing.Short(), normal, shortBudget)
 	return params
 }
 
 func propertyTestParameters() *gopter.TestParameters {
-	return propertyTestParametersWithMinSuccessfulTests(propertyTestDefaultMinSuccessfulTests)
+	return propertyTestParametersWithBudgets(propertyTestDefaultMinSuccessfulTests, propertyTestShortMinSuccessfulTests)
 }
 
 func TestPropertyIdentityCodecRoundTrip(t *testing.T) {
@@ -388,8 +400,8 @@ func TestPropertyHLLMergeCommutative(t *testing.T) {
 
 func TestPropertyHLLEstimateWithinBounds(t *testing.T) {
 	// This property is still statistically meaningful with fewer large samples
-	// and otherwise dominates the Go 1.25 race-enabled CI budget.
-	properties := gopter.NewProperties(propertyTestParametersWithMinSuccessfulTests(propertyTestHLLMinSuccessfulTests))
+	// and otherwise dominates the race-enabled CI budget.
+	properties := gopter.NewProperties(propertyTestParametersWithBudgets(propertyTestHLLMinSuccessfulTests, propertyTestHLLShortMinSuccessfulTests))
 
 	properties.Property("estimate within 3σ of expected error", prop.ForAll(
 		func(items []string) bool {

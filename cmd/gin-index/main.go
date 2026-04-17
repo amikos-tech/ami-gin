@@ -451,6 +451,9 @@ func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
 	fmt.Fprintf(w, "  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
 	fmt.Fprintf(w, "\nPaths:\n")
 	for _, pe := range idx.PathDirectory {
+		if strings.HasPrefix(pe.PathName, "__derived:") {
+			continue
+		}
 		fmt.Fprintln(w, formatPathInfo(idx, pe))
 	}
 }
@@ -465,6 +468,13 @@ func formatPathInfo(idx *gin.GINIndex, pe gin.PathEntry) string {
 		if idx.Config != nil {
 			info += fmt.Sprintf(", cap=%d", idx.Config.AdaptivePromotedTermCap)
 		}
+	}
+	if representations := idx.Representations(pe.PathName); len(representations) > 0 {
+		rendered := make([]string, 0, len(representations))
+		for _, representation := range representations {
+			rendered = append(rendered, representation.Alias+":"+representation.Transformer)
+		}
+		info += fmt.Sprintf(", representations=%s", strings.Join(rendered, ","))
 	}
 	info += ")"
 	return info

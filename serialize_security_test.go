@@ -39,6 +39,90 @@ func buildAdaptiveSerializationFixture(t *testing.T, config GINConfig) *GINIndex
 	return builder.Finalize()
 }
 
+func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
+	t.Helper()
+
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 3)
+	docs := []string{
+		`{"email":"Alice@Example.COM"}`,
+		`{"email":"bob@other.dev"}`,
+		`{"email":"CHARLIE@EXAMPLE.COM"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(%d) error = %v", i, err)
+		}
+	}
+
+	return builder.Finalize()
+}
+
+func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpec, int) {
+	t.Helper()
+
+	if len(data) < 4 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+
+	payload := data[4:]
+	buf := bytes.NewReader(payload)
+	idx := NewGINIndex()
+
+	if err := readHeader(buf, idx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if err := readPathDirectory(buf, idx); err != nil {
+		t.Fatalf("readPathDirectory() error = %v", err)
+	}
+	if _, err := readBloomFilter(buf); err != nil {
+		t.Fatalf("readBloomFilter() error = %v", err)
+	}
+	if err := readStringIndexes(buf, idx); err != nil {
+		t.Fatalf("readStringIndexes() error = %v", err)
+	}
+	if err := readAdaptiveStringIndexes(buf, idx); err != nil {
+		t.Fatalf("readAdaptiveStringIndexes() error = %v", err)
+	}
+	if err := readStringLengthIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
+		t.Fatalf("readStringLengthIndexes() error = %v", err)
+	}
+	if err := readNumericIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
+		t.Fatalf("readNumericIndexes() error = %v", err)
+	}
+	if err := readNullIndexes(buf, idx); err != nil {
+		t.Fatalf("readNullIndexes() error = %v", err)
+	}
+	if err := readTrigramIndexes(buf, idx); err != nil {
+		t.Fatalf("readTrigramIndexes() error = %v", err)
+	}
+	if err := readHyperLogLogs(buf, idx); err != nil {
+		t.Fatalf("readHyperLogLogs() error = %v", err)
+	}
+	if idx.Header.Flags&FlagHasDocIDMap != 0 {
+		if _, err := readDocIDMapping(buf, idx.Header.NumDocs); err != nil {
+			t.Fatalf("readDocIDMapping() error = %v", err)
+		}
+	}
+	if _, err := readConfig(buf); err != nil {
+		t.Fatalf("readConfig() error = %v", err)
+	}
+
+	offset := len(data) - buf.Len()
+	representations, err := readRepresentations(buf)
+	if err != nil {
+		t.Fatalf("readRepresentations() error = %v", err)
+	}
+	return representations, offset
+}
+
 func legacyV5HeaderOnlyPayload(t *testing.T) []byte {
 	t.Helper()
 
@@ -113,6 +197,29 @@ func TestDecodeVersionMismatch(t *testing.T) {
 	}
 	if !stderrors.Is(err, ErrVersionMismatch) {
 		t.Errorf("expected ErrVersionMismatch for version 0, got: %v", err)
+	}
+}
+
+func TestDecodeRejectsV6VersionMismatch(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	data[8] = 6
+	data[9] = 0
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for v6 payload, got nil")
+	}
+	if !stderrors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("expected ErrVersionMismatch for v6 payload, got: %v", err)
 	}
 }
 
@@ -319,6 +426,317 @@ func TestAdaptivePathMetadataRoundTrip(t *testing.T) {
 		if got, want := decodedAdaptive.BucketRGBitmaps[i].ToSlice(), originalAdaptive.BucketRGBitmaps[i].ToSlice(); !reflect.DeepEqual(got, want) {
 			t.Fatalf("BucketRGBitmaps[%d] = %v, want %v", i, got, want)
 		}
+	}
+}
+
+func TestRepresentationMetadataRoundTrip(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	want := []RepresentationInfo{
+		{SourcePath: "$.email", Alias: "domain", Transformer: "email_domain"},
+		{SourcePath: "$.email", Alias: "lower", Transformer: "to_lower"},
+	}
+	if got := decoded.Representations("$.email"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("decoded.Representations($.email) = %#v, want %#v", got, want)
+	}
+}
+
+func TestRepresentationFailureModeRoundTrip(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(TransformerFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	decoded := mustRoundTripIndex(t, builder.Finalize())
+
+	specs := decoded.Config.representationSpecs["$.email"]
+	if len(specs) != 1 {
+		t.Fatalf("len(decoded.Config.representationSpecs[$.email]) = %d, want 1", len(specs))
+	}
+	if specs[0].Transformer.FailureMode != TransformerFailureSoft {
+		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, TransformerFailureSoft)
+	}
+
+	reloadedBuilder := mustNewBuilder(t, *decoded.Config, 1)
+	if err := reloadedBuilder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("AddDocument() with decoded soft-fail config error = %v, want success", err)
+	}
+}
+
+func TestDecodeRepresentationAliasParity(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	before := idx.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
+
+	data, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	decoded, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+
+	after := decoded.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("decoded alias query = %v, want %v", after, before)
+	}
+}
+
+func TestRepresentationMetadataSectionFollowsConfig(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	if len(representations) != 2 {
+		t.Fatalf("representation count = %d, want 2", len(representations))
+	}
+	if offset <= 4 {
+		t.Fatalf("representation section offset = %d, want > 4 and after config", offset)
+	}
+}
+
+func TestEncodeRejectsNonSerializableRepresentation(t *testing.T) {
+	config, err := NewConfig(
+		WithCustomTransformer("$.email", "opaque", func(value any) (any, bool) {
+			s, ok := value.(string)
+			if !ok {
+				return nil, false
+			}
+			return strings.ToLower(s), true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	if _, err := Encode(builder.Finalize()); err == nil {
+		t.Fatal("Encode() error = nil, want non-serializable representation failure")
+	} else if !strings.Contains(err.Error(), "not serializable") {
+		t.Fatalf("Encode() error = %v, want non-serializable representation failure", err)
+	}
+}
+
+func TestDecodeRejectsDuplicateRepresentationAlias(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations = append(representations, representations[0])
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want duplicate representation alias rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationTargetPathOutOfRange(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].TargetPath = "__derived:$.email#missing"
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want invalid target path rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMissingAlias(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Alias = ""
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want missing alias rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMissingTransformerName(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Transformer.Name = ""
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want missing transformer name rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationTransformerPathMismatch(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Transformer.Path = "$.other"
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want transformer path mismatch rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMarkedNonSerializable(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Serializable = false
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want non-serializable metadata rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsOversizedRepresentationSection(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	_, offset := locateRepresentationSection(t, data)
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(maxRepresentationSectionSize+1)); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want oversized representation section rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
 	}
 }
 
@@ -1258,11 +1676,19 @@ func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
 	}
 }
 
-func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
+func TestReadConfigRejectsDuplicateTransformerAlias(t *testing.T) {
+	lower := NewTransformerSpec("$.foo", TransformerToLower, nil)
+	lower.Alias = "lower"
+	lower.TargetPath = representationTargetPath("$.foo", "lower")
+
+	duplicateAlias := NewTransformerSpec("$['foo']", TransformerEmailDomain, nil)
+	duplicateAlias.Alias = "lower"
+	duplicateAlias.TargetPath = representationTargetPath("$.foo", "lower")
+
 	sc := SerializedConfig{
 		Transformers: []TransformerSpec{
-			NewTransformerSpec("$.foo", TransformerToLower, nil),
-			NewTransformerSpec("$['foo']", TransformerEmailDomain, nil),
+			lower,
+			duplicateAlias,
 		},
 	}
 
@@ -1281,7 +1707,7 @@ func TestReadConfigRejectsCanonicalTransformerPathCollision(t *testing.T) {
 
 	_, err = readConfig(&buf)
 	if err == nil {
-		t.Fatal("expected canonical transformer collision error, got nil")
+		t.Fatal("expected duplicate transformer alias error, got nil")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)

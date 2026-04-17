@@ -250,17 +250,24 @@ func CIDRToRange(cidr string) (start, end float64, err error) {
 	return float64(startIP), float64(endIP), nil
 }
 
-// InSubnet creates predicates to check if an IP field (transformed with IPv4ToInt)
-// falls within a CIDR subnet range.
-// Example: InSubnet("$.client_ip", "192.168.1.0/24") returns predicates for 192.168.1.0-255
+// InSubnetAs creates predicates to check if an IP field (transformed with
+// IPv4ToInt under the provided alias) falls within a CIDR subnet range.
+// Example: InSubnetAs("$.client_ip", "ipv4_int", "192.168.1.0/24") returns
+// predicates for 192.168.1.0-255.
 // Panics if CIDR is invalid - use CIDRToRange for error handling.
-func InSubnet(path, cidr string) []Predicate {
+func InSubnetAs(path, alias, cidr string) []Predicate {
 	start, end, err := CIDRToRange(cidr)
 	if err != nil {
 		panic("invalid CIDR: " + err.Error())
 	}
 	return []Predicate{
-		{Path: path, Operator: OpGTE, Value: start},
-		{Path: path, Operator: OpLTE, Value: end},
+		{Path: path, Operator: OpGTE, Value: As(alias, start)},
+		{Path: path, Operator: OpLTE, Value: As(alias, end)},
 	}
+}
+
+// InSubnet creates predicates using the conventional IPv4 companion alias
+// "ipv4_int". Use InSubnetAs when a path is configured with a different alias.
+func InSubnet(path, cidr string) []Predicate {
+	return InSubnetAs(path, "ipv4_int", cidr)
 }

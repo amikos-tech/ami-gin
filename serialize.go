@@ -14,7 +14,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-const maxConfigSize = 1 << 20 // 1MB max config size
+const (
+	maxConfigSize                = 1 << 20 // 1MB max config size
+	maxRepresentationSectionSize = 1 << 20 // 1MB max representation metadata size
+)
 
 const (
 	// maxDecodedIndexSize caps zstd.DecodeAll's output buffer to defend against
@@ -220,6 +223,9 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if err := writeConfig(&buf, idx.Config); err != nil {
 		return nil, errors.Wrap(err, "write config")
 	}
+	if err := writeRepresentations(&buf, idx); err != nil {
+		return nil, errors.Wrap(err, "write representations")
+	}
 
 	if level == CompressionNone {
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
@@ -327,9 +333,17 @@ func Decode(data []byte) (*GINIndex, error) {
 		return nil, errors.Wrap(err, "read config")
 	}
 	idx.Config = cfg
+	representations, err := readRepresentations(buf)
+	if err != nil {
+		return nil, errors.Wrap(err, "read representations")
+	}
+	idx.representations = representations
 
 	if err := idx.rebuildPathLookup(); err != nil {
 		return nil, errors.Wrap(err, "rebuild path lookup")
+	}
+	if err := idx.rebuildRepresentationLookup(); err != nil {
+		return nil, errors.Wrap(err, "rebuild representation lookup")
 	}
 
 	return idx, nil
@@ -1233,13 +1247,24 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 		FTSPaths:                cfg.ftsPaths,
 	}
 
-	transformerPaths := make([]string, 0, len(cfg.transformerSpecs))
-	for path := range cfg.transformerSpecs {
+	transformerPaths := make([]string, 0, len(cfg.representationSpecs))
+	for path := range cfg.representationSpecs {
 		transformerPaths = append(transformerPaths, path)
 	}
 	sort.Strings(transformerPaths)
 	for _, path := range transformerPaths {
-		sc.Transformers = append(sc.Transformers, cfg.transformerSpecs[path])
+		representations := append([]RepresentationSpec(nil), cfg.representationSpecs[path]...)
+		sort.Slice(representations, func(i, j int) bool {
+			return representations[i].Alias < representations[j].Alias
+		})
+		for _, representation := range representations {
+			if !representation.Serializable {
+				continue
+			}
+			transformer := representation.Transformer
+			transformer.FailureMode = normalizeTransformerFailureMode(transformer.FailureMode)
+			sc.Transformers = append(sc.Transformers, transformer)
+		}
 	}
 
 	data, err := json.Marshal(sc)
@@ -1314,25 +1339,37 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if len(sc.Transformers) > 0 {
-		cfg.fieldTransformers = make(map[string]FieldTransformer)
-		cfg.transformerSpecs = make(map[string]TransformerSpec)
-		seenTransformerPaths := make(map[string]string, len(sc.Transformers))
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
 				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
 			}
-			if firstPath, exists := seenTransformerPaths[canonicalPath]; exists {
-				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical transformer path %q from %q and %q", canonicalPath, firstPath, spec.Path)
+			alias := spec.Alias
+			if alias == "" {
+				alias = spec.Name
 			}
-			seenTransformerPaths[canonicalPath] = spec.Path
+			if alias == "" {
+				return nil, errors.Wrapf(ErrInvalidFormat, "missing transformer alias for path %q", spec.Path)
+			}
+			targetPath := spec.TargetPath
+			if targetPath == "" {
+				targetPath = representationTargetPath(canonicalPath, alias)
+			}
+			if targetPath != representationTargetPath(canonicalPath, alias) {
+				return nil, errors.Wrapf(ErrInvalidFormat, "transformer target path %q for %s alias %q does not match %q", targetPath, canonicalPath, alias, representationTargetPath(canonicalPath, alias))
+			}
+
 			spec.Path = canonicalPath
+			spec.Alias = alias
+			spec.TargetPath = targetPath
+			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
 				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
 			}
-			cfg.fieldTransformers[canonicalPath] = fn
-			cfg.transformerSpecs[canonicalPath] = spec
+			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
+				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
+			}
 		}
 	}
 
@@ -1341,4 +1378,105 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	return cfg, nil
+}
+
+func writeRepresentations(w io.Writer, idx *GINIndex) error {
+	representations := idx.representations
+	if representations == nil {
+		// Fallback for hand-constructed GINIndex not produced by Finalize() or Decode().
+		representations = collectRepresentationsFromConfig(idx.Config)
+	}
+	if len(representations) == 0 {
+		return binary.Write(w, binary.LittleEndian, uint32(0))
+	}
+
+	for _, representation := range representations {
+		if !representation.Serializable {
+			return errors.Errorf("representation %s on %s is not serializable", representation.Alias, representation.SourcePath)
+		}
+	}
+
+	data, err := json.Marshal(representations)
+	if err != nil {
+		return errors.Wrap(err, "marshal representations")
+	}
+	if len(data) > maxRepresentationSectionSize {
+		return errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", len(data), maxRepresentationSectionSize)
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+func readRepresentations(r io.Reader) ([]RepresentationSpec, error) {
+	var sectionLen uint32
+	if err := binary.Read(r, binary.LittleEndian, &sectionLen); err != nil {
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "missing representation metadata length")
+		}
+		return nil, err
+	}
+
+	if sectionLen == 0 {
+		return []RepresentationSpec{}, nil
+	}
+	if sectionLen > maxRepresentationSectionSize {
+		return nil, errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", sectionLen, maxRepresentationSectionSize)
+	}
+
+	data := make([]byte, sectionLen)
+	if _, err := io.ReadFull(r, data); err != nil {
+		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, errors.Wrap(ErrInvalidFormat, "truncated representation metadata payload")
+		}
+		return nil, err
+	}
+
+	var representations []RepresentationSpec
+	if err := json.Unmarshal(data, &representations); err != nil {
+		return nil, errors.Wrap(err, "unmarshal representations")
+	}
+
+	seen := make(map[string]map[string]struct{})
+	for i := range representations {
+		representation := &representations[i]
+		canonicalPath, err := canonicalizeSupportedPath(representation.SourcePath)
+		if err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize representation source path %q: %v", representation.SourcePath, err)
+		}
+		if err := validateRepresentationAlias(representation.Alias); err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "invalid representation alias for %s: %v", canonicalPath, err)
+		}
+		if !representation.Serializable {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation %s on %s is not serializable", representation.Alias, canonicalPath)
+		}
+		wantTarget := representationTargetPath(canonicalPath, representation.Alias)
+		if representation.TargetPath != wantTarget {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation target path %q for %s alias %q does not match %q", representation.TargetPath, canonicalPath, representation.Alias, wantTarget)
+		}
+		if representation.Transformer.Name == "" {
+			return nil, errors.Wrapf(ErrInvalidFormat, "missing representation transformer name for %s alias %q", canonicalPath, representation.Alias)
+		}
+		if representation.Transformer.Path != canonicalPath {
+			return nil, errors.Wrapf(ErrInvalidFormat, "representation transformer path %q for %s alias %q does not match source", representation.Transformer.Path, canonicalPath, representation.Alias)
+		}
+		representation.Transformer.FailureMode = normalizeTransformerFailureMode(representation.Transformer.FailureMode)
+		if err := validateTransformerFailureMode(representation.Transformer.FailureMode); err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "invalid representation failure mode for %s alias %q: %v", canonicalPath, representation.Alias, err)
+		}
+
+		if seen[canonicalPath] == nil {
+			seen[canonicalPath] = make(map[string]struct{})
+		}
+		if _, exists := seen[canonicalPath][representation.Alias]; exists {
+			return nil, errors.Wrapf(ErrInvalidFormat, "duplicate representation alias %q for %s", representation.Alias, canonicalPath)
+		}
+		seen[canonicalPath][representation.Alias] = struct{}{}
+		representation.SourcePath = canonicalPath
+	}
+
+	return representations, nil
 }

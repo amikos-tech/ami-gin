@@ -19,11 +19,11 @@ func main() {
 }
 
 func run() error {
-	// Configure field transformers to convert date strings to epoch milliseconds
+	// Configure additive date companions; raw strings stay indexed too.
 	config, err := gin.NewConfig(
-		gin.WithFieldTransformer("$.created_at", gin.ISODateToEpochMs),
-		gin.WithFieldTransformer("$.birth_date", gin.DateToEpochMs),
-		gin.WithFieldTransformer("$.custom_ts", gin.CustomDateToEpochMs("2006/01/02 15:04")),
+		gin.WithISODateTransformer("$.created_at", "epoch_ms"),
+		gin.WithDateTransformer("$.birth_date", "epoch_ms"),
+		gin.WithCustomDateTransformer("$.custom_ts", "epoch_ms", "2006/01/02 15:04"),
 	)
 	if err != nil {
 		return errors.Wrap(err, "create config")
@@ -80,10 +80,19 @@ func run() error {
 	fmt.Println("=== Field Transformer Date Range Queries ===")
 	fmt.Println()
 
-	// Query: Find records created after July 1, 2024
+	// Raw queries still use the original string values.
+	fmt.Println("--- Raw query: created_at = 2024-09-01T08:00:00Z ---")
+	result := idx.Evaluate([]gin.Predicate{
+		gin.EQ("$.created_at", "2024-09-01T08:00:00Z"),
+	})
+	fmt.Printf("Row groups: %v (expected: [3] - raw string match)\n\n", result.ToSlice())
+
+	// Alias queries opt into the derived epoch_ms companion.
 	july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
 	fmt.Printf("--- Query: created_at > July 1, 2024 (epoch: %.0f) ---\n", july2024)
-	result := idx.Evaluate([]gin.Predicate{gin.GT("$.created_at", july2024)})
+	result = idx.Evaluate([]gin.Predicate{
+		gin.GT("$.created_at", gin.As("epoch_ms", july2024)),
+	})
 	fmt.Printf("Row groups: %v (expected: [3, 4] - September and December)\n\n", result.ToSlice())
 
 	// Query: Find records created in Q1 2024 (Jan-Mar)
@@ -91,42 +100,48 @@ func run() error {
 	apr2024 := float64(time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
 	fmt.Printf("--- Query: created_at >= Jan 1, 2024 AND created_at < Apr 1, 2024 ---\n")
 	result = idx.Evaluate([]gin.Predicate{
-		gin.GTE("$.created_at", jan2024),
-		gin.LT("$.created_at", apr2024),
+		gin.GTE("$.created_at", gin.As("epoch_ms", jan2024)),
+		gin.LT("$.created_at", gin.As("epoch_ms", apr2024)),
 	})
 	fmt.Printf("Row groups: %v (expected: [0, 1] - January and March)\n\n", result.ToSlice())
 
 	// Query: Find people born before 1990
 	year1990 := float64(time.Date(1990, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
 	fmt.Printf("--- Query: birth_date < 1990-01-01 (epoch: %.0f) ---\n", year1990)
-	result = idx.Evaluate([]gin.Predicate{gin.LT("$.birth_date", year1990)})
+	result = idx.Evaluate([]gin.Predicate{
+		gin.LT("$.birth_date", gin.As("epoch_ms", year1990)),
+	})
 	fmt.Printf("Row groups: %v (expected: [0, 2, 4] - bob 1985, diana 1988, frank 1980)\n\n", result.ToSlice())
 
 	// Query: Find records from H2 2024 (July-December)
 	fmt.Println("--- Query: created_at >= July 2024 (H2 2024) ---")
-	result = idx.Evaluate([]gin.Predicate{gin.GTE("$.created_at", july2024)})
+	result = idx.Evaluate([]gin.Predicate{
+		gin.GTE("$.created_at", gin.As("epoch_ms", july2024)),
+	})
 	fmt.Printf("Row groups: %v (expected: [3, 4])\n\n", result.ToSlice())
 
-	// Query using custom timestamp format
+	// Query using the custom timestamp companion
 	fmt.Println("--- Query: custom_ts > March 2024 ---")
 	mar2024 := float64(time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC).UnixMilli())
-	result = idx.Evaluate([]gin.Predicate{gin.GT("$.custom_ts", mar2024)})
+	result = idx.Evaluate([]gin.Predicate{
+		gin.GT("$.custom_ts", gin.As("epoch_ms", mar2024)),
+	})
 	fmt.Printf("Row groups: %v (expected: [2, 3, 4] - June, September, December)\n\n", result.ToSlice())
 
-	// Demonstrate the power: combining date range with other predicates
+	// Demonstrate mixing multiple derived companions in one predicate set.
 	fmt.Println("--- Combined: created_at in Q1 2024 AND birth_date before 1990 ---")
 	result = idx.Evaluate([]gin.Predicate{
-		gin.GTE("$.created_at", jan2024),
-		gin.LT("$.created_at", apr2024),
-		gin.LT("$.birth_date", year1990),
+		gin.GTE("$.created_at", gin.As("epoch_ms", jan2024)),
+		gin.LT("$.created_at", gin.As("epoch_ms", apr2024)),
+		gin.LT("$.birth_date", gin.As("epoch_ms", year1990)),
 	})
 	fmt.Printf("Row groups: %v (expected: [0] - bob created Jan 2024, born 1985)\n\n", result.ToSlice())
 
 	fmt.Println("=== Benefits of Date Transformers ===")
-	fmt.Println("1. Date strings are indexed as numeric epoch milliseconds")
-	fmt.Println("2. Enables efficient range queries using GT/GTE/LT/LTE operators")
-	fmt.Println("3. Per-row-group min/max stats allow fast pruning")
-	fmt.Println("4. No need to parse dates at query time")
+	fmt.Println("1. Raw date strings stay queryable on the source path")
+	fmt.Println("2. Derived companions are queried explicitly with gin.As(alias, value)")
+	fmt.Println("3. Per-row-group min/max stats still power efficient range pruning")
+	fmt.Println("4. Hidden companion paths remain an internal implementation detail")
 
 	return nil
 }

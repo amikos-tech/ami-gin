@@ -2,10 +2,40 @@ package gin
 
 import (
 	"math"
-	"strconv"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
+
+func requirePathID(t *testing.T, idx *GINIndex, path string) uint16 {
+	t.Helper()
+	pathID, ok := idx.pathLookup[path]
+	if !ok {
+		t.Fatalf("pathLookup[%q] missing", path)
+	}
+	return pathID
+}
+
+func mustRoundTripIndex(t *testing.T, idx *GINIndex) *GINIndex {
+	t.Helper()
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	return decoded
+}
+
+func requirePredicateResult(t *testing.T, idx *GINIndex, predicates []Predicate, want []int, label string) {
+	t.Helper()
+	if got := idx.Evaluate(predicates).ToSlice(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+}
 
 func TestISODateToEpochMs(t *testing.T) {
 	tests := []struct {
@@ -170,8 +200,8 @@ func TestCustomDateToEpochMs(t *testing.T) {
 
 func TestDateTransformerIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.created_at", ISODateToEpochMs),
-		WithFieldTransformer("$.birth_date", DateToEpochMs),
+		WithISODateTransformer("$.created_at", "epoch_ms"),
+		WithDateTransformer("$.birth_date", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -198,33 +228,24 @@ func TestDateTransformerIntegration(t *testing.T) {
 	}
 
 	idx := builder.Finalize()
-
-	var createdAtPathID uint16 = 0
-	var birthDatePathID uint16 = 0
-	found := 0
-	for _, entry := range idx.PathDirectory {
-		if entry.PathName == "$.created_at" {
-			createdAtPathID = entry.PathID
-			if entry.ObservedTypes&(TypeInt|TypeFloat) == 0 {
-				t.Errorf("$.created_at should have numeric type, got %v", entry.ObservedTypes)
-			}
-			found++
-		}
-		if entry.PathName == "$.birth_date" {
-			birthDatePathID = entry.PathID
-			if entry.ObservedTypes&(TypeInt|TypeFloat) == 0 {
-				t.Errorf("$.birth_date should have numeric type, got %v", entry.ObservedTypes)
-			}
-			found++
-		}
-	}
-	if found != 2 {
-		t.Fatalf("expected to find both date paths, found %d", found)
+	if got := idx.Evaluate([]Predicate{EQ("$.created_at", "2024-01-15T10:30:00Z")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.created_at", raw) = %v, want [0]`, got)
 	}
 
+	createdAtRawPathID := requirePathID(t, idx, "$.created_at")
+	if idx.PathDirectory[createdAtRawPathID].ObservedTypes&TypeString == 0 {
+		t.Fatalf("$.created_at raw path should keep string type, got %v", idx.PathDirectory[createdAtRawPathID].ObservedTypes)
+	}
+
+	birthDateRawPathID := requirePathID(t, idx, "$.birth_date")
+	if idx.PathDirectory[birthDateRawPathID].ObservedTypes&TypeString == 0 {
+		t.Fatalf("$.birth_date raw path should keep string type, got %v", idx.PathDirectory[birthDateRawPathID].ObservedTypes)
+	}
+
+	createdAtPathID := requirePathID(t, idx, "__derived:$.created_at#epoch_ms")
 	createdAtIndex, ok := idx.NumericIndexes[createdAtPathID]
 	if !ok {
-		t.Fatal("$.created_at should have a NumericIndex")
+		t.Fatal(`__derived:$.created_at#epoch_ms should have a NumericIndex`)
 	}
 
 	expectedMin := float64(time.Date(2024, 1, 15, 10, 30, 0, 0, time.UTC).UnixMilli())
@@ -237,9 +258,10 @@ func TestDateTransformerIntegration(t *testing.T) {
 		t.Errorf("$.created_at GlobalMax = %v, want %v", createdAtIndex.GlobalMax, expectedMax)
 	}
 
+	birthDatePathID := requirePathID(t, idx, "__derived:$.birth_date#epoch_ms")
 	birthDateIndex, ok := idx.NumericIndexes[birthDatePathID]
 	if !ok {
-		t.Fatal("$.birth_date should have a NumericIndex")
+		t.Fatal(`__derived:$.birth_date#epoch_ms should have a NumericIndex`)
 	}
 
 	expectedBirthMin := float64(time.Date(1985, 3, 10, 0, 0, 0, 0, time.UTC).UnixMilli())
@@ -255,7 +277,7 @@ func TestDateTransformerIntegration(t *testing.T) {
 
 func TestDateTransformerRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.timestamp", ISODateToEpochMs),
+		WithISODateTransformer("$.timestamp", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -284,11 +306,8 @@ func TestDateTransformerRangeQuery(t *testing.T) {
 	idx := builder.Finalize()
 
 	midYear := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	result := idx.Evaluate([]Predicate{{
-		Path:     "$.timestamp",
-		Operator: OpGT,
-		Value:    midYear,
-	}})
+	pathID := requirePathID(t, idx, "__derived:$.timestamp#epoch_ms")
+	result := idx.evaluateGT(int(pathID), midYear)
 
 	if result.Count() != 1 {
 		t.Errorf("expected 1 match for timestamp > mid-2024, got %d", result.Count())
@@ -298,11 +317,7 @@ func TestDateTransformerRangeQuery(t *testing.T) {
 	}
 
 	startYear := float64(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	result = idx.Evaluate([]Predicate{{
-		Path:     "$.timestamp",
-		Operator: OpGTE,
-		Value:    startYear,
-	}})
+	result = idx.evaluateGTE(int(pathID), startYear)
 
 	if result.Count() != 3 {
 		t.Errorf("expected 3 matches for timestamp >= start of 2024, got %d", result.Count())
@@ -311,7 +326,7 @@ func TestDateTransformerRangeQuery(t *testing.T) {
 
 func TestDateTransformerCanonicalConfigPath(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['created_at']", ISODateToEpochMs),
+		WithISODateTransformer("$['created_at']", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -339,30 +354,22 @@ func TestDateTransformerCanonicalConfigPath(t *testing.T) {
 
 	idx := builder.Finalize()
 
-	var pathEntry *PathEntry
-	for i := range idx.PathDirectory {
-		if idx.PathDirectory[i].PathName == "$.created_at" {
-			pathEntry = &idx.PathDirectory[i]
-			break
-		}
-	}
-	if pathEntry == nil {
-		t.Fatal("expected canonical $.created_at path to be present")
-	}
-	if pathEntry.ObservedTypes&(TypeInt|TypeFloat) == 0 {
-		t.Fatalf("$.created_at should have numeric type after transform, got %v", pathEntry.ObservedTypes)
+	rawPathID := requirePathID(t, idx, "$.created_at")
+	if idx.PathDirectory[rawPathID].ObservedTypes&TypeString == 0 {
+		t.Fatalf("$.created_at should keep string type after companion staging, got %v", idx.PathDirectory[rawPathID].ObservedTypes)
 	}
 
 	threshold := float64(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC).UnixMilli())
-	result := idx.Evaluate([]Predicate{GTE("$.created_at", threshold)})
+	derivedPathID := requirePathID(t, idx, "__derived:$.created_at#epoch_ms")
+	result := idx.evaluateGTE(int(derivedPathID), threshold)
 	if got := result.ToSlice(); len(got) != 2 || got[0] != 1 || got[1] != 2 {
-		t.Fatalf("GTE($.created_at, threshold) = %v, want [1 2]", got)
+		t.Fatalf("derived GTE(created_at, threshold) = %v, want [1 2]", got)
 	}
 }
 
 func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['timestamp']", ISODateToEpochMs),
+		WithISODateTransformer("$['timestamp']", "epoch_ms"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -399,20 +406,26 @@ func TestDateTransformerDecodeCanonicalQueries(t *testing.T) {
 	}
 
 	threshold := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
-	canonical := decoded.Evaluate([]Predicate{GTE("$.timestamp", threshold)}).ToSlice()
-	bracket := decoded.Evaluate([]Predicate{GTE("$['timestamp']", threshold)}).ToSlice()
+	canonical := decoded.Evaluate([]Predicate{EQ("$.timestamp", "2024-12-31T23:59:59Z")}).ToSlice()
+	bracket := decoded.Evaluate([]Predicate{EQ("$['timestamp']", "2024-12-31T23:59:59Z")}).ToSlice()
 
 	if len(canonical) != 1 || canonical[0] != 2 {
-		t.Fatalf("GTE($.timestamp, threshold) = %v, want [2]", canonical)
+		t.Fatalf("EQ($.timestamp, raw) = %v, want [2]", canonical)
 	}
 	if len(bracket) != len(canonical) || bracket[0] != canonical[0] {
-		t.Fatalf("GTE($['timestamp'], threshold) = %v, want %v", bracket, canonical)
+		t.Fatalf("EQ($['timestamp'], raw) = %v, want %v", bracket, canonical)
+	}
+
+	derivedPathID := requirePathID(t, decoded, "__derived:$.timestamp#epoch_ms")
+	derived := decoded.evaluateGTE(int(derivedPathID), threshold).ToSlice()
+	if len(derived) != 1 || derived[0] != 2 {
+		t.Fatalf("decoded derived GTE(timestamp, threshold) = %v, want [2]", derived)
 	}
 }
 
 func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.items[*].metrics", func(value any) (any, bool) {
+		WithCustomTransformer("$.items[*].metrics", "summary", func(value any) (any, bool) {
 			metrics, ok := value.(map[string]any)
 			if !ok {
 				return nil, false
@@ -454,9 +467,153 @@ func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
 		}
 	}
 
-	got := builder.Finalize().Evaluate([]Predicate{GTE("$.items[*].metrics", 20.5)}).ToSlice()
+	idx := builder.Finalize()
+	if _, ok := idx.pathLookup["$.items[*].metrics.count"]; !ok {
+		t.Fatal(`pathLookup["$.items[*].metrics.count"] missing`)
+	}
+	summaryPathID := requirePathID(t, idx, "__derived:$.items[*].metrics#summary")
+	got := idx.evaluateGTE(int(summaryPathID), 20.5).ToSlice()
 	if len(got) != 1 || got[0] != 1 {
-		t.Fatalf("GTE($.items[*].metrics, 20.5) = %v, want [1]", got)
+		t.Fatalf("derived GTE($.items[*].metrics#summary, 20.5) = %v, want [1]", got)
+	}
+}
+
+func TestBuilderFailsWhenCompanionTransformFails(t *testing.T) {
+	config, err := NewConfig(
+		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
+			s, ok := value.(string)
+			if !ok || !strings.Contains(s, "@") {
+				return nil, false
+			}
+			return s, true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	err = builder.AddDocument(0, []byte(`{"email":42}`))
+	if err == nil {
+		t.Fatal("AddDocument(0) error = nil, want strict companion failure")
+	}
+	if !strings.Contains(err.Error(), "$.email") || !strings.Contains(err.Error(), "strict") {
+		t.Fatalf("AddDocument(0) error = %v, want source path and alias context", err)
+	}
+
+	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
+		t.Fatalf("AddDocument(1) failed after rejected document: %v", err)
+	}
+
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 1 {
+		t.Fatalf("Header.NumDocs = %d, want 1", idx.Header.NumDocs)
+	}
+
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; ok {
+		t.Fatal(`NumericIndexes["$.email"] present, want rejected raw numeric value to be absent`)
+	}
+	rawIndex, ok := idx.StringIndexes[rawPathID]
+	if !ok {
+		t.Fatal(`StringIndexes["$.email"] missing`)
+	}
+	if got := rawIndex.Terms; len(got) != 1 || got[0] != "bob@example.com" {
+		t.Fatalf(`raw terms = %v, want ["bob@example.com"]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", "bob@example.com")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", "bob@example.com") = %v, want [0]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", As("strict", "bob@example.com"))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", As("strict", "bob@example.com")) = %v, want [0]`, got)
+	}
+}
+
+func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
+	config, err := NewConfig(
+		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
+			s, ok := value.(string)
+			if !ok || !strings.Contains(s, "@") {
+				return nil, false
+			}
+			return s, true
+		}, WithTransformerFailureMode(TransformerFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	if err := builder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("AddDocument(0) error = %v, want soft-fail success", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
+		t.Fatalf("AddDocument(1) failed: %v", err)
+	}
+
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 2 {
+		t.Fatalf("Header.NumDocs = %d, want 2", idx.Header.NumDocs)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", float64(42))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", 42) = %v, want [0]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", As("strict", "bob@example.com"))}).ToSlice(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf(`EQ("$.email", As("strict", "bob@example.com")) = %v, want [1]`, got)
+	}
+}
+
+func TestSiblingTransformersDoNotChain(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithCustomTransformer("$.email", "probe", func(value any) (any, bool) {
+			s, ok := value.(string)
+			if !ok {
+				return nil, false
+			}
+			if s == "alice@example.com" {
+				return "chained", true
+			}
+			return "raw", true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 1)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument failed: %v", err)
+	}
+
+	idx := builder.Finalize()
+
+	probePathID, ok := idx.pathLookup["__derived:$.email#probe"]
+	if !ok {
+		t.Fatal(`pathLookup["__derived:$.email#probe"] missing`)
+	}
+	probeIndex, ok := idx.StringIndexes[probePathID]
+	if !ok {
+		t.Fatal(`StringIndexes["__derived:$.email#probe"] missing`)
+	}
+	if got := probeIndex.Terms; len(got) != 1 || got[0] != "raw" {
+		t.Fatalf(`probe terms = %v, want ["raw"]`, got)
 	}
 }
 
@@ -807,7 +964,7 @@ func TestBoolNormalize(t *testing.T) {
 
 func TestIPv4ToIntRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.client_ip", IPv4ToInt),
+		WithIPv4Transformer("$.client_ip", "ipv4_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -838,10 +995,8 @@ func TestIPv4ToIntRangeQuery(t *testing.T) {
 	// Query: Find IPs in 192.168.0.0/16 range
 	start := float64(3232235520) // 192.168.0.0
 	end := float64(3232301055)   // 192.168.255.255
-	result := idx.Evaluate([]Predicate{
-		{Path: "$.client_ip", Operator: OpGTE, Value: start},
-		{Path: "$.client_ip", Operator: OpLTE, Value: end},
-	})
+	pathID := requirePathID(t, idx, "__derived:$.client_ip#ipv4_int")
+	result := idx.evaluateGTE(int(pathID), start).Intersect(idx.evaluateLTE(int(pathID), end))
 
 	if result.Count() != 2 {
 		t.Errorf("expected 2 matches in 192.168.x.x range, got %d", result.Count())
@@ -856,7 +1011,7 @@ func TestIPv4ToIntRangeQuery(t *testing.T) {
 
 func TestSemVerToIntRangeQuery(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.version", SemVerToInt),
+		WithSemVerTransformer("$.version", "semver_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -885,9 +1040,8 @@ func TestSemVerToIntRangeQuery(t *testing.T) {
 	idx := builder.Finalize()
 
 	// Query: Find versions >= 2.0.0
-	result := idx.Evaluate([]Predicate{
-		{Path: "$.version", Operator: OpGTE, Value: float64(2000000)},
-	})
+	pathID := requirePathID(t, idx, "__derived:$.version#semver_int")
+	result := idx.evaluateGTE(int(pathID), float64(2000000))
 
 	if result.Count() != 2 {
 		t.Errorf("expected 2 matches for version >= 2.0.0, got %d", result.Count())
@@ -899,7 +1053,7 @@ func TestSemVerToIntRangeQuery(t *testing.T) {
 
 func TestToLowerIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.email", ToLower),
+		WithToLowerTransformer("$.email", "lower"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -927,12 +1081,18 @@ func TestToLowerIntegration(t *testing.T) {
 
 	idx := builder.Finalize()
 
-	result := idx.Evaluate([]Predicate{
-		{Path: "$.email", Operator: OpEQ, Value: "alice@example.com"},
-	})
+	if got := idx.Evaluate([]Predicate{
+		{Path: "$.email", Operator: OpEQ, Value: "Alice@Example.COM"},
+	}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", raw) = %v, want [0]`, got)
+	}
+
+	pathID := requirePathID(t, idx, "__derived:$.email#lower")
+	entry := &idx.PathDirectory[pathID]
+	result := idx.evaluateEQ(int(pathID), entry, "alice@example.com")
 
 	if result.Count() != 1 {
-		t.Errorf("expected 1 match for alice@example.com, got %d", result.Count())
+		t.Errorf("expected 1 match for lower(email)=alice@example.com, got %d", result.Count())
 	}
 	if !result.IsSet(0) {
 		t.Error("expected doc 0 to match")
@@ -1034,11 +1194,20 @@ func TestInSubnet(t *testing.T) {
 	if predicates[0].Path != "$.client_ip" || predicates[1].Path != "$.client_ip" {
 		t.Error("predicates should have path $.client_ip")
 	}
-	if predicates[0].Value != float64(3232235776) {
-		t.Errorf("start value = %v, want 3232235776", predicates[0].Value)
+	start, ok := predicates[0].Value.(RepresentationValue)
+	if !ok {
+		t.Fatalf("start value type = %T, want RepresentationValue", predicates[0].Value)
 	}
-	if predicates[1].Value != float64(3232236031) {
-		t.Errorf("end value = %v, want 3232236031", predicates[1].Value)
+	if start.Alias != "ipv4_int" || start.Value != float64(3232235776) {
+		t.Errorf("start value = %#v, want alias ipv4_int and 3232235776", start)
+	}
+
+	end, ok := predicates[1].Value.(RepresentationValue)
+	if !ok {
+		t.Fatalf("end value type = %T, want RepresentationValue", predicates[1].Value)
+	}
+	if end.Alias != "ipv4_int" || end.Value != float64(3232236031) {
+		t.Errorf("end value = %#v, want alias ipv4_int and 3232236031", end)
 	}
 }
 
@@ -1053,7 +1222,7 @@ func TestInSubnetPanic(t *testing.T) {
 
 func TestInSubnetIntegration(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.client_ip", IPv4ToInt),
+		WithIPv4Transformer("$.client_ip", "ipv4_int"),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -1104,7 +1273,7 @@ func TestInSubnetIntegration(t *testing.T) {
 
 func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$['metrics']", func(value any) (any, bool) {
+		WithCustomTransformer("$['metrics']", "total", func(value any) (any, bool) {
 			metrics, ok := value.(map[string]any)
 			if !ok {
 				return nil, false
@@ -1141,33 +1310,25 @@ func TestTransformerNumericPathExplicitParserCompatibility(t *testing.T) {
 
 	idx := builder.Finalize()
 
-	if _, exists := idx.pathLookup["$.metrics.cpu"]; exists {
-		t.Fatal("transform-before-dispatch should not index child paths for transformed objects")
+	if _, exists := idx.pathLookup["$.metrics.cpu"]; !exists {
+		t.Fatal("raw subtree staging should index child paths for transformed objects")
 	}
 
-	result := idx.Evaluate([]Predicate{EQ("$.metrics", float64(150))})
+	if got := idx.Evaluate([]Predicate{EQ("$.metrics.cpu", float64(1.5))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf("EQ($.metrics.cpu, 1.5) = %v, want [0]", got)
+	}
+
+	derivedPathID := requirePathID(t, idx, "__derived:$.metrics#total")
+	derivedEntry := &idx.PathDirectory[derivedPathID]
+	result := idx.evaluateEQ(int(derivedPathID), derivedEntry, float64(150))
 	if !result.IsSet(0) || result.IsSet(1) {
-		t.Fatalf("EQ($.metrics, 150) = %v, want [0]", result.ToSlice())
+		t.Fatalf("derived EQ($.metrics#total, 150) = %v, want [0]", result.ToSlice())
 	}
 }
 
 func TestTransformerNumericDecodeParity(t *testing.T) {
 	config, err := NewConfig(
-		WithFieldTransformer("$.build", func(value any) (any, bool) {
-			build, ok := value.(map[string]any)
-			if !ok {
-				return nil, false
-			}
-			rawID, ok := build["id"].(string)
-			if !ok {
-				return nil, false
-			}
-			parsed, err := strconv.ParseInt(rawID, 10, 64)
-			if err != nil {
-				return nil, false
-			}
-			return parsed, true
-		}),
+		WithRegexExtractIntTransformer("$.build_id", "build_number", `build-(\d+)`, 1),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -1182,8 +1343,8 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 		docID DocID
 		json  string
 	}{
-		{0, `{"build":{"id":"9223372036854775806"}}`},
-		{1, `{"build":{"id":"9223372036854775807"}}`},
+		{0, `{"build_id":"build-9007199254740990"}`},
+		{1, `{"build_id":"build-9007199254740991"}`},
 	}
 
 	for _, doc := range docs {
@@ -1193,9 +1354,14 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 	}
 
 	idx := builder.Finalize()
-	before := idx.Evaluate([]Predicate{EQ("$.build", int64(9223372036854775807))})
+	derivedPathID := requirePathID(t, idx, "__derived:$.build_id#build_number")
+	derivedIndex, ok := idx.NumericIndexes[derivedPathID]
+	if !ok {
+		t.Fatal(`NumericIndexes["__derived:$.build_id#build_number"] missing`)
+	}
+	before := idx.evaluateIntOnlyEQ(derivedIndex, int(idx.Header.NumRowGroups), 9007199254740991)
 	if before.Count() != 1 || !before.IsSet(1) || before.IsSet(0) {
-		t.Fatalf("pre-encode EQ($.build, 9223372036854775807) = %v, want [1]", before.ToSlice())
+		t.Fatalf("pre-encode derived EQ($.build_id#build_number, 9007199254740991) = %v, want [1]", before.ToSlice())
 	}
 
 	encoded, err := Encode(idx)
@@ -1208,8 +1374,193 @@ func TestTransformerNumericDecodeParity(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	after := decoded.Evaluate([]Predicate{EQ("$.build", int64(9223372036854775807))})
+	derivedPathID = requirePathID(t, decoded, "__derived:$.build_id#build_number")
+	derivedIndex, ok = decoded.NumericIndexes[derivedPathID]
+	if !ok {
+		t.Fatal(`decoded NumericIndexes["__derived:$.build_id#build_number"] missing`)
+	}
+	after := decoded.evaluateIntOnlyEQ(derivedIndex, int(decoded.Header.NumRowGroups), 9007199254740991)
 	if after.Count() != 1 || !after.IsSet(1) || after.IsSet(0) {
-		t.Fatalf("decoded EQ($.build, 9223372036854775807) = %v, want [1]", after.ToSlice())
+		t.Fatalf("decoded derived EQ($.build_id#build_number, 9007199254740991) = %v, want [1]", after.ToSlice())
+	}
+}
+
+func TestDateTransformerAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithISODateTransformer("$.created_at", "epoch_ms"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"created_at":"2024-01-15T10:30:00Z"}`},
+		{1, `{"created_at":"2024-07-10T09:00:00Z"}`},
+		{2, `{"created_at":"2024-09-01T08:00:00Z"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.created_at", "2024-07-10T09:00:00Z")`,
+			predicates: []Predicate{EQ("$.created_at", "2024-07-10T09:00:00Z")},
+			want:       []int{1},
+		},
+		{
+			label:      `alias GTE("$.created_at", As("epoch_ms", july2024))`,
+			predicates: []Predicate{GTE("$.created_at", As("epoch_ms", july2024))},
+			want:       []int{1, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
+	}
+}
+
+func TestNormalizedTextAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"email":"Alice@Example.COM"}`},
+		{1, `{"email":"bob@company.io"}`},
+		{2, `{"email":"CHARLIE@EXAMPLE.COM"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.email", "Alice@Example.COM")`,
+			predicates: []Predicate{EQ("$.email", "Alice@Example.COM")},
+			want:       []int{0},
+		},
+		{
+			label:      `raw EQ("$.email", "alice@example.com")`,
+			predicates: []Predicate{EQ("$.email", "alice@example.com")},
+			want:       []int{},
+		},
+		{
+			label:      `alias EQ("$.email", As("lower", "alice@example.com"))`,
+			predicates: []Predicate{EQ("$.email", As("lower", "alice@example.com"))},
+			want:       []int{0},
+		},
+		{
+			label:      `alias EQ("$.email", As("domain", "example.com"))`,
+			predicates: []Predicate{EQ("$.email", As("domain", "example.com"))},
+			want:       []int{0, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
+	}
+}
+
+func TestRegexExtractAliasCoverage(t *testing.T) {
+	config, err := NewConfig(
+		WithRegexExtractTransformer("$.message", "error_code", `ERROR\[(\w+)\]:`, 1),
+		WithRegexExtractIntTransformer("$.order_id", "order_number", `order-(\d+)`, 1),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 3)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	docs := []struct {
+		docID DocID
+		json  string
+	}{
+		{0, `{"message":"ERROR[E1001]: Connection timeout","order_id":"order-100"}`},
+		{1, `{"message":"ERROR[W2002]: Retry scheduled","order_id":"order-250"}`},
+		{2, `{"message":"ERROR[E1001]: Disk full","order_id":"order-400"}`},
+	}
+
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, []byte(doc.json)); err != nil {
+			t.Fatalf("AddDocument failed: %v", err)
+		}
+	}
+
+	before := builder.Finalize()
+	after := mustRoundTripIndex(t, before)
+
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `raw EQ("$.message", "ERROR[E1001]: Connection timeout")`,
+			predicates: []Predicate{EQ("$.message", "ERROR[E1001]: Connection timeout")},
+			want:       []int{0},
+		},
+		{
+			label:      `alias EQ("$.message", As("error_code", "E1001"))`,
+			predicates: []Predicate{EQ("$.message", As("error_code", "E1001"))},
+			want:       []int{0, 2},
+		},
+		{
+			label:      `alias GTE("$.order_id", As("order_number", 200.0))`,
+			predicates: []Predicate{GTE("$.order_id", As("order_number", float64(200)))},
+			want:       []int{1, 2},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
 	}
 }
