@@ -334,6 +334,46 @@ func TestGINConfigValidateRejectsPrefixBlockSizeOverflow(t *testing.T) {
 	})
 }
 
+func TestWithPrefixBlockSize(t *testing.T) {
+	cases := []struct {
+		name           string
+		input          int
+		wantErr        bool
+		wantErrContain string
+		wantValue      int
+	}{
+		{name: "zero_sentinel", input: 0, wantErr: false, wantValue: 0},
+		{name: "valid_small", input: 16, wantErr: false, wantValue: 16},
+		{name: "valid_maxuint16", input: math.MaxUint16, wantErr: false, wantValue: math.MaxUint16},
+		{name: "negative_rejected", input: -1, wantErr: true, wantErrContain: "non-negative"},
+		{name: "overflow_rejected", input: math.MaxUint16 + 1, wantErr: true, wantErrContain: "65535"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &GINConfig{}
+			err := WithPrefixBlockSize(tc.input)(cfg)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("WithPrefixBlockSize(%d) error = nil, want error", tc.input)
+				}
+				if tc.wantErrContain != "" && !strings.Contains(err.Error(), tc.wantErrContain) {
+					t.Fatalf("WithPrefixBlockSize(%d) error = %v, want containing %q", tc.input, err, tc.wantErrContain)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("WithPrefixBlockSize(%d) error = %v, want nil", tc.input, err)
+			}
+			if cfg.PrefixBlockSize != tc.wantValue {
+				t.Fatalf("cfg.PrefixBlockSize = %d, want %d", cfg.PrefixBlockSize, tc.wantValue)
+			}
+		})
+	}
+}
+
 func TestNewBuilderRejectsOversizedAdaptiveSettings(t *testing.T) {
 	tests := []struct {
 		name   string
