@@ -2,6 +2,7 @@ package gin
 
 import (
 	"encoding/json"
+	"math"
 	"sort"
 	"strings"
 
@@ -681,6 +682,17 @@ func (c GINConfig) validate() error {
 	}
 	if c.AdaptiveBucketCount < 0 {
 		return errors.New("adaptive bucket count must be non-negative")
+	}
+
+	// PrefixBlockSize=0 is the use-default sentinel (orderedStringBlockSize
+	// falls back to defaultPrefixBlockSize). Negative values are rejected.
+	// Values above math.MaxUint16 would silently overflow the uint16 entry
+	// count on the wire (see prefix.go:WriteCompressedTerms).
+	if c.PrefixBlockSize < 0 {
+		return errors.New("prefix block size must be non-negative")
+	}
+	if c.PrefixBlockSize > math.MaxUint16 {
+		return errors.Errorf("prefix block size must be <= %d", math.MaxUint16)
 	}
 
 	if c.AdaptiveEnabled() {

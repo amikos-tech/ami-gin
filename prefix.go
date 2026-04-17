@@ -3,6 +3,7 @@ package gin
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -20,6 +21,11 @@ type PrefixCompressorOption func(*PrefixCompressor) error
 func NewPrefixCompressor(blockSize int, opts ...PrefixCompressorOption) (*PrefixCompressor, error) {
 	if blockSize < 1 {
 		return nil, errors.New("blockSize must be at least 1")
+	}
+	// WriteCompressedTerms encodes block entry counts as uint16, so block
+	// sizes larger than math.MaxUint16 silently overflow on the wire.
+	if blockSize > math.MaxUint16 {
+		return nil, errors.Errorf("blockSize %d exceeds max %d", blockSize, math.MaxUint16)
 	}
 	pc := &PrefixCompressor{blockSize: blockSize}
 	for _, opt := range opts {

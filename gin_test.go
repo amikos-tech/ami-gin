@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -272,6 +273,65 @@ func TestNewBuilderAllowsLegacyConfigLiteralWhenAdaptiveDisabled(t *testing.T) {
 	if _, err := NewBuilder(config, 2); err != nil {
 		t.Fatalf("NewBuilder() error = %v, want legacy struct literal to remain valid", err)
 	}
+}
+
+func TestGINConfigValidateRejectsPrefixBlockSizeOverflow(t *testing.T) {
+	// baseValidConfig returns a minimal config literal that passes validate().
+	// PrefixBlockSize is left as the zero value (use-default sentinel) so each
+	// sub-test can set exactly the value under test.
+	baseValidConfig := func() GINConfig {
+		return GINConfig{
+			BloomFilterSize:   1,
+			BloomFilterHashes: 1,
+			HLLPrecision:      12,
+		}
+	}
+
+	t.Run("default_accepted", func(t *testing.T) {
+		if err := DefaultConfig().validate(); err != nil {
+			t.Fatalf("DefaultConfig().validate() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("zero_accepted", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = 0
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("validate(PrefixBlockSize=0) error = %v, want nil (use-default sentinel)", err)
+		}
+	})
+
+	t.Run("negative_rejected", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = -1
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("validate(PrefixBlockSize=-1) error = nil, want negative rejection")
+		}
+		if !strings.Contains(err.Error(), "prefix block size") {
+			t.Fatalf("validate error = %v, want 'prefix block size' context", err)
+		}
+	})
+
+	t.Run("overflow_rejected", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = math.MaxUint16 + 1
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("validate(PrefixBlockSize=MaxUint16+1) error = nil, want overflow rejection")
+		}
+		if !strings.Contains(err.Error(), "prefix block size") {
+			t.Fatalf("validate error = %v, want 'prefix block size' context", err)
+		}
+	})
+
+	t.Run("maxuint16_accepted", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = math.MaxUint16
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("validate(PrefixBlockSize=MaxUint16) error = %v, want nil", err)
+		}
+	})
 }
 
 func TestNewBuilderRejectsOversizedAdaptiveSettings(t *testing.T) {
