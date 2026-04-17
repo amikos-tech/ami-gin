@@ -57,13 +57,24 @@ func (pc *PrefixCompressor) Compress(terms []string) []CompressedTermBlock {
 	copy(sorted, terms)
 	sort.Strings(sorted)
 
+	return pc.CompressInOrder(sorted)
+}
+
+// CompressInOrder applies front coding without changing the caller-provided
+// term order. Use this for serialized sections whose metadata depends on the
+// original slice position.
+func (pc *PrefixCompressor) CompressInOrder(terms []string) []CompressedTermBlock {
+	if len(terms) == 0 {
+		return nil
+	}
+
 	var blocks []CompressedTermBlock
-	for i := 0; i < len(sorted); i += pc.blockSize {
+	for i := 0; i < len(terms); i += pc.blockSize {
 		end := i + pc.blockSize
-		if end > len(sorted) {
-			end = len(sorted)
+		if end > len(terms) {
+			end = len(terms)
 		}
-		block := pc.compressBlock(sorted[i:end])
+		block := pc.compressBlock(terms[i:end])
 		blocks = append(blocks, block)
 	}
 
@@ -209,7 +220,7 @@ func CompressionStats(terms []string) (compressed, original int, ratio float64) 
 		original += len(t)
 	}
 
-	pc := MustNewPrefixCompressor(16)
+	pc := MustNewPrefixCompressor(defaultPrefixBlockSize)
 	blocks := pc.Compress(terms)
 
 	for _, block := range blocks {

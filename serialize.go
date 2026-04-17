@@ -97,6 +97,11 @@ const (
 	compressedMagic   = "GINc"
 )
 
+const (
+	compactStringModeRaw uint8 = iota
+	compactStringModeFrontCoded
+)
+
 type SerializedConfig struct {
 	BloomFilterSize         uint32            `json:"bloom_filter_size"`
 	BloomFilterHashes       uint8             `json:"bloom_filter_hashes"`
@@ -410,6 +415,124 @@ func rejectDuplicateSectionPath[T any](kind string, sections map[uint16]T, pathI
 		return errors.Wrapf(ErrInvalidFormat, "duplicate %s for path %d", kind, pathID)
 	}
 	return nil
+}
+
+func orderedStringBlockSize(idx *GINIndex) int {
+	if idx != nil && idx.Config != nil && idx.Config.PrefixBlockSize > 0 {
+		return idx.Config.PrefixBlockSize
+	}
+	return defaultPrefixBlockSize
+}
+
+func writeOrderedStrings(w io.Writer, values []string, blockSize int) error {
+	if blockSize < 1 {
+		blockSize = defaultPrefixBlockSize
+	}
+
+	rawPayload, err := encodeRawOrderedStrings(values)
+	if err != nil {
+		return err
+	}
+
+	frontPayload, err := encodeFrontCodedOrderedStrings(values, blockSize)
+	if err != nil {
+		return err
+	}
+
+	selected := frontPayload
+	if rawPayload.Len() <= frontPayload.Len() {
+		selected = rawPayload
+	}
+
+	_, err = w.Write(selected.Bytes())
+	return err
+}
+
+func encodeRawOrderedStrings(values []string) (*bytes.Buffer, error) {
+	var buf bytes.Buffer
+	if err := buf.WriteByte(compactStringModeRaw); err != nil {
+		return nil, err
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(values))); err != nil {
+		return nil, err
+	}
+	for i, value := range values {
+		valueBytes := []byte(value)
+		if len(valueBytes) > math.MaxUint16 {
+			return nil, errors.Errorf("ordered string %d length %d exceeds max %d", i, len(valueBytes), math.MaxUint16)
+		}
+		if err := binary.Write(&buf, binary.LittleEndian, uint16(len(valueBytes))); err != nil {
+			return nil, err
+		}
+		if _, err := buf.Write(valueBytes); err != nil {
+			return nil, err
+		}
+	}
+	return &buf, nil
+}
+
+func encodeFrontCodedOrderedStrings(values []string, blockSize int) (*bytes.Buffer, error) {
+	pc, err := NewPrefixCompressor(blockSize)
+	if err != nil {
+		return nil, err
+	}
+
+	var buf bytes.Buffer
+	if err := buf.WriteByte(compactStringModeFrontCoded); err != nil {
+		return nil, err
+	}
+	if err := WriteCompressedTerms(&buf, pc.CompressInOrder(values)); err != nil {
+		return nil, err
+	}
+	return &buf, nil
+}
+
+func readOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
+	var mode uint8
+	if err := binary.Read(r, binary.LittleEndian, &mode); err != nil {
+		return nil, err
+	}
+
+	switch mode {
+	case compactStringModeRaw:
+		return readRawOrderedStrings(r, expectedCount)
+	case compactStringModeFrontCoded:
+		blocks, err := ReadCompressedTerms(r)
+		if err != nil {
+			return nil, err
+		}
+		values := (&PrefixCompressor{}).Decompress(blocks)
+		if uint32(len(values)) != expectedCount {
+			return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", len(values), expectedCount)
+		}
+		return values, nil
+	default:
+		return nil, errors.Wrapf(ErrInvalidFormat, "unknown compact string mode %d", mode)
+	}
+}
+
+func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
+	var count uint32
+	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
+		return nil, err
+	}
+	if count != expectedCount {
+		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", count, expectedCount)
+	}
+
+	values := make([]string, expectedCount)
+	for i := uint32(0); i < expectedCount; i++ {
+		var valueLen uint16
+		if err := binary.Read(r, binary.LittleEndian, &valueLen); err != nil {
+			return nil, err
+		}
+		valueBytes := make([]byte, valueLen)
+		if _, err := io.ReadFull(r, valueBytes); err != nil {
+			return nil, err
+		}
+		values[i] = string(valueBytes)
+	}
+	return values, nil
 }
 
 func writePathDirectory(w io.Writer, idx *GINIndex) error {

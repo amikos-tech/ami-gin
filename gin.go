@@ -13,6 +13,8 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v9: phase 10 serialization compaction for path-directory names and
+	//       ordered string term payloads
 	//   v8: explicit companion transformer failure modes in serialized config
 	//       and representation metadata (strict by default, soft-fail opt-in)
 	//   v7: explicit representation metadata for derived alias routing
@@ -23,11 +25,15 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(8)
+	Version = uint16(9)
 )
 
 const (
 	FlagHasDocIDMap uint16 = 1 << iota
+)
+
+const (
+	defaultPrefixBlockSize = 16
 )
 
 const (
@@ -628,7 +634,7 @@ func DefaultConfig() GINConfig {
 		EnableTrigrams:          true,
 		TrigramMinLength:        3,
 		HLLPrecision:            12,
-		PrefixBlockSize:         16,
+		PrefixBlockSize:         defaultPrefixBlockSize,
 		AdaptiveMinRGCoverage:   2,
 		AdaptivePromotedTermCap: 64,
 		AdaptiveCoverageCeiling: 0.80,
