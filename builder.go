@@ -582,7 +582,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 	for _, registration := range registrations {
 		transformed, ok := registration.FieldTransformer(prepared)
 		if !ok {
-			return errors.Errorf("transform %s for %s failed", registration.Alias, canonicalPath)
+			continue
 		}
 		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
 			return err
@@ -1116,7 +1116,7 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	}
 
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
-	idx.representations = collectSerializedRepresentationsFromConfig(idx.Config)
+	idx.representations = collectMaterializedRepresentationsFromConfig(idx.Config, idx.pathLookup)
 	if err := idx.rebuildRepresentationLookup(); err != nil {
 		panic(err)
 	}

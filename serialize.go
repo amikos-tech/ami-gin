@@ -1387,8 +1387,8 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 
 func writeRepresentations(w io.Writer, idx *GINIndex) error {
 	representations := idx.representations
-	if len(representations) == 0 {
-		representations = collectSerializedRepresentationsFromConfig(idx.Config)
+	if representations == nil {
+		representations = collectRepresentationsFromConfig(idx.Config)
 	}
 	if len(representations) == 0 {
 		return binary.Write(w, binary.LittleEndian, uint32(0))
@@ -1425,7 +1425,7 @@ func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
 	}
 
 	if sectionLen == 0 {
-		return nil, nil
+		return []serializedRepresentation{}, nil
 	}
 	if sectionLen > maxRepresentationSectionSize {
 		return nil, errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", sectionLen, maxRepresentationSectionSize)
@@ -1451,8 +1451,8 @@ func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
 		if err != nil {
 			return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize representation source path %q: %v", representation.SourcePath, err)
 		}
-		if representation.Alias == "" {
-			return nil, errors.Wrapf(ErrInvalidFormat, "missing representation alias for %s", canonicalPath)
+		if err := validateRepresentationAlias(representation.Alias); err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "invalid representation alias for %s: %v", canonicalPath, err)
 		}
 		if !representation.Serializable {
 			return nil, errors.Wrapf(ErrInvalidFormat, "representation %s on %s is not serializable", representation.Alias, canonicalPath)

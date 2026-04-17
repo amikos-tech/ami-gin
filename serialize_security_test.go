@@ -200,6 +200,29 @@ func TestDecodeVersionMismatch(t *testing.T) {
 	}
 }
 
+func TestDecodeRejectsV6VersionMismatch(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	data[8] = 6
+	data[9] = 0
+
+	_, err = Decode(data)
+	if err == nil {
+		t.Fatal("expected error for v6 payload, got nil")
+	}
+	if !stderrors.Is(err, ErrVersionMismatch) {
+		t.Fatalf("expected ErrVersionMismatch for v6 payload, got: %v", err)
+	}
+}
+
 func TestDecodeLegacyRejected(t *testing.T) {
 	// Create data that doesn't start with recognized magic bytes.
 	// This would have previously been handled by the legacy zstd fallback.
@@ -544,6 +567,122 @@ func TestDecodeRejectsRepresentationTargetPathOutOfRange(t *testing.T) {
 
 	if _, err := Decode(mutated.Bytes()); err == nil {
 		t.Fatal("Decode() error = nil, want invalid target path rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMissingAlias(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Alias = ""
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want missing alias rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMissingTransformerName(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Transformer.Name = ""
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want missing transformer name rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationTransformerPathMismatch(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Transformer.Path = "$.other"
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want transformer path mismatch rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
+	}
+}
+
+func TestDecodeRejectsRepresentationMarkedNonSerializable(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	representations, offset := locateRepresentationSection(t, data)
+	representations[0].Serializable = false
+	payload, err := json.Marshal(representations)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var mutated bytes.Buffer
+	mutated.Write(data[:offset])
+	if err := binary.Write(&mutated, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	mutated.Write(payload)
+
+	if _, err := Decode(mutated.Bytes()); err == nil {
+		t.Fatal("Decode() error = nil, want non-serializable metadata rejection")
 	} else if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("Decode() error = %v, want ErrInvalidFormat", err)
 	}

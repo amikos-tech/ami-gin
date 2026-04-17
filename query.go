@@ -91,14 +91,16 @@ func (idx *GINIndex) resolvePredicatePath(path string, value any) (int, *PathEnt
 		return -1, nil, value
 	}
 
-	rawValue := value
-	if representation, ok := value.(RepresentationValue); ok {
-		rawValue = representation.Value
+	alias, rawValue, aliased, valid := unwrapRepresentationPredicateValue(value)
+	if aliased {
+		if !valid {
+			return -1, nil, rawValue
+		}
 		aliases := idx.representationLookup[canonicalPath]
 		if len(aliases) == 0 {
 			return -1, nil, rawValue
 		}
-		pathID, ok := aliases[representation.Alias]
+		pathID, ok := aliases[alias]
 		if !ok {
 			return -1, nil, rawValue
 		}
@@ -116,6 +118,46 @@ func (idx *GINIndex) resolvePredicatePath(path string, value any) (int, *PathEnt
 		return -1, nil, rawValue
 	}
 	return int(pathID), &idx.PathDirectory[pathID], rawValue
+}
+
+func unwrapRepresentationPredicateValue(value any) (alias string, rawValue any, aliased bool, valid bool) {
+	switch v := value.(type) {
+	case RepresentationValue:
+		return v.Alias, v.Value, true, true
+	case []any:
+		if len(v) == 0 {
+			return "", v, false, true
+		}
+
+		sawRepresentation := false
+		alias = ""
+		unwrapped := make([]any, len(v))
+		for i, item := range v {
+			representation, ok := item.(RepresentationValue)
+			if !ok {
+				unwrapped[i] = item
+				continue
+			}
+			if !sawRepresentation {
+				sawRepresentation = true
+				alias = representation.Alias
+			} else if representation.Alias != alias {
+				return "", v, true, false
+			}
+			unwrapped[i] = representation.Value
+		}
+		if !sawRepresentation {
+			return "", v, false, true
+		}
+		for _, item := range v {
+			if _, ok := item.(RepresentationValue); !ok {
+				return "", v, true, false
+			}
+		}
+		return alias, unwrapped, true, true
+	default:
+		return "", value, false, true
+	}
 }
 
 func (idx *GINIndex) findPath(path string) (int, *PathEntry) {

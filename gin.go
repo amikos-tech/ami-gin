@@ -256,18 +256,21 @@ type RepresentationValue struct {
 }
 
 func As(alias string, value any) RepresentationValue {
+	if err := validateRepresentationAlias(alias); err != nil {
+		panic(err.Error())
+	}
 	return RepresentationValue{Alias: alias, Value: value}
 }
 
 // FieldTransformer transforms a value before indexing.
 // Returns (transformedValue, ok). If ok=false, the companion representation
-// could not be produced from the source value.
+// is skipped for that document while the raw source value continues indexing.
 type FieldTransformer func(value any) (any, bool)
 
 type RepresentationInfo struct {
-	SourcePath   string
-	Alias        string
-	Transformer  string
+	SourcePath  string
+	Alias       string
+	Transformer string
 }
 
 type RepresentationSpec struct {
@@ -345,9 +348,19 @@ func (c *GINConfig) firstRepresentation(canonicalPath string) (registeredReprese
 	return registrations[0], true
 }
 
-func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, fn FieldTransformer) error {
+func validateRepresentationAlias(alias string) error {
 	if alias == "" {
-		return errors.Errorf("transformer alias required for %s", canonicalPath)
+		return errors.New("representation alias required")
+	}
+	if strings.Contains(alias, internalRepresentationPathSeparator) {
+		return errors.Errorf("representation alias %q must not contain %q", alias, internalRepresentationPathSeparator)
+	}
+	return nil
+}
+
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, fn FieldTransformer) error {
+	if err := validateRepresentationAlias(alias); err != nil {
+		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
 	if fn == nil {
 		return errors.Errorf("transformer alias %q for %s requires a function", alias, canonicalPath)
@@ -402,6 +415,16 @@ func WithCustomTransformer(path, alias string, fn FieldTransformer) ConfigOption
 	}
 }
 
+func withRegisteredTransformerJSON(path, alias string, id TransformerID, params any) ConfigOption {
+	return func(c *GINConfig) error {
+		payload, err := jsonMarshal(params)
+		if err != nil {
+			return errors.Wrapf(err, "marshal transformer params for %s alias %q", path, alias)
+		}
+		return WithRegisteredTransformer(path, alias, id, payload)(c)
+	}
+}
+
 func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte) ConfigOption {
 	return func(c *GINConfig) error {
 		canonicalPath, err := canonicalizeSupportedPath(path)
@@ -425,8 +448,7 @@ func WithDateTransformer(path, alias string) ConfigOption {
 }
 
 func WithCustomDateTransformer(path, alias, layout string) ConfigOption {
-	params, _ := jsonMarshal(CustomDateParams{Layout: layout})
-	return WithRegisteredTransformer(path, alias, TransformerCustomDateToEpochMs, params)
+	return withRegisteredTransformerJSON(path, alias, TransformerCustomDateToEpochMs, CustomDateParams{Layout: layout})
 }
 
 func WithToLowerTransformer(path, alias string) ConfigOption {
@@ -442,13 +464,11 @@ func WithSemVerTransformer(path, alias string) ConfigOption {
 }
 
 func WithRegexExtractTransformer(path, alias, pattern string, group int) ConfigOption {
-	params, _ := jsonMarshal(RegexParams{Pattern: pattern, Group: group})
-	return WithRegisteredTransformer(path, alias, TransformerRegexExtract, params)
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group})
 }
 
 func WithRegexExtractIntTransformer(path, alias, pattern string, group int) ConfigOption {
-	params, _ := jsonMarshal(RegexParams{Pattern: pattern, Group: group})
-	return WithRegisteredTransformer(path, alias, TransformerRegexExtractInt, params)
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group})
 }
 
 func WithDurationTransformer(path, alias string) ConfigOption {
@@ -464,8 +484,7 @@ func WithURLHostTransformer(path, alias string) ConfigOption {
 }
 
 func WithNumericBucketTransformer(path, alias string, size float64) ConfigOption {
-	params, _ := jsonMarshal(NumericBucketParams{Size: size})
-	return WithRegisteredTransformer(path, alias, TransformerNumericBucket, params)
+	return withRegisteredTransformerJSON(path, alias, TransformerNumericBucket, NumericBucketParams{Size: size})
 }
 
 func WithBoolNormalizeTransformer(path, alias string) ConfigOption {
@@ -620,8 +639,8 @@ func (c GINConfig) validate() error {
 			if spec.SourcePath != canonicalPath {
 				return errors.Errorf("transformer source path %q stored under %q", spec.SourcePath, canonicalPath)
 			}
-			if spec.Alias == "" {
-				return errors.Errorf("transformer alias required for %s", canonicalPath)
+			if err := validateRepresentationAlias(spec.Alias); err != nil {
+				return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 			}
 			if _, exists := seenAliases[spec.Alias]; exists {
 				return errors.Errorf("duplicate transformer alias %q for %s", spec.Alias, canonicalPath)
@@ -682,8 +701,8 @@ func (idx *GINIndex) rebuildRepresentationLookup() error {
 	lookup := make(map[string]map[string]uint16)
 	infos := make(map[string][]RepresentationInfo)
 	representations := idx.representations
-	if len(representations) == 0 {
-		representations = collectSerializedRepresentationsFromConfig(idx.Config)
+	if representations == nil {
+		representations = collectRepresentationsFromConfig(idx.Config)
 		idx.representations = representations
 	}
 	if len(representations) == 0 {
@@ -719,7 +738,7 @@ func (idx *GINIndex) rebuildRepresentationLookup() error {
 	return nil
 }
 
-func collectSerializedRepresentationsFromConfig(cfg *GINConfig) []serializedRepresentation {
+func collectRepresentationsFromConfig(cfg *GINConfig) []serializedRepresentation {
 	if cfg == nil || len(cfg.representationSpecs) == 0 {
 		return nil
 	}
@@ -737,17 +756,26 @@ func collectSerializedRepresentationsFromConfig(cfg *GINConfig) []serializedRepr
 			return sortedRepresentations[i].Alias < sortedRepresentations[j].Alias
 		})
 		for _, representation := range sortedRepresentations {
-			representations = append(representations, serializedRepresentation{
-				SourcePath:   representation.SourcePath,
-				Alias:        representation.Alias,
-				TargetPath:   representation.TargetPath,
-				Transformer:  representation.Transformer,
-				Serializable: representation.Serializable,
-			})
+			representations = append(representations, serializedRepresentation(representation))
 		}
 	}
 
 	return representations
+}
+
+func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map[string]uint16) []serializedRepresentation {
+	representations := collectRepresentationsFromConfig(cfg)
+	if len(representations) == 0 {
+		return nil
+	}
+
+	materialized := make([]serializedRepresentation, 0, len(representations))
+	for _, representation := range representations {
+		if _, ok := pathLookup[representation.TargetPath]; ok {
+			materialized = append(materialized, representation)
+		}
+	}
+	return materialized
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

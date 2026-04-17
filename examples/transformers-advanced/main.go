@@ -79,17 +79,13 @@ func ipRangeExample() error {
 	fmt.Printf("Row groups: %v (expected: [0])\n", result.ToSlice())
 
 	// Query: Find all 192.168.x.x using InSubnet helper (CIDR notation)
-	fmt.Println("Query: Find IPs in 192.168.0.0/16 subnet (using CIDRToRange + gin.As)")
-	start, end, _ := gin.CIDRToRange("192.168.0.0/16")
-	result = idx.Evaluate([]gin.Predicate{
-		gin.GTE("$.client_ip", gin.As("ipv4_int", start)),
-		gin.LTE("$.client_ip", gin.As("ipv4_int", end)),
-	})
+	fmt.Println("Query: Find IPs in 192.168.0.0/16 subnet (using gin.InSubnet)")
+	result = idx.Evaluate(gin.InSubnet("$.client_ip", "192.168.0.0/16"))
 	fmt.Printf("Row groups: %v (expected: [0, 2] - 192.168.x.x IPs)\n", result.ToSlice())
 
 	// Query: Find all 10.x.x.x using the numeric companion
 	fmt.Println("Query: Find IPs in 10.0.0.0/8 subnet")
-	start, end, _ = gin.CIDRToRange("10.0.0.0/8")
+	start, end, _ := gin.CIDRToRange("10.0.0.0/8")
 	result = idx.Evaluate([]gin.Predicate{
 		gin.GTE("$.client_ip", gin.As("ipv4_int", start)),
 		gin.LTE("$.client_ip", gin.As("ipv4_int", end)),

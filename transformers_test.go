@@ -478,7 +478,7 @@ func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
 	}
 }
 
-func TestBuilderFailsWhenCompanionTransformFails(t *testing.T) {
+func TestBuilderSkipsCompanionWhenTransformFails(t *testing.T) {
 	config, err := NewConfig(
 		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
 			s, ok := value.(string)
@@ -497,26 +497,29 @@ func TestBuilderFailsWhenCompanionTransformFails(t *testing.T) {
 		t.Fatalf("NewBuilder failed: %v", err)
 	}
 
-	err = builder.AddDocument(0, []byte(`{"email":42}`))
-	if err == nil {
-		t.Fatal("AddDocument(0) error = nil, want strict companion failure")
-	}
-	if !strings.Contains(err.Error(), "transform strict for $.email failed") {
-		t.Fatalf("AddDocument(0) error = %v, want alias+path failure", err)
+	if err := builder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("AddDocument(0) error = %v, want lenient companion skip", err)
 	}
 
 	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
-		t.Fatalf("AddDocument(1) failed after strict rejection: %v", err)
+		t.Fatalf("AddDocument(1) failed after lenient skip: %v", err)
 	}
 
 	idx := builder.Finalize()
-	if idx.Header.NumDocs != 1 {
-		t.Fatalf("Header.NumDocs = %d, want 1", idx.Header.NumDocs)
+	if idx.Header.NumDocs != 2 {
+		t.Fatalf("Header.NumDocs = %d, want 2", idx.Header.NumDocs)
 	}
 
-	got := idx.Evaluate([]Predicate{EQ("$.email", "bob@example.com")}).ToSlice()
-	if len(got) != 1 || got[0] != 0 {
-		t.Fatalf(`EQ("$.email", "bob@example.com") = %v, want [0]`, got)
+	if got := idx.Evaluate([]Predicate{EQ("$.email", float64(42))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", 42) = %v, want [0]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", "bob@example.com")}).ToSlice(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf(`EQ("$.email", "bob@example.com") = %v, want [1]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", As("strict", "bob@example.com"))}).ToSlice(); len(got) != 1 || got[0] != 1 {
+		t.Fatalf(`EQ("$.email", As("strict", "bob@example.com")) = %v, want [1]`, got)
 	}
 }
 
@@ -1139,11 +1142,20 @@ func TestInSubnet(t *testing.T) {
 	if predicates[0].Path != "$.client_ip" || predicates[1].Path != "$.client_ip" {
 		t.Error("predicates should have path $.client_ip")
 	}
-	if predicates[0].Value != float64(3232235776) {
-		t.Errorf("start value = %v, want 3232235776", predicates[0].Value)
+	start, ok := predicates[0].Value.(RepresentationValue)
+	if !ok {
+		t.Fatalf("start value type = %T, want RepresentationValue", predicates[0].Value)
 	}
-	if predicates[1].Value != float64(3232236031) {
-		t.Errorf("end value = %v, want 3232236031", predicates[1].Value)
+	if start.Alias != "ipv4_int" || start.Value != float64(3232235776) {
+		t.Errorf("start value = %#v, want alias ipv4_int and 3232235776", start)
+	}
+
+	end, ok := predicates[1].Value.(RepresentationValue)
+	if !ok {
+		t.Fatalf("end value type = %T, want RepresentationValue", predicates[1].Value)
+	}
+	if end.Alias != "ipv4_int" || end.Value != float64(3232236031) {
+		t.Errorf("end value = %#v, want alias ipv4_int and 3232236031", end)
 	}
 }
 
@@ -1188,10 +1200,7 @@ func TestInSubnetIntegration(t *testing.T) {
 	idx := builder.Finalize()
 
 	// Use InSubnet helper
-	pathID := requirePathID(t, idx, "__derived:$.client_ip#ipv4_int")
-	start24 := float64(3232235776)
-	end24 := float64(3232236031)
-	result := idx.evaluateGTE(int(pathID), start24).Intersect(idx.evaluateLTE(int(pathID), end24))
+	result := idx.Evaluate(InSubnet("$.client_ip", "192.168.1.0/24"))
 
 	if result.Count() != 2 {
 		t.Errorf("expected 2 matches in 192.168.1.0/24, got %d", result.Count())
@@ -1204,9 +1213,7 @@ func TestInSubnetIntegration(t *testing.T) {
 	}
 
 	// Test /16 subnet
-	start16 := float64(3232235520)
-	end16 := float64(3232301055)
-	result = idx.evaluateGTE(int(pathID), start16).Intersect(idx.evaluateLTE(int(pathID), end16))
+	result = idx.Evaluate(InSubnet("$.client_ip", "192.168.0.0/16"))
 	if result.Count() != 3 {
 		t.Errorf("expected 3 matches in 192.168.0.0/16, got %d", result.Count())
 	}
