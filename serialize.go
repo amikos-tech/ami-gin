@@ -112,14 +112,6 @@ type SerializedConfig struct {
 	Transformers            []TransformerSpec `json:"transformers,omitempty"`
 }
 
-type serializedRepresentation struct {
-	SourcePath   string          `json:"source_path"`
-	Alias        string          `json:"alias"`
-	TargetPath   string          `json:"target_path"`
-	Transformer  TransformerSpec `json:"transformer"`
-	Serializable bool            `json:"serializable"`
-}
-
 func writeRGSet(w io.Writer, rs *RGSet) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(rs.NumRGs)); err != nil {
 		return err
@@ -1391,6 +1383,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 func writeRepresentations(w io.Writer, idx *GINIndex) error {
 	representations := idx.representations
 	if representations == nil {
+		// Fallback for hand-constructed GINIndex not produced by Finalize() or Decode().
 		representations = collectRepresentationsFromConfig(idx.Config)
 	}
 	if len(representations) == 0 {
@@ -1418,7 +1411,7 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 	return err
 }
 
-func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
+func readRepresentations(r io.Reader) ([]RepresentationSpec, error) {
 	var sectionLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &sectionLen); err != nil {
 		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
@@ -1428,7 +1421,7 @@ func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
 	}
 
 	if sectionLen == 0 {
-		return []serializedRepresentation{}, nil
+		return []RepresentationSpec{}, nil
 	}
 	if sectionLen > maxRepresentationSectionSize {
 		return nil, errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", sectionLen, maxRepresentationSectionSize)
@@ -1442,7 +1435,7 @@ func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
 		return nil, err
 	}
 
-	var representations []serializedRepresentation
+	var representations []RepresentationSpec
 	if err := json.Unmarshal(data, &representations); err != nil {
 		return nil, errors.Wrap(err, "unmarshal representations")
 	}

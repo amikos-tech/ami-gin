@@ -65,7 +65,7 @@ func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
 	return builder.Finalize()
 }
 
-func locateRepresentationSection(t *testing.T, data []byte) ([]serializedRepresentation, int) {
+func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpec, int) {
 	t.Helper()
 
 	if len(data) < 4 {

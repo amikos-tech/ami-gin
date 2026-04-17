@@ -511,10 +511,18 @@ func benchmarkAddDocumentLegacy(builder *GINBuilder, docID DocID, jsonDoc []byte
 	return nil
 }
 
+func firstRepresentation(c GINConfig, canonicalPath string) (registeredRepresentation, bool) {
+	registrations := c.representations(canonicalPath)
+	if len(registrations) == 0 {
+		return registeredRepresentation{}, false
+	}
+	return registrations[0], true
+}
+
 func benchmarkWalkJSONLegacy(builder *GINBuilder, path string, value any, rgID int) {
 	canonicalPath := normalizeWalkPath(path)
 
-	if registration, ok := builder.config.firstRepresentation(canonicalPath); ok {
+	if registration, ok := firstRepresentation(builder.config, canonicalPath); ok {
 		if transformed, ok := registration.FieldTransformer(value); ok {
 			value = transformed
 		}
@@ -617,7 +625,7 @@ func benchmarkAddDocumentLegacyReference(builder *GINBuilder, docID DocID, jsonD
 func benchmarkWalkJSONLegacyReference(builder *GINBuilder, path string, value any, rgID int) {
 	canonicalPath := normalizeWalkPath(path)
 
-	if registration, ok := builder.config.firstRepresentation(canonicalPath); ok {
+	if registration, ok := firstRepresentation(builder.config, canonicalPath); ok {
 		if transformed, ok := registration.FieldTransformer(value); ok {
 			value = transformed
 		}

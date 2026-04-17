@@ -80,7 +80,7 @@ type GINIndex struct {
 	pathLookup            map[string]uint16
 	representationLookup  map[string]map[string]uint16
 	representationInfos   map[string][]RepresentationInfo
-	representations       []serializedRepresentation
+	representations       []RepresentationSpec
 }
 
 type Header struct {
@@ -328,11 +328,11 @@ type RepresentationInfo struct {
 }
 
 type RepresentationSpec struct {
-	SourcePath   string
-	Alias        string
-	TargetPath   string
-	Transformer  TransformerSpec
-	Serializable bool
+	SourcePath   string          `json:"source_path"`
+	Alias        string          `json:"alias"`
+	TargetPath   string          `json:"target_path"`
+	Transformer  TransformerSpec `json:"transformer"`
+	Serializable bool            `json:"serializable"`
 }
 
 type registeredRepresentation struct {
@@ -392,14 +392,6 @@ func (c *GINConfig) representations(canonicalPath string) []registeredRepresenta
 		return nil
 	}
 	return c.representationTransformers[canonicalPath]
-}
-
-func (c *GINConfig) firstRepresentation(canonicalPath string) (registeredRepresentation, bool) {
-	registrations := c.representations(canonicalPath)
-	if len(registrations) == 0 {
-		return registeredRepresentation{}, false
-	}
-	return registrations[0], true
 }
 
 func validateRepresentationAlias(alias string) error {
@@ -808,7 +800,7 @@ func (idx *GINIndex) rebuildRepresentationLookup() error {
 	return nil
 }
 
-func collectRepresentationsFromConfig(cfg *GINConfig) []serializedRepresentation {
+func collectRepresentationsFromConfig(cfg *GINConfig) []RepresentationSpec {
 	if cfg == nil || len(cfg.representationSpecs) == 0 {
 		return nil
 	}
@@ -819,27 +811,25 @@ func collectRepresentationsFromConfig(cfg *GINConfig) []serializedRepresentation
 	}
 	sort.Strings(sourcePaths)
 
-	representations := make([]serializedRepresentation, 0)
+	representations := make([]RepresentationSpec, 0)
 	for _, sourcePath := range sourcePaths {
 		sortedRepresentations := append([]RepresentationSpec(nil), cfg.representationSpecs[sourcePath]...)
 		sort.Slice(sortedRepresentations, func(i, j int) bool {
 			return sortedRepresentations[i].Alias < sortedRepresentations[j].Alias
 		})
-		for _, representation := range sortedRepresentations {
-			representations = append(representations, serializedRepresentation(representation))
-		}
+		representations = append(representations, sortedRepresentations...)
 	}
 
 	return representations
 }
 
-func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map[string]uint16) []serializedRepresentation {
+func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map[string]uint16) []RepresentationSpec {
 	representations := collectRepresentationsFromConfig(cfg)
 	if len(representations) == 0 {
 		return nil
 	}
 
-	materialized := make([]serializedRepresentation, 0, len(representations))
+	materialized := make([]RepresentationSpec, 0, len(representations))
 	for _, representation := range representations {
 		if _, ok := pathLookup[representation.TargetPath]; ok {
 			materialized = append(materialized, representation)
