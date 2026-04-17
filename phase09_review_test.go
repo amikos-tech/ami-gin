@@ -145,6 +145,8 @@ func TestPhase09MixedAliasSlicesFallBackToAllRowGroups(t *testing.T) {
 }
 
 func TestPhase09InSubnetUsesDerivedAliases(t *testing.T) {
+	const defaultIPv4Alias = "ipv4_int"
+
 	defaultPredicates := InSubnet("$.client_ip", "192.168.1.0/24")
 	if len(defaultPredicates) != 2 {
 		t.Fatalf("InSubnet() len = %d, want 2", len(defaultPredicates))
@@ -155,12 +157,12 @@ func TestPhase09InSubnetUsesDerivedAliases(t *testing.T) {
 		if !ok {
 			t.Fatalf("InSubnet() predicate %d value type = %T, want RepresentationValue", i, predicate.Value)
 		}
-		if value.Alias != "ipv4_int" {
-			t.Fatalf("InSubnet() predicate %d alias = %q, want %q", i, value.Alias, "ipv4_int")
+		if value.Alias != defaultIPv4Alias {
+			t.Fatalf("InSubnet() predicate %d alias = %q, want %q", i, value.Alias, defaultIPv4Alias)
 		}
 	}
 
-	idx := buildPhase09IPv4Fixture(t, "ipv4_int")
+	idx := buildPhase09IPv4Fixture(t, defaultIPv4Alias)
 	requirePredicateResult(t, idx, defaultPredicates, []int{0, 2}, `InSubnet("$.client_ip", "192.168.1.0/24")`)
 
 	customPredicates := InSubnetAs("$.client_ip", "client_ip_num", "192.168.1.0/24")
