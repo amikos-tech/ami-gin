@@ -442,6 +442,17 @@ func writeOrderedStrings(w io.Writer, values []string, blockSize int) error {
 		blockSize = defaultPrefixBlockSize
 	}
 
+	// Front-coding a zero- or single-value slice cannot beat raw, so skip the
+	// second encoder entirely for trivial inputs.
+	if len(values) <= 1 {
+		rawPayload, err := encodeRawOrderedStrings(values)
+		if err != nil {
+			return err
+		}
+		_, err = w.Write(rawPayload.Bytes())
+		return err
+	}
+
 	rawPayload, err := encodeRawOrderedStrings(values)
 	if err != nil {
 		return err

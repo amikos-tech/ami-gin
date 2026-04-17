@@ -800,6 +800,46 @@ func TestReadOrderedStringsRejectsFrontCodedOversizedPrefixLength(t *testing.T) 
 	}
 }
 
+func TestWriteOrderedStringsShortCircuitsTrivialInputs(t *testing.T) {
+	cases := []struct {
+		name   string
+		values []string
+	}{
+		{name: "empty", values: nil},
+		{name: "single", values: []string{"solo"}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := writeOrderedStrings(&buf, tc.values, defaultPrefixBlockSize); err != nil {
+				t.Fatalf("writeOrderedStrings(%v) error = %v", tc.values, err)
+			}
+
+			payload := buf.Bytes()
+			if len(payload) == 0 {
+				t.Fatalf("writeOrderedStrings(%v) produced empty payload", tc.values)
+			}
+			if payload[0] != compactStringModeRaw {
+				t.Fatalf("mode = %d, want raw mode for trivial input", payload[0])
+			}
+
+			got, err := readOrderedStrings(bytes.NewReader(payload), uint32(len(tc.values)))
+			if err != nil {
+				t.Fatalf("readOrderedStrings(%v) error = %v", tc.values, err)
+			}
+			if len(got) != len(tc.values) {
+				t.Fatalf("len(got) = %d, want %d", len(got), len(tc.values))
+			}
+			for i, v := range tc.values {
+				if got[i] != v {
+					t.Fatalf("got[%d] = %q, want %q", i, got[i], v)
+				}
+			}
+		})
+	}
+}
+
 func TestWriteOrderedStringsPrefersRawOnTie(t *testing.T) {
 	var buf bytes.Buffer
 	if err := writeOrderedStrings(&buf, nil, defaultPrefixBlockSize); err != nil {
