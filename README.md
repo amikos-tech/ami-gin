@@ -112,11 +112,13 @@ func main() {
 
 ## Known limitations
 
-GIN Index v0.1.0 intentionally focuses on the proven single-index predicate surface described above.
+GIN Index v0.2.0 expands the original predicate surface with adaptive high-cardinality pruning and derived representations, but it still intentionally excludes a few deferred capabilities.
 
-- OR/AND composites are not part of the v0.1.0 query API yet.
-- Index merge across multiple index files is intentionally deferred beyond v0.1.0.
-- Query-time transformers are not supported in v0.1.0; transformations must happen at index-build time.
+- OR/AND composites are not part of the v0.2.0 query API yet.
+- Index merge across multiple index files is intentionally deferred beyond v0.2.0.
+- Query-time transformers are not supported in v0.2.0; transformations must happen at index-build time.
+
+Serialized index compatibility remains strict: `Decode()` rejects older payload versions. Indexes built with `v0.1.0` (wire format `v3`) must be rebuilt with `v0.2.0` (wire format `v8`).
 
 ## Query Types
 
