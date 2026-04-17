@@ -648,6 +648,7 @@ func TestDecodeRejectsCompactPathSectionCorruption(t *testing.T) {
 		t.Fatalf("path section mode = %d, want %d for compact fixture", body[offset], compactStringModeFrontCoded)
 	}
 
+	// Layout: mode(1) | blockCount(4) | firstLen(2) — corrupt the firstLen uint16 bytes.
 	body[offset+1+4] = 0xff
 	body[offset+1+4+1] = 0x7f
 
