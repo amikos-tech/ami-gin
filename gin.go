@@ -764,6 +764,7 @@ func (idx *GINIndex) rebuildRepresentationLookup() error {
 	infos := make(map[string][]RepresentationInfo)
 	representations := idx.representations
 	if representations == nil {
+		// Fallback for hand-constructed GINIndex not produced by Finalize() or Decode().
 		representations = collectRepresentationsFromConfig(idx.Config)
 		idx.representations = representations
 	}
