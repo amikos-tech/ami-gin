@@ -15,7 +15,7 @@
 - [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
 - [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
 - [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
-- [ ] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes
+- [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
 
 ## Phase Details
 
@@ -77,7 +77,7 @@ Plans:
   2. String term encoding no longer stores every term as raw repeated bytes
   3. Format-version handling is explicit and covered by round-trip tests for legacy and compact formats
   4. Size benchmarks show a clear encoded-size reduction on representative fixtures without query regressions
-**Plans:** TBD
+**Plans:** 3/3 plans complete
 
 ## Progress
 
@@ -90,7 +90,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 | 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
 | 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
-| 10. Serialization Compaction | 0/0 | Not started | - |
+| 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
