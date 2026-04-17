@@ -536,15 +536,16 @@ func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) 
 }
 
 func writePathDirectory(w io.Writer, idx *GINIndex) error {
+	pathNames := make([]string, len(idx.PathDirectory))
+	for i, entry := range idx.PathDirectory {
+		pathNames[i] = entry.PathName
+	}
+	if err := writeOrderedStrings(w, pathNames, orderedStringBlockSize(idx)); err != nil {
+		return err
+	}
+
 	for _, entry := range idx.PathDirectory {
 		if err := binary.Write(w, binary.LittleEndian, entry.PathID); err != nil {
-			return err
-		}
-		pathBytes := []byte(entry.PathName)
-		if err := binary.Write(w, binary.LittleEndian, uint16(len(pathBytes))); err != nil {
-			return err
-		}
-		if _, err := w.Write(pathBytes); err != nil {
 			return err
 		}
 		if err := binary.Write(w, binary.LittleEndian, entry.ObservedTypes); err != nil {
@@ -567,20 +568,17 @@ func readPathDirectory(r io.Reader, idx *GINIndex) error {
 	if idx.Header.NumPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "path count %d exceeds max %d", idx.Header.NumPaths, maxNumPaths)
 	}
+
+	pathNames, err := readOrderedStrings(r, idx.Header.NumPaths)
+	if err != nil {
+		return err
+	}
+
 	for i := uint32(0); i < idx.Header.NumPaths; i++ {
-		var entry PathEntry
+		entry := PathEntry{PathName: pathNames[i]}
 		if err := binary.Read(r, binary.LittleEndian, &entry.PathID); err != nil {
 			return err
 		}
-		var pathLen uint16
-		if err := binary.Read(r, binary.LittleEndian, &pathLen); err != nil {
-			return err
-		}
-		pathBytes := make([]byte, pathLen)
-		if _, err := io.ReadFull(r, pathBytes); err != nil {
-			return err
-		}
-		entry.PathName = string(pathBytes)
 		if err := binary.Read(r, binary.LittleEndian, &entry.ObservedTypes); err != nil {
 			return err
 		}
@@ -649,6 +647,7 @@ func writeStringIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.StringIndexes))); err != nil {
 		return err
 	}
+	blockSize := orderedStringBlockSize(idx)
 	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
 		si := idx.StringIndexes[pathID]
 		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
@@ -657,14 +656,10 @@ func writeStringIndexes(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, uint32(len(si.Terms))); err != nil {
 			return err
 		}
-		for i, term := range si.Terms {
-			termBytes := []byte(term)
-			if err := binary.Write(w, binary.LittleEndian, uint16(len(termBytes))); err != nil {
-				return err
-			}
-			if _, err := w.Write(termBytes); err != nil {
-				return err
-			}
+		if err := writeOrderedStrings(w, si.Terms, blockSize); err != nil {
+			return err
+		}
+		for i := range si.Terms {
 			if err := writeRGSet(w, si.RGBitmaps[i]); err != nil {
 				return err
 			}
@@ -696,21 +691,15 @@ func readStringIndexes(r io.Reader, idx *GINIndex) error {
 		if numTerms > maxTermsPerPath {
 			return errors.Wrapf(ErrInvalidFormat, "terms count %d for path %d exceeds max %d", numTerms, pathID, maxTermsPerPath)
 		}
+		terms, err := readOrderedStrings(r, numTerms)
+		if err != nil {
+			return err
+		}
 		si := &StringIndex{
-			Terms:     make([]string, numTerms),
+			Terms:     terms,
 			RGBitmaps: make([]*RGSet, numTerms),
 		}
 		for j := uint32(0); j < numTerms; j++ {
-			var termLen uint16
-			if err := binary.Read(r, binary.LittleEndian, &termLen); err != nil {
-				return err
-			}
-			termBytes := make([]byte, termLen)
-			if _, err := io.ReadFull(r, termBytes); err != nil {
-				return err
-			}
-			si.Terms[j] = string(termBytes)
-
 			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err
@@ -726,6 +715,7 @@ func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.AdaptiveStringIndexes))); err != nil {
 		return err
 	}
+	blockSize := orderedStringBlockSize(idx)
 	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
 		adaptive := idx.AdaptiveStringIndexes[pathID]
 		if adaptive == nil {
@@ -765,14 +755,10 @@ func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
 		if err := binary.Write(w, binary.LittleEndian, uint32(bucketCount)); err != nil {
 			return err
 		}
-		for i, term := range adaptive.Terms {
-			termBytes := []byte(term)
-			if err := binary.Write(w, binary.LittleEndian, uint16(len(termBytes))); err != nil {
-				return err
-			}
-			if _, err := w.Write(termBytes); err != nil {
-				return err
-			}
+		if err := writeOrderedStrings(w, adaptive.Terms, blockSize); err != nil {
+			return err
+		}
+		for i := range adaptive.Terms {
 			if err := writeRGSet(w, adaptive.RGBitmaps[i]); err != nil {
 				return err
 			}
@@ -835,20 +821,13 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count %d for path %d must be a power of two", bucketCount, pathID)
 		}
 
-		terms := make([]string, numTerms)
+		terms, err := readOrderedStrings(r, numTerms)
+		if err != nil {
+			return err
+		}
 		rgBitmaps := make([]*RGSet, numTerms)
 		bucketBitmaps := make([]*RGSet, bucketCount)
 		for j := uint32(0); j < numTerms; j++ {
-			var termLen uint16
-			if err := binary.Read(r, binary.LittleEndian, &termLen); err != nil {
-				return err
-			}
-			termBytes := make([]byte, termLen)
-			if _, err := io.ReadFull(r, termBytes); err != nil {
-				return err
-			}
-			terms[j] = string(termBytes)
-
 			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
 				return err

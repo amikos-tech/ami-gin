@@ -164,6 +164,14 @@ func mustAdaptiveIndex(t *testing.T, terms []string, rgBitmaps []*RGSet, bucketB
 	return adaptive
 }
 
+func mustWriteOrderedStrings(t *testing.T, w io.Writer, values []string) {
+	t.Helper()
+
+	if err := writeOrderedStrings(w, values, defaultPrefixBlockSize); err != nil {
+		t.Fatalf("writeOrderedStrings(%v) error = %v", values, err)
+	}
+}
+
 func TestDecodeVersionMismatch(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.AddDocument(0, []byte(`{"name": "alice", "age": 30}`))
@@ -247,12 +255,19 @@ func TestDecodeRejectsUnknownPathMode(t *testing.T) {
 		t.Fatalf("encode failed: %v", err)
 	}
 
-	// Header layout: 4 (uncompressedMagic) + 4 (MagicBytes) + 2 (Version) + 2 (Flags) +
-	// 4 (NumRowGroups) + 8 (NumDocs) + 4 (NumPaths) + 4 (CardinalityThreshold) = 32.
-	// First PathEntry: 2 (PathID) + 2 (pathLen) + pathLen (pathBytes "$.x"=3) +
-	// 1 (ObservedTypes) + 4 (Cardinality) = 12. Mode byte lives at 32+12 = 44.
-	modeOffset := 32 + 2 + 2 + len("$.x") + 1 + 4
-	data[modeOffset] = 99
+	body := data[len(uncompressedMagic):]
+	reader := bytes.NewReader(body)
+	headerOnly := NewGINIndex()
+	if err := readHeader(reader, headerOnly); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if _, err := readOrderedStrings(reader, headerOnly.Header.NumPaths); err != nil {
+		t.Fatalf("readOrderedStrings() error = %v", err)
+	}
+
+	metadataStart := len(body) - reader.Len()
+	modeOffset := metadataStart + 2 + 1 + 4
+	body[modeOffset] = 99
 
 	if _, err := Decode(data); err == nil {
 		t.Fatal("Decode() error = nil, want ErrInvalidFormat for unknown path mode")
@@ -860,6 +875,7 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 				if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
 					t.Fatalf("binary.Write(bucketCount) error = %v", err)
 				}
+				mustWriteOrderedStrings(t, &buf, nil)
 				idx := NewGINIndex()
 				idx.Header.NumRowGroups = 10
 				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
@@ -884,6 +900,7 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 				if err := binary.Write(&buf, binary.LittleEndian, uint32(3)); err != nil {
 					t.Fatalf("binary.Write(bucketCount) error = %v", err)
 				}
+				mustWriteOrderedStrings(t, &buf, nil)
 				idx := NewGINIndex()
 				idx.Header.NumRowGroups = 10
 				idx.PathDirectory = []PathEntry{{PathID: 0, Mode: PathModeAdaptiveHybrid}}
@@ -908,6 +925,7 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 				if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
 					t.Fatalf("binary.Write(bucketCount) error = %v", err)
 				}
+				mustWriteOrderedStrings(t, &buf, nil)
 				for i := 0; i < 2; i++ {
 					if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
 						t.Fatalf("writeRGSet(bucket=%d) error = %v", i, err)
@@ -938,6 +956,7 @@ func TestDecodeRejectsInvalidAdaptiveSections(t *testing.T) {
 					if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
 						t.Fatalf("binary.Write(bucketCount) error = %v", err)
 					}
+					mustWriteOrderedStrings(t, &buf, nil)
 					for bucketID := 0; bucketID < 2; bucketID++ {
 						if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
 							t.Fatalf("writeRGSet(path=%d bucket=%d) error = %v", i, bucketID, err)
@@ -984,12 +1003,7 @@ func TestDecodeAdaptiveSectionDerivesPathEntryCounts(t *testing.T) {
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
 		t.Fatalf("binary.Write(bucketCount) error = %v", err)
 	}
-	if err := binary.Write(&buf, binary.LittleEndian, uint16(len("hot"))); err != nil {
-		t.Fatalf("binary.Write(termLen) error = %v", err)
-	}
-	if _, err := buf.WriteString("hot"); err != nil {
-		t.Fatalf("WriteString(term) error = %v", err)
-	}
+	mustWriteOrderedStrings(t, &buf, []string{"hot"})
 	if err := writeRGSet(&buf, MustNewRGSet(4)); err != nil {
 		t.Fatalf("writeRGSet(promoted) error = %v", err)
 	}
@@ -1085,6 +1099,12 @@ func TestDecodeRejectsTruncatedAdaptiveTerm(t *testing.T) {
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
 		t.Fatalf("binary.Write(bucketCount) error = %v", err)
 	}
+	if err := buf.WriteByte(compactStringModeRaw); err != nil {
+		t.Fatalf("WriteByte(compactStringModeRaw) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(rawCount) error = %v", err)
+	}
 	if err := binary.Write(&buf, binary.LittleEndian, uint16(4)); err != nil {
 		t.Fatalf("binary.Write(termLen) error = %v", err)
 	}
@@ -1119,6 +1139,7 @@ func TestDecodeRejectsDuplicatePathSectionsAcrossReaders(t *testing.T) {
 				for i := 0; i < 2; i++ {
 					binary.Write(&buf, binary.LittleEndian, uint16(0))
 					binary.Write(&buf, binary.LittleEndian, uint32(0))
+					mustWriteOrderedStrings(t, &buf, nil)
 				}
 				return readStringIndexes(&buf, NewGINIndex())
 			},
@@ -1489,21 +1510,14 @@ func TestDecodeRejectsOutOfOrderPathDirectoryIDs(t *testing.T) {
 	}
 
 	pathIDOffsets := make([]int, 0, headerOnly.Header.NumPaths)
+	if _, err := readOrderedStrings(reader, headerOnly.Header.NumPaths); err != nil {
+		t.Fatalf("readOrderedStrings() error = %v", err)
+	}
+
+	const pathMetadataSize = 2 + 1 + 4 + 1 + 1
+	metadataStart := len(body) - reader.Len()
 	for i := uint32(0); i < headerOnly.Header.NumPaths; i++ {
-		pathIDOffsets = append(pathIDOffsets, len(body)-reader.Len())
-
-		var pathID uint16
-		if err := binary.Read(reader, binary.LittleEndian, &pathID); err != nil {
-			t.Fatalf("read pathID %d: %v", i, err)
-		}
-
-		var pathLen uint16
-		if err := binary.Read(reader, binary.LittleEndian, &pathLen); err != nil {
-			t.Fatalf("read pathLen %d: %v", i, err)
-		}
-		if _, err := reader.Seek(int64(pathLen)+1+4+1, io.SeekCurrent); err != nil {
-			t.Fatalf("seek path entry %d: %v", i, err)
-		}
+		pathIDOffsets = append(pathIDOffsets, metadataStart+int(i)*pathMetadataSize)
 	}
 
 	if len(pathIDOffsets) < 2 {
