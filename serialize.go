@@ -424,6 +424,16 @@ func orderedStringBlockSize(idx *GINIndex) int {
 	return defaultPrefixBlockSize
 }
 
+func wrapOrderedStringFormatError(context string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, ErrInvalidFormat) {
+		return err
+	}
+	return errors.Wrapf(ErrInvalidFormat, "%s: %v", context, err)
+}
+
 func writeOrderedStrings(w io.Writer, values []string, blockSize int) error {
 	if blockSize < 1 {
 		blockSize = defaultPrefixBlockSize
@@ -490,7 +500,7 @@ func encodeFrontCodedOrderedStrings(values []string, blockSize int) (*bytes.Buff
 func readOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
 	var mode uint8
 	if err := binary.Read(r, binary.LittleEndian, &mode); err != nil {
-		return nil, err
+		return nil, wrapOrderedStringFormatError("read compact string mode", err)
 	}
 
 	switch mode {
@@ -499,7 +509,7 @@ func readOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
 	case compactStringModeFrontCoded:
 		blocks, err := ReadCompressedTerms(r)
 		if err != nil {
-			return nil, err
+			return nil, wrapOrderedStringFormatError("read front-coded ordered strings", err)
 		}
 		values := (&PrefixCompressor{}).Decompress(blocks)
 		if uint32(len(values)) != expectedCount {
@@ -514,7 +524,7 @@ func readOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
 func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
 	var count uint32
 	if err := binary.Read(r, binary.LittleEndian, &count); err != nil {
-		return nil, err
+		return nil, wrapOrderedStringFormatError("read raw ordered string count", err)
 	}
 	if count != expectedCount {
 		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", count, expectedCount)
@@ -524,11 +534,11 @@ func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) 
 	for i := uint32(0); i < expectedCount; i++ {
 		var valueLen uint16
 		if err := binary.Read(r, binary.LittleEndian, &valueLen); err != nil {
-			return nil, err
+			return nil, wrapOrderedStringFormatError("read raw ordered string length", err)
 		}
 		valueBytes := make([]byte, valueLen)
 		if _, err := io.ReadFull(r, valueBytes); err != nil {
-			return nil, err
+			return nil, wrapOrderedStringFormatError("read raw ordered string bytes", err)
 		}
 		values[i] = string(valueBytes)
 	}

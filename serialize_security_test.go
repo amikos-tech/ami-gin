@@ -172,6 +172,116 @@ func mustWriteOrderedStrings(t *testing.T, w io.Writer, values []string) {
 	}
 }
 
+func buildCompactPathFixture(t *testing.T) *GINIndex {
+	t.Helper()
+
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	doc := `{
+		"alpha":"a",
+		"alphabet":"b",
+		"alphabetical":"c",
+		"alphanumeric":"d",
+		"alpha_nested":{"child":"e","child_two":"f"}
+	}`
+	if err := builder.AddDocument(0, []byte(doc)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+	return builder.Finalize()
+}
+
+func buildCompactStringFixture(t *testing.T) *GINIndex {
+	t.Helper()
+
+	builder := mustNewBuilder(t, DefaultConfig(), 6)
+	docs := []string{
+		`{"code":"prefix-0001"}`,
+		`{"code":"prefix-0002"}`,
+		`{"code":"prefix-0003"}`,
+		`{"code":"prefix-0100"}`,
+		`{"code":"prefix-0101"}`,
+		`{"code":"prefix-0102"}`,
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(rg=%d) error = %v", i, err)
+		}
+	}
+	return builder.Finalize()
+}
+
+func mustEncodeUncompressed(t *testing.T, idx *GINIndex) []byte {
+	t.Helper()
+
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+	return data
+}
+
+func locatePathOrderedStringsOffset(t *testing.T, data []byte) ([]byte, int) {
+	t.Helper()
+
+	body := data[len(uncompressedMagic):]
+	reader := bytes.NewReader(body)
+	idx := NewGINIndex()
+	if err := readHeader(reader, idx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+
+	return body, len(body) - reader.Len()
+}
+
+func locateStringIndexOrderedStringsOffset(t *testing.T, data []byte, pathName string) ([]byte, int) {
+	t.Helper()
+
+	body := data[len(uncompressedMagic):]
+	reader := bytes.NewReader(body)
+	idx := NewGINIndex()
+	if err := readHeader(reader, idx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if err := readPathDirectory(reader, idx); err != nil {
+		t.Fatalf("readPathDirectory() error = %v", err)
+	}
+	if _, err := readBloomFilter(reader); err != nil {
+		t.Fatalf("readBloomFilter() error = %v", err)
+	}
+
+	var numPaths uint32
+	if err := binary.Read(reader, binary.LittleEndian, &numPaths); err != nil {
+		t.Fatalf("binary.Read(numPaths) error = %v", err)
+	}
+
+	for i := uint32(0); i < numPaths; i++ {
+		var pathID uint16
+		if err := binary.Read(reader, binary.LittleEndian, &pathID); err != nil {
+			t.Fatalf("binary.Read(pathID) error = %v", err)
+		}
+		var numTerms uint32
+		if err := binary.Read(reader, binary.LittleEndian, &numTerms); err != nil {
+			t.Fatalf("binary.Read(numTerms) error = %v", err)
+		}
+
+		offset := len(body) - reader.Len()
+		if idx.PathDirectory[pathID].PathName == pathName {
+			return body, offset
+		}
+
+		if _, err := readOrderedStrings(reader, numTerms); err != nil {
+			t.Fatalf("readOrderedStrings(path=%s) error = %v", idx.PathDirectory[pathID].PathName, err)
+		}
+		for termIdx := uint32(0); termIdx < numTerms; termIdx++ {
+			if _, err := readRGSet(reader, idx.Header.NumRowGroups); err != nil {
+				t.Fatalf("readRGSet(path=%s term=%d) error = %v", idx.PathDirectory[pathID].PathName, termIdx, err)
+			}
+		}
+	}
+
+	t.Fatalf("path %q not found in string index section", pathName)
+	return nil, 0
+}
+
 func TestDecodeVersionMismatch(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.AddDocument(0, []byte(`{"name": "alice", "age": 30}`))
@@ -183,28 +293,27 @@ func TestDecodeVersionMismatch(t *testing.T) {
 		t.Fatalf("encode failed: %v", err)
 	}
 
-	// Uncompressed layout: [0:4] "GINu" + [4:8] "GIN\x01" + [8:10] version uint16 LE
-	// Set version to 99
-	data[8] = 99
-	data[9] = 0
-
-	_, err = Decode(data)
-	if err == nil {
-		t.Fatal("expected error for version mismatch, got nil")
-	}
-	if !stderrors.Is(err, ErrVersionMismatch) {
-		t.Errorf("expected ErrVersionMismatch, got: %v", err)
+	tests := []struct {
+		name    string
+		version uint16
+	}{
+		{name: "future version", version: 99},
+		{name: "zero version", version: 0},
+		{name: "previous phase version", version: 8},
 	}
 
-	// Also test version 0
-	data[8] = 0
-	data[9] = 0
-	_, err = Decode(data)
-	if err == nil {
-		t.Fatal("expected error for version 0, got nil")
-	}
-	if !stderrors.Is(err, ErrVersionMismatch) {
-		t.Errorf("expected ErrVersionMismatch for version 0, got: %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			binary.LittleEndian.PutUint16(data[8:10], tt.version)
+
+			_, err = Decode(data)
+			if err == nil {
+				t.Fatalf("expected error for version %d, got nil", tt.version)
+			}
+			if !stderrors.Is(err, ErrVersionMismatch) {
+				t.Fatalf("expected ErrVersionMismatch for version %d, got: %v", tt.version, err)
+			}
+		})
 	}
 }
 
@@ -498,20 +607,115 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 func TestDecodeRepresentationAliasParity(t *testing.T) {
 	idx := buildRepresentationSerializationFixture(t)
 
-	before := idx.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
+	rawBefore := idx.Evaluate([]Predicate{EQ("$.email", "Alice@Example.COM")}).ToSlice()
+	aliasBefore := idx.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
 
-	data, err := Encode(idx)
+	data, err := EncodeWithLevel(idx, CompressionNone)
 	if err != nil {
-		t.Fatalf("Encode() error = %v", err)
+		t.Fatalf("EncodeWithLevel() error = %v", err)
 	}
 	decoded, err := Decode(data)
 	if err != nil {
 		t.Fatalf("Decode() error = %v", err)
 	}
 
-	after := decoded.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
-	if !reflect.DeepEqual(after, before) {
-		t.Fatalf("decoded alias query = %v, want %v", after, before)
+	rawAfter := decoded.Evaluate([]Predicate{EQ("$.email", "Alice@Example.COM")}).ToSlice()
+	if !reflect.DeepEqual(rawAfter, rawBefore) {
+		t.Fatalf("decoded raw query = %v, want %v", rawAfter, rawBefore)
+	}
+
+	aliasAfter := decoded.Evaluate([]Predicate{EQ("$.email", As("domain", "example.com"))}).ToSlice()
+	if !reflect.DeepEqual(aliasAfter, aliasBefore) {
+		t.Fatalf("decoded alias query = %v, want %v", aliasAfter, aliasBefore)
+	}
+}
+
+func TestDecodeRejectsCompactPathSectionCorruption(t *testing.T) {
+	idx := buildCompactPathFixture(t)
+	data := mustEncodeUncompressed(t, idx)
+
+	body, offset := locatePathOrderedStringsOffset(t, data)
+	if body[offset] != compactStringModeFrontCoded {
+		t.Fatalf("path section mode = %d, want %d for compact fixture", body[offset], compactStringModeFrontCoded)
+	}
+
+	body[offset+1+4] = 0xff
+	body[offset+1+4+1] = 0x7f
+
+	if _, err := Decode(data); err == nil {
+		t.Fatal("Decode() error = nil, want compact path corruption rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsCompactTermSectionCorruption(t *testing.T) {
+	idx := buildCompactStringFixture(t)
+	data := mustEncodeUncompressed(t, idx)
+
+	body, offset := locateStringIndexOrderedStringsOffset(t, data, "$.code")
+	if body[offset] != compactStringModeFrontCoded {
+		t.Fatalf("term section mode = %d, want %d for compact fixture", body[offset], compactStringModeFrontCoded)
+	}
+
+	body[offset+1+4] = 0xff
+	body[offset+1+4+1] = 0x7f
+
+	if _, err := Decode(data); err == nil {
+		t.Fatal("Decode() error = nil, want compact term corruption rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestDecodeRejectsOrderedStringModePayloadMismatch(t *testing.T) {
+	values := []string{"prefix-0001", "prefix-0002"}
+
+	frontPayload, err := encodeFrontCodedOrderedStrings(values, defaultPrefixBlockSize)
+	if err != nil {
+		t.Fatalf("encodeFrontCodedOrderedStrings() error = %v", err)
+	}
+	frontBytes := append([]byte(nil), frontPayload.Bytes()...)
+	frontBytes[0] = compactStringModeRaw
+	if _, err := readOrderedStrings(bytes.NewReader(frontBytes), uint32(len(values))); err == nil {
+		t.Fatal("readOrderedStrings(front-coded as raw) error = nil, want mismatch rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat for front-coded/raw mismatch, got %v", err)
+	}
+
+	rawPayload, err := encodeRawOrderedStrings(values)
+	if err != nil {
+		t.Fatalf("encodeRawOrderedStrings() error = %v", err)
+	}
+	rawBytes := append([]byte(nil), rawPayload.Bytes()...)
+	rawBytes[0] = compactStringModeFrontCoded
+	if _, err := readOrderedStrings(bytes.NewReader(rawBytes), uint32(len(values))); err == nil {
+		t.Fatal("readOrderedStrings(raw as front-coded) error = nil, want mismatch rejection")
+	} else if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat for raw/front-coded mismatch, got %v", err)
+	}
+}
+
+func TestWriteOrderedStringsPrefersRawOnTie(t *testing.T) {
+	var buf bytes.Buffer
+	if err := writeOrderedStrings(&buf, nil, defaultPrefixBlockSize); err != nil {
+		t.Fatalf("writeOrderedStrings(nil) error = %v", err)
+	}
+
+	payload := buf.Bytes()
+	if len(payload) == 0 {
+		t.Fatal("writeOrderedStrings(nil) produced empty payload")
+	}
+	if payload[0] != compactStringModeRaw {
+		t.Fatalf("mode = %d, want raw mode on tie", payload[0])
+	}
+
+	got, err := readOrderedStrings(bytes.NewReader(payload), 0)
+	if err != nil {
+		t.Fatalf("readOrderedStrings(raw tie payload) error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("len(got) = %d, want 0", len(got))
 	}
 }
 
@@ -1120,8 +1324,8 @@ func TestDecodeRejectsTruncatedAdaptiveTerm(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected truncation error, got nil")
 	}
-	if !stderrors.Is(err, io.ErrUnexpectedEOF) && !stderrors.Is(err, io.EOF) {
-		t.Fatalf("expected EOF-class error, got %v", err)
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
 }
 
