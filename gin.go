@@ -13,8 +13,8 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
-	//   v9: phase 10 serialization compaction for path-directory names and
-	//       ordered string term payloads
+	//   v9: phase 10 compaction for ordered-string sections, including path
+	//       directory names and string/adaptive term payloads
 	//   v8: explicit companion transformer failure modes in serialized config
 	//       and representation metadata (strict by default, soft-fail opt-in)
 	//   v7: explicit representation metadata for derived alias routing

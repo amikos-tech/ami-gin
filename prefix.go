@@ -60,9 +60,9 @@ func (pc *PrefixCompressor) Compress(terms []string) []CompressedTermBlock {
 	return pc.CompressInOrder(sorted)
 }
 
-// CompressInOrder applies front coding without changing the caller-provided
-// term order. Use this for serialized sections whose metadata depends on the
-// original slice position.
+// CompressInOrder applies front coding without reordering the caller-provided
+// terms. Use this for serialized sections whose bitmap/layout metadata must
+// stay aligned with the original slice position.
 func (pc *PrefixCompressor) CompressInOrder(terms []string) []CompressedTermBlock {
 	if len(terms) == 0 {
 		return nil

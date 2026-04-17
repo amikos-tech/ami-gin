@@ -450,6 +450,8 @@ func writeOrderedStrings(w io.Writer, values []string, blockSize int) error {
 	}
 
 	selected := frontPayload
+	// Prefer raw on equal size to keep the wire format deterministic across
+	// encoder changes that leave both encodings equally compact.
 	if rawPayload.Len() <= frontPayload.Len() {
 		selected = rawPayload
 	}
@@ -458,7 +460,20 @@ func writeOrderedStrings(w io.Writer, values []string, blockSize int) error {
 	return err
 }
 
+func validateOrderedStringLengths(values []string) error {
+	for i, value := range values {
+		if len(value) > math.MaxUint16 {
+			return errors.Errorf("ordered string %d length %d exceeds max %d", i, len(value), math.MaxUint16)
+		}
+	}
+	return nil
+}
+
 func encodeRawOrderedStrings(values []string) (*bytes.Buffer, error) {
+	if err := validateOrderedStringLengths(values); err != nil {
+		return nil, err
+	}
+
 	var buf bytes.Buffer
 	if err := buf.WriteByte(compactStringModeRaw); err != nil {
 		return nil, err
@@ -466,11 +481,8 @@ func encodeRawOrderedStrings(values []string) (*bytes.Buffer, error) {
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(values))); err != nil {
 		return nil, err
 	}
-	for i, value := range values {
+	for _, value := range values {
 		valueBytes := []byte(value)
-		if len(valueBytes) > math.MaxUint16 {
-			return nil, errors.Errorf("ordered string %d length %d exceeds max %d", i, len(valueBytes), math.MaxUint16)
-		}
 		if err := binary.Write(&buf, binary.LittleEndian, uint16(len(valueBytes))); err != nil {
 			return nil, err
 		}
@@ -482,6 +494,10 @@ func encodeRawOrderedStrings(values []string) (*bytes.Buffer, error) {
 }
 
 func encodeFrontCodedOrderedStrings(values []string, blockSize int) (*bytes.Buffer, error) {
+	if err := validateOrderedStringLengths(values); err != nil {
+		return nil, err
+	}
+
 	pc, err := NewPrefixCompressor(blockSize)
 	if err != nil {
 		return nil, err
@@ -545,6 +561,7 @@ func readFrontCodedOrderedStrings(r io.Reader, expectedCount uint32) ([]string, 
 		}
 
 		blocks[i].Entries = make([]PrefixEntry, numEntries)
+		prev := blocks[i].FirstTerm
 		for j := uint16(0); j < numEntries; j++ {
 			if err := binary.Read(r, binary.LittleEndian, &blocks[i].Entries[j].PrefixLen); err != nil {
 				return nil, wrapOrderedStringFormatError("read front-coded prefix length", err)
@@ -558,6 +575,19 @@ func readFrontCodedOrderedStrings(r io.Reader, expectedCount uint32) ([]string, 
 				return nil, wrapOrderedStringFormatError("read front-coded suffix bytes", err)
 			}
 			blocks[i].Entries[j].Suffix = string(suffixBytes)
+
+			prefixLen := int(blocks[i].Entries[j].PrefixLen)
+			if prefixLen > len(prev) {
+				return nil, errors.Wrapf(
+					ErrInvalidFormat,
+					"front-coded block %d entry %d prefix length %d exceeds previous term length %d",
+					i,
+					j,
+					blocks[i].Entries[j].PrefixLen,
+					len(prev),
+				)
+			}
+			prev = prev[:prefixLen] + blocks[i].Entries[j].Suffix
 		}
 		decodedCount += uint32(numEntries)
 	}
@@ -639,22 +669,22 @@ func readPathDirectory(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < idx.Header.NumPaths; i++ {
 		entry := PathEntry{PathName: pathNames[i]}
 		if err := binary.Read(r, binary.LittleEndian, &entry.PathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read path id for entry %d: %v", i, err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.ObservedTypes); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read observed types for entry %d: %v", i, err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Cardinality); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read cardinality for entry %d: %v", i, err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Mode); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read mode for entry %d: %v", i, err)
 		}
 		if !entry.Mode.IsValid() {
 			return errors.Wrapf(ErrInvalidFormat, "path %q has unknown mode %d", entry.PathName, entry.Mode)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &entry.Flags); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read flags for entry %d: %v", i, err)
 		}
 		idx.PathDirectory = append(idx.PathDirectory, entry)
 	}
