@@ -176,7 +176,7 @@ func WriteCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
 	return nil
 }
 
-func ReadCompressedTerms(r io.Reader) ([]CompressedTermBlock, error) {
+func readCompressedTerms(r io.Reader) ([]CompressedTermBlock, error) {
 	var numBlocks uint32
 	if err := binary.Read(r, binary.LittleEndian, &numBlocks); err != nil {
 		return nil, err
