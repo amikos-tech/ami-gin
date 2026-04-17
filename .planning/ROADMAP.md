@@ -14,7 +14,7 @@
 - [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
 - [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
 - [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
-- [ ] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers
+- [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
 - [ ] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes
 
 ## Phase Details
@@ -66,7 +66,7 @@ Plans:
   2. Builder emits stable path/alias metadata for derived indexes that survives encode/decode
   3. Queries can target derived representations explicitly without ambiguous lookup behavior
   4. Tests and examples cover date/time, normalized text, and extracted-subfield derived patterns
-**Plans:** TBD
+**Plans:** 3/3 plans complete
 
 ### Phase 10: Serialization Compaction
 **Goal**: Encoded indexes become meaningfully smaller and stay explicitly versioned after the functional layout changes land
@@ -89,7 +89,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 | 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
 | 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
 | 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
-| 09. Derived Representations | 0/0 | Not started | - |
+| 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
 | 10. Serialization Compaction | 0/0 | Not started | - |
 
 ---

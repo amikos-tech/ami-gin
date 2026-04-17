@@ -1898,8 +1898,10 @@ func TestWithFTSPathsRejectsDuplicateCanonicalPaths(t *testing.T) {
 }
 
 func TestConfigAllowsMultipleTransformersPerSourcePath(t *testing.T) {
+	const lowerAlias = "lower"
+
 	cfg, err := NewConfig(
-		WithToLowerTransformer("$['email']", "lower"),
+		WithToLowerTransformer("$['email']", lowerAlias),
 		WithEmailDomainTransformer("$.email", "domain"),
 	)
 	if err != nil {
@@ -1922,8 +1924,8 @@ func TestConfigAllowsMultipleTransformersPerSourcePath(t *testing.T) {
 	if len(regs) != 2 {
 		t.Fatalf("representationTransformers[$.email] len = %d, want 2", len(regs))
 	}
-	if regs[0].Alias != "lower" || regs[1].Alias != "domain" {
-		t.Fatalf("representationTransformers[$.email] aliases = [%q %q], want [lower domain]", regs[0].Alias, regs[1].Alias)
+	if regs[0].Alias != lowerAlias || regs[1].Alias != "domain" {
+		t.Fatalf("representationTransformers[$.email] aliases = [%q %q], want [%s domain]", regs[0].Alias, regs[1].Alias, lowerAlias)
 	}
 }
 
