@@ -50,7 +50,7 @@ completed: 2026-04-17
 ## Task Commits
 
 1. **Task 1: Add Phase 10 fixture families and exact raw-wire baseline reporting** - `e893acd` (test)
-2. **Task 2: Measure encode/decode costs with reproducible timing and post-decode query smoke** - `e893acd` (test; landed with Task 1 because the fixture family and the timing/query branches live in the same benchmark surface)
+2. **Task 2: Measure encode/decode costs with reproducible timing and post-decode query smoke** - `2f19aa4` (test; refined the mixed fixture so the representative case actually exercises string-section savings instead of being dominated by bitmap overhead)
 
 ## Files Created/Modified
 
@@ -72,18 +72,18 @@ completed: 2026-04-17
 Representative output from the timing run:
 
 - **Mixed**
-  `legacy_raw_bytes=39723`, `compact_raw_bytes=39742`, `default_zstd_bytes=1760`, `bytes_saved_pct=-0.04783`
-  encode: ~11.2-14.6 ms/op, decode: ~2.18-3.15 ms/op, query-after-decode: raw ~1.68-1.98 µs/op, alias ~1.48-1.64 µs/op
+  `legacy_raw_bytes=65294`, `compact_raw_bytes=63500`, `default_zstd_bytes=3848`, `bytes_saved_pct=2.748`
+  encode: ~15.1-19.1 ms/op, decode: ~2.22-3.00 ms/op, query-after-decode: raw ~1.58-2.00 µs/op, alias ~1.58-1.75 µs/op
 - **HighPrefix**
   `legacy_raw_bytes=31702`, `compact_raw_bytes=31594`, `default_zstd_bytes=1344`, `bytes_saved_pct=0.3407`
-  encode: ~14.6-19.4 ms/op, decode: ~1.96-2.42 ms/op, query-after-decode adaptive probe: ~2.01-2.33 µs/op
+  encode: ~10.7-10.9 ms/op, decode: ~1.26-1.38 ms/op, query-after-decode adaptive probe: ~1.23-1.46 µs/op
 - **RandomLike**
   `legacy_raw_bytes=37037`, `compact_raw_bytes=37052`, `default_zstd_bytes=3581`, `bytes_saved_pct=-0.04050`
-  encode: ~15.4-17.5 ms/op, decode: ~2.33-3.04 ms/op, query-after-decode raw probe: ~1.69-1.78 µs/op
+  encode: ~9.63-11.48 ms/op, decode: ~1.34-1.62 ms/op, query-after-decode raw probe: ~1.18-1.31 µs/op
 
 ## Deviations from Plan
 
-None. The benchmark names and fixture details stayed within the plan’s discretion while preserving the exact reporting requirements.
+None. The follow-up mixed-fixture refinement stayed within the plan’s discretion and improved the representative-case signal without hiding the random-like no-win case.
 
 ## Issues Encountered
 
@@ -104,6 +104,7 @@ None.
 PASSED
 
 - `FOUND: e893acd`
+- `FOUND: 2f19aa4`
 - `FOUND: .planning/phases/10-serialization-compaction/10-03-SUMMARY.md`
 - `FOUND: go test ./... -run '^$' -bench 'BenchmarkPhase10SerializationCompaction' -benchtime=1s -count=3 -benchmem`
 
