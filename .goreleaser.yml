@@ -15,6 +15,13 @@ release:
     First public open-source release of GIN Index.
 
     This `v0.1.0` cut publishes the library-first module surface and the current adopter guidance. See README for installation, examples, and the current known limitations.
+    {{- else if eq .Tag "v0.2.0" -}}
+    First feature release since the public OSS launch.
+
+    Highlights:
+    - Adaptive high-cardinality indexing keeps exact pruning for hot values while compacting the long tail.
+    - Derived representations add companion transformer-backed query aliases via `gin.As(alias, value)`.
+    - Indexes built by `v0.1.0` must be rebuilt; `Decode()` now expects wire format `v8`.
     {{- else -}}
     GIN Index {{ .Tag }} release.
 
