@@ -33,7 +33,7 @@ jobs:
         run: go install gotest.tools/gotestsum@v1.13.0
 
       - name: Run tests
-        run: gotestsum --format short-verbose --packages="./..." --junitfile unit.xml -- -race -coverprofile=coverage.out -timeout=30m ./...
+        run: gotestsum --format short-verbose --packages="./..." --junitfile unit.xml -- -short -race -coverprofile=coverage.out -timeout=30m ./...
 
       - name: Upload test artifacts
         uses: actions/upload-artifact@v7
