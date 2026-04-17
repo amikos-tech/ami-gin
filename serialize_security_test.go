@@ -899,22 +899,113 @@ func TestEncodeRawOrderedStringsRejectsOversizedValue(t *testing.T) {
 	}
 }
 
-func TestReadPathDirectoryWrapsPathIDReadErrors(t *testing.T) {
-	idx := NewGINIndex()
-	idx.Header.NumPaths = 1
-
+func TestReadOrderedStringsRejectsFrontCodedOversizedPrefixLengthSecondEntry(t *testing.T) {
+	// Front-coded block with two entries where the first entry evolves `prev`
+	// past FirstTerm, and the second entry's PrefixLen exceeds the evolved
+	// prev. This covers the guard on a non-first-entry iteration.
 	var buf bytes.Buffer
-	mustWriteOrderedStrings(t, &buf, []string{"$.path"})
+	if err := buf.WriteByte(compactStringModeFrontCoded); err != nil {
+		t.Fatalf("WriteByte(compactStringModeFrontCoded) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numBlocks) error = %v", err)
+	}
+	// FirstTerm = "ab" (len 2)
+	firstTerm := []byte("ab")
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(len(firstTerm))); err != nil {
+		t.Fatalf("binary.Write(firstLen) error = %v", err)
+	}
+	if _, err := buf.Write(firstTerm); err != nil {
+		t.Fatalf("Write(firstBytes) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(2)); err != nil {
+		t.Fatalf("binary.Write(numEntries) error = %v", err)
+	}
 
-	err := readPathDirectory(bytes.NewReader(buf.Bytes()), idx)
+	// Entry 0: PrefixLen=1, Suffix="c" → prev evolves from "ab" to "ac" (len 2).
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(1)); err != nil {
+		t.Fatalf("binary.Write(entry0 prefixLen) error = %v", err)
+	}
+	suffix0 := []byte("c")
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(len(suffix0))); err != nil {
+		t.Fatalf("binary.Write(entry0 suffixLen) error = %v", err)
+	}
+	if _, err := buf.Write(suffix0); err != nil {
+		t.Fatalf("Write(entry0 suffix) error = %v", err)
+	}
+
+	// Entry 1: PrefixLen=5 (exceeds evolved prev length of 2), Suffix="".
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(5)); err != nil {
+		t.Fatalf("binary.Write(entry1 prefixLen) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(entry1 suffixLen) error = %v", err)
+	}
+
+	_, err := readOrderedStrings(bytes.NewReader(buf.Bytes()), 3)
 	if err == nil {
-		t.Fatal("readPathDirectory() error = nil, want truncated path metadata rejection")
+		t.Fatal("readOrderedStrings() error = nil, want oversized prefix length rejection on second entry")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "path id") {
-		t.Fatalf("expected path-id context, got %v", err)
+	if !strings.Contains(err.Error(), "prefix length") {
+		t.Fatalf("expected prefix-length context, got %v", err)
+	}
+	// The offending entry index should be 1 (second entry), not 0.
+	if !strings.Contains(err.Error(), "entry 1") {
+		t.Fatalf("expected error to reference entry 1, got %v", err)
+	}
+}
+
+func TestReadPathDirectoryWrapsFieldReadErrors(t *testing.T) {
+	// PathEntry wire-format field widths (see gin.go:102-109):
+	//   PathID        uint16 = 2 bytes
+	//   ObservedTypes uint8  = 1 byte
+	//   Cardinality   uint32 = 4 bytes
+	//   Mode          uint8  = 1 byte
+	//   Flags         uint8  = 1 byte
+	//
+	// Each sub-test writes the leading fields fully, then truncates at the
+	// target field. The error must satisfy errors.Is(ErrInvalidFormat) and
+	// contain the field-specific wrap context from serialize.go.
+	cases := []struct {
+		name         string
+		precedingLen int    // bytes written after pathNames stream, before truncation
+		wantContext  string // substring expected in err.Error()
+	}{
+		{name: "path id", precedingLen: 0, wantContext: "path id"},
+		{name: "observed types", precedingLen: 2, wantContext: "observed types"},
+		{name: "cardinality", precedingLen: 2 + 1, wantContext: "cardinality"},
+		{name: "mode", precedingLen: 2 + 1 + 4, wantContext: "mode"},
+		{name: "flags", precedingLen: 2 + 1 + 4 + 1, wantContext: "flags"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := NewGINIndex()
+			idx.Header.NumPaths = 1
+
+			var buf bytes.Buffer
+			mustWriteOrderedStrings(t, &buf, []string{"$.path"})
+			// Pad with `precedingLen` zero bytes so the next binary.Read hits EOF.
+			if tc.precedingLen > 0 {
+				if _, err := buf.Write(make([]byte, tc.precedingLen)); err != nil {
+					t.Fatalf("Write(padding) error = %v", err)
+				}
+			}
+
+			err := readPathDirectory(bytes.NewReader(buf.Bytes()), idx)
+			if err == nil {
+				t.Fatalf("readPathDirectory() error = nil, want truncated %s rejection", tc.name)
+			}
+			if !stderrors.Is(err, ErrInvalidFormat) {
+				t.Fatalf("expected ErrInvalidFormat, got %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantContext) {
+				t.Fatalf("expected %q context, got %v", tc.wantContext, err)
+			}
+		})
 	}
 }
 
