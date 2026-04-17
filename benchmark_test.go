@@ -1244,19 +1244,36 @@ func buildPhase10MixedFixture() phase10BenchmarkFixture {
 		panic(err)
 	}
 
-	docs := []string{
-		`{"email":"Alice@Example.COM","team":"search","city":"Sofia"}`,
-		`{"email":"bob@example.com","team":"search","city":"Sofia"}`,
-		`{"email":"carol@other.dev","team":"platform","city":"Plovdiv"}`,
-		`{"email":"dave@example.com","team":"data","city":"Varna"}`,
-		`{"email":"eve@other.dev","team":"platform","city":"Burgas"}`,
-		`{"email":"frank@example.com","team":"search","city":"Sofia"}`,
+	builder, err := NewBuilder(config, 8)
+	if err != nil {
+		panic(err)
 	}
+	rawProbe := ""
+	for i := 0; i < 64; i++ {
+		email := fmt.Sprintf("customer.%03d@example.com", i)
+		if i%5 == 0 {
+			email = fmt.Sprintf("platform.%03d@other.dev", i)
+		}
+		if i == 0 {
+			rawProbe = email
+		}
+		doc := fmt.Sprintf(
+			`{"email":"%s","team":"team-%02d","city":"city-%02d","profile_id":"acct-eu-prod-%03d"}`,
+			email,
+			i%4,
+			i%6,
+			i,
+		)
+		if err := builder.AddDocument(DocID(i/8), []byte(doc)); err != nil {
+			panic(err)
+		}
+	}
+	idx := builder.Finalize()
 
 	return phase10BenchmarkFixture{
-		idx: mustBuildBenchmarkIndex(config, docs),
+		idx: idx,
 		queries: []phase10BenchmarkQuery{
-			{name: "RawPath", predicate: EQ("$.email", "Alice@Example.COM")},
+			{name: "RawPath", predicate: EQ("$.email", rawProbe)},
 			{name: "Alias", predicate: EQ("$.email", As("domain", "example.com"))},
 		},
 	}
