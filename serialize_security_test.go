@@ -451,6 +451,35 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRepresentationFailureModeRoundTrip(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(TransformerFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	decoded := mustRoundTripIndex(t, builder.Finalize())
+
+	specs := decoded.Config.representationSpecs["$.email"]
+	if len(specs) != 1 {
+		t.Fatalf("len(decoded.Config.representationSpecs[$.email]) = %d, want 1", len(specs))
+	}
+	if specs[0].Transformer.FailureMode != TransformerFailureSoft {
+		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, TransformerFailureSoft)
+	}
+
+	reloadedBuilder := mustNewBuilder(t, *decoded.Config, 1)
+	if err := reloadedBuilder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("AddDocument() with decoded soft-fail config error = %v, want success", err)
+	}
+}
+
 func TestDecodeRepresentationAliasParity(t *testing.T) {
 	idx := buildRepresentationSerializationFixture(t)
 

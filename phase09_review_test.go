@@ -178,21 +178,22 @@ func TestPhase09InSubnetUsesDerivedAliases(t *testing.T) {
 	requirePredicateResult(t, customIdx, customPredicates, []int{0, 2}, `InSubnetAs("$.client_ip", "client_ip_num", "192.168.1.0/24")`)
 }
 
-func TestPhase09CompanionTransformFailuresStayLenient(t *testing.T) {
+func TestPhase09CompanionTransformFailuresRejectDocumentsByDefault(t *testing.T) {
 	config, err := NewConfig(WithISODateTransformer("$.timestamp", "epoch_ms"))
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
 	}
 
 	builder := mustNewBuilder(t, config, 2)
-	docs := []string{
-		`{"timestamp":"not-a-date"}`,
-		`{"timestamp":"2024-07-10T09:00:00Z"}`,
+	err = builder.AddDocument(0, []byte(`{"timestamp":"not-a-date"}`))
+	if err == nil {
+		t.Fatal("AddDocument(0) error = nil, want strict companion failure")
 	}
-	for i, doc := range docs {
-		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
-			t.Fatalf("AddDocument(%d) error = %v", i, err)
-		}
+	if !strings.Contains(err.Error(), "$.timestamp") || !strings.Contains(err.Error(), "epoch_ms") {
+		t.Fatalf("AddDocument(0) error = %v, want source path and alias context", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"timestamp":"2024-07-10T09:00:00Z"}`)); err != nil {
+		t.Fatalf("AddDocument(1) error = %v", err)
 	}
 
 	before := builder.Finalize()
@@ -205,14 +206,14 @@ func TestPhase09CompanionTransformFailuresStayLenient(t *testing.T) {
 		want       []int
 	}{
 		{
-			label:      `raw EQ("$.timestamp", "not-a-date")`,
-			predicates: []Predicate{EQ("$.timestamp", "not-a-date")},
+			label:      `raw EQ("$.timestamp", "2024-07-10T09:00:00Z")`,
+			predicates: []Predicate{EQ("$.timestamp", "2024-07-10T09:00:00Z")},
 			want:       []int{0},
 		},
 		{
 			label:      `alias GTE("$.timestamp", As("epoch_ms", july2024))`,
 			predicates: []Predicate{GTE("$.timestamp", As("epoch_ms", july2024))},
-			want:       []int{1},
+			want:       []int{0},
 		},
 	}
 
@@ -223,7 +224,7 @@ func TestPhase09CompanionTransformFailuresStayLenient(t *testing.T) {
 }
 
 func TestPhase09FinalizeOmitsNeverMaterializedRepresentations(t *testing.T) {
-	config, err := NewConfig(WithISODateTransformer("$.timestamp", "epoch_ms"))
+	config, err := NewConfig(WithISODateTransformer("$.timestamp", "epoch_ms", WithTransformerFailureMode(TransformerFailureSoft)))
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
 	}
@@ -289,7 +290,7 @@ func TestPhase09ConfigValidationErrors(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
-	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, nil)
+	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, TransformerFailureStrict, nil)
 	if err == nil {
 		t.Fatal("addRepresentation(..., nil) error = nil, want transformer function validation")
 	}

@@ -45,12 +45,13 @@ var transformerNames = map[TransformerID]string{
 }
 
 type TransformerSpec struct {
-	Path       string          `json:"path"`
-	Alias      string          `json:"alias,omitempty"`
-	TargetPath string          `json:"target_path,omitempty"`
-	ID         TransformerID   `json:"id"`
-	Name       string          `json:"name"`
-	Params     json.RawMessage `json:"params,omitempty"`
+	Path        string                 `json:"path"`
+	Alias       string                 `json:"alias,omitempty"`
+	TargetPath  string                 `json:"target_path,omitempty"`
+	FailureMode TransformerFailureMode `json:"failure_mode,omitempty"`
+	ID          TransformerID          `json:"id"`
+	Name        string                 `json:"name"`
+	Params      json.RawMessage        `json:"params,omitempty"`
 }
 
 type CustomDateParams struct {

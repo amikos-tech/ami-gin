@@ -13,6 +13,8 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v8: explicit companion transformer failure modes in serialized config
+	//       and representation metadata (strict by default, soft-fail opt-in)
 	//   v7: explicit representation metadata for derived alias routing
 	//       (phase 09 derived representations)
 	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
@@ -21,7 +23,7 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(7)
+	Version = uint16(8)
 )
 
 const (
@@ -264,8 +266,60 @@ func As(alias string, value any) RepresentationValue {
 
 // FieldTransformer transforms a value before indexing.
 // Returns (transformedValue, ok). If ok=false, the companion representation
-// is skipped for that document while the raw source value continues indexing.
+// follows the registration's configured failure mode. Strict is the default.
 type FieldTransformer func(value any) (any, bool)
+
+type TransformerFailureMode string
+
+const (
+	TransformerFailureStrict TransformerFailureMode = "strict"
+	TransformerFailureSoft   TransformerFailureMode = "soft_fail"
+)
+
+type transformerRegistrationOptions struct {
+	failureMode TransformerFailureMode
+}
+
+type TransformerOption func(*transformerRegistrationOptions) error
+
+func normalizeTransformerFailureMode(mode TransformerFailureMode) TransformerFailureMode {
+	if mode == "" {
+		return TransformerFailureStrict
+	}
+	return mode
+}
+
+func validateTransformerFailureMode(mode TransformerFailureMode) error {
+	switch normalizeTransformerFailureMode(mode) {
+	case TransformerFailureStrict, TransformerFailureSoft:
+		return nil
+	default:
+		return errors.Errorf("invalid transformer failure mode %q", mode)
+	}
+}
+
+func resolveTransformerOptions(opts ...TransformerOption) (transformerRegistrationOptions, error) {
+	options := transformerRegistrationOptions{
+		failureMode: TransformerFailureStrict,
+	}
+	for _, opt := range opts {
+		if err := opt(&options); err != nil {
+			return transformerRegistrationOptions{}, err
+		}
+	}
+	options.failureMode = normalizeTransformerFailureMode(options.failureMode)
+	return options, nil
+}
+
+func WithTransformerFailureMode(mode TransformerFailureMode) TransformerOption {
+	return func(options *transformerRegistrationOptions) error {
+		if err := validateTransformerFailureMode(mode); err != nil {
+			return err
+		}
+		options.failureMode = normalizeTransformerFailureMode(mode)
+		return nil
+	}
+}
 
 type RepresentationInfo struct {
 	SourcePath  string
@@ -358,12 +412,15 @@ func validateRepresentationAlias(alias string) error {
 	return nil
 }
 
-func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, fn FieldTransformer) error {
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode TransformerFailureMode, fn FieldTransformer) error {
 	if err := validateRepresentationAlias(alias); err != nil {
 		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
 	if fn == nil {
 		return errors.Errorf("transformer alias %q for %s requires a function", alias, canonicalPath)
+	}
+	if err := validateTransformerFailureMode(failureMode); err != nil {
+		return errors.Wrapf(err, "transformer alias %q for %s", alias, canonicalPath)
 	}
 	if c.representationSpecs == nil {
 		c.representationSpecs = make(map[string][]RepresentationSpec)
@@ -379,9 +436,11 @@ func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSp
 	}
 
 	targetPath := representationTargetPath(canonicalPath, alias)
+	failureMode = normalizeTransformerFailureMode(failureMode)
 	transformerSpec.Path = canonicalPath
 	transformerSpec.Alias = alias
 	transformerSpec.TargetPath = targetPath
+	transformerSpec.FailureMode = failureMode
 
 	spec := RepresentationSpec{
 		SourcePath:   canonicalPath,
@@ -404,29 +463,37 @@ func WithFieldTransformer(path string, fn FieldTransformer) ConfigOption {
 	}
 }
 
-func WithCustomTransformer(path, alias string, fn FieldTransformer) ConfigOption {
+func WithCustomTransformer(path, alias string, fn FieldTransformer, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
+		options, err := resolveTransformerOptions(opts...)
+		if err != nil {
+			return err
+		}
 		canonicalPath, err := canonicalizeSupportedPath(path)
 		if err != nil {
 			return err
 		}
 		spec := NewTransformerSpec(canonicalPath, TransformerUnknown, nil)
-		return c.addRepresentation(canonicalPath, alias, spec, false, fn)
+		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn)
 	}
 }
 
-func withRegisteredTransformerJSON(path, alias string, id TransformerID, params any) ConfigOption {
+func withRegisteredTransformerJSON(path, alias string, id TransformerID, params any, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
 		payload, err := jsonMarshal(params)
 		if err != nil {
 			return errors.Wrapf(err, "marshal transformer params for %s alias %q", path, alias)
 		}
-		return WithRegisteredTransformer(path, alias, id, payload)(c)
+		return WithRegisteredTransformer(path, alias, id, payload, opts...)(c)
 	}
 }
 
-func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte) ConfigOption {
+func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
+		options, err := resolveTransformerOptions(opts...)
+		if err != nil {
+			return err
+		}
 		canonicalPath, err := canonicalizeSupportedPath(path)
 		if err != nil {
 			return err
@@ -435,60 +502,60 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		if err != nil {
 			return err
 		}
-		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, params), true, fn)
+		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, params), true, options.failureMode, fn)
 	}
 }
 
-func WithISODateTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerISODateToEpochMs, nil)
+func WithISODateTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerISODateToEpochMs, nil, opts...)
 }
 
-func WithDateTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerDateToEpochMs, nil)
+func WithDateTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerDateToEpochMs, nil, opts...)
 }
 
-func WithCustomDateTransformer(path, alias, layout string) ConfigOption {
-	return withRegisteredTransformerJSON(path, alias, TransformerCustomDateToEpochMs, CustomDateParams{Layout: layout})
+func WithCustomDateTransformer(path, alias, layout string, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerCustomDateToEpochMs, CustomDateParams{Layout: layout}, opts...)
 }
 
-func WithToLowerTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerToLower, nil)
+func WithToLowerTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerToLower, nil, opts...)
 }
 
-func WithIPv4Transformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerIPv4ToInt, nil)
+func WithIPv4Transformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerIPv4ToInt, nil, opts...)
 }
 
-func WithSemVerTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerSemVerToInt, nil)
+func WithSemVerTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerSemVerToInt, nil, opts...)
 }
 
-func WithRegexExtractTransformer(path, alias, pattern string, group int) ConfigOption {
-	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group})
+func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
-func WithRegexExtractIntTransformer(path, alias, pattern string, group int) ConfigOption {
-	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group})
+func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
-func WithDurationTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerDurationToMs, nil)
+func WithDurationTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerDurationToMs, nil, opts...)
 }
 
-func WithEmailDomainTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerEmailDomain, nil)
+func WithEmailDomainTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerEmailDomain, nil, opts...)
 }
 
-func WithURLHostTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerURLHost, nil)
+func WithURLHostTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerURLHost, nil, opts...)
 }
 
-func WithNumericBucketTransformer(path, alias string, size float64) ConfigOption {
-	return withRegisteredTransformerJSON(path, alias, TransformerNumericBucket, NumericBucketParams{Size: size})
+func WithNumericBucketTransformer(path, alias string, size float64, opts ...TransformerOption) ConfigOption {
+	return withRegisteredTransformerJSON(path, alias, TransformerNumericBucket, NumericBucketParams{Size: size}, opts...)
 }
 
-func WithBoolNormalizeTransformer(path, alias string) ConfigOption {
-	return WithRegisteredTransformer(path, alias, TransformerBoolNormalize, nil)
+func WithBoolNormalizeTransformer(path, alias string, opts ...TransformerOption) ConfigOption {
+	return WithRegisteredTransformer(path, alias, TransformerBoolNormalize, nil, opts...)
 }
 
 // WithAdaptiveMinRGCoverage sets the minimum number of row groups a term must
@@ -648,6 +715,9 @@ func (c GINConfig) validate() error {
 			seenAliases[spec.Alias] = struct{}{}
 			if want := representationTargetPath(canonicalPath, spec.Alias); spec.TargetPath != want {
 				return errors.Errorf("transformer target path %q for %s alias %q must equal %q", spec.TargetPath, canonicalPath, spec.Alias, want)
+			}
+			if err := validateTransformerFailureMode(spec.Transformer.FailureMode); err != nil {
+				return errors.Wrapf(err, "transformer failure mode invalid for %s alias %q", canonicalPath, spec.Alias)
 			}
 		}
 		if len(c.representationTransformers[canonicalPath]) != len(specs) {

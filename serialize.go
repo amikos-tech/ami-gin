@@ -1269,7 +1269,9 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 			if !representation.Serializable {
 				continue
 			}
-			sc.Transformers = append(sc.Transformers, representation.Transformer)
+			transformer := representation.Transformer
+			transformer.FailureMode = normalizeTransformerFailureMode(transformer.FailureMode)
+			sc.Transformers = append(sc.Transformers, transformer)
 		}
 	}
 
@@ -1368,11 +1370,12 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 			spec.Path = canonicalPath
 			spec.Alias = alias
 			spec.TargetPath = targetPath
+			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
 				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
 			}
-			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, fn); err != nil {
+			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
 				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
 			}
 		}
@@ -1466,6 +1469,10 @@ func readRepresentations(r io.Reader) ([]serializedRepresentation, error) {
 		}
 		if representation.Transformer.Path != canonicalPath {
 			return nil, errors.Wrapf(ErrInvalidFormat, "representation transformer path %q for %s alias %q does not match source", representation.Transformer.Path, canonicalPath, representation.Alias)
+		}
+		representation.Transformer.FailureMode = normalizeTransformerFailureMode(representation.Transformer.FailureMode)
+		if err := validateTransformerFailureMode(representation.Transformer.FailureMode); err != nil {
+			return nil, errors.Wrapf(ErrInvalidFormat, "invalid representation failure mode for %s alias %q: %v", canonicalPath, representation.Alias, err)
 		}
 
 		if seen[canonicalPath] == nil {

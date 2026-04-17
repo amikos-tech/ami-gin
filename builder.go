@@ -582,7 +582,10 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 	for _, registration := range registrations {
 		transformed, ok := registration.FieldTransformer(prepared)
 		if !ok {
-			continue
+			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == TransformerFailureSoft {
+				continue
+			}
+			return errors.Errorf("companion transformer %q on %s failed to produce a value", registration.Alias, canonicalPath)
 		}
 		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
 			return err

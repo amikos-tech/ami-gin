@@ -478,7 +478,7 @@ func TestWildcardSubtreeTransformerNormalizesNestedNumbers(t *testing.T) {
 	}
 }
 
-func TestBuilderSkipsCompanionWhenTransformFails(t *testing.T) {
+func TestBuilderFailsWhenCompanionTransformFails(t *testing.T) {
 	config, err := NewConfig(
 		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
 			s, ok := value.(string)
@@ -497,12 +497,68 @@ func TestBuilderSkipsCompanionWhenTransformFails(t *testing.T) {
 		t.Fatalf("NewBuilder failed: %v", err)
 	}
 
-	if err := builder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
-		t.Fatalf("AddDocument(0) error = %v, want lenient companion skip", err)
+	err = builder.AddDocument(0, []byte(`{"email":42}`))
+	if err == nil {
+		t.Fatal("AddDocument(0) error = nil, want strict companion failure")
+	}
+	if !strings.Contains(err.Error(), "$.email") || !strings.Contains(err.Error(), "strict") {
+		t.Fatalf("AddDocument(0) error = %v, want source path and alias context", err)
 	}
 
 	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
-		t.Fatalf("AddDocument(1) failed after lenient skip: %v", err)
+		t.Fatalf("AddDocument(1) failed after rejected document: %v", err)
+	}
+
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 1 {
+		t.Fatalf("Header.NumDocs = %d, want 1", idx.Header.NumDocs)
+	}
+
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; ok {
+		t.Fatal(`NumericIndexes["$.email"] present, want rejected raw numeric value to be absent`)
+	}
+	rawIndex, ok := idx.StringIndexes[rawPathID]
+	if !ok {
+		t.Fatal(`StringIndexes["$.email"] missing`)
+	}
+	if got := rawIndex.Terms; len(got) != 1 || got[0] != "bob@example.com" {
+		t.Fatalf(`raw terms = %v, want ["bob@example.com"]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", "bob@example.com")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", "bob@example.com") = %v, want [0]`, got)
+	}
+
+	if got := idx.Evaluate([]Predicate{EQ("$.email", As("strict", "bob@example.com"))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.email", As("strict", "bob@example.com")) = %v, want [0]`, got)
+	}
+}
+
+func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
+	config, err := NewConfig(
+		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
+			s, ok := value.(string)
+			if !ok || !strings.Contains(s, "@") {
+				return nil, false
+			}
+			return s, true
+		}, WithTransformerFailureMode(TransformerFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig failed: %v", err)
+	}
+
+	builder, err := NewBuilder(config, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder failed: %v", err)
+	}
+
+	if err := builder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("AddDocument(0) error = %v, want soft-fail success", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
+		t.Fatalf("AddDocument(1) failed: %v", err)
 	}
 
 	idx := builder.Finalize()
@@ -512,10 +568,6 @@ func TestBuilderSkipsCompanionWhenTransformFails(t *testing.T) {
 
 	if got := idx.Evaluate([]Predicate{EQ("$.email", float64(42))}).ToSlice(); len(got) != 1 || got[0] != 0 {
 		t.Fatalf(`EQ("$.email", 42) = %v, want [0]`, got)
-	}
-
-	if got := idx.Evaluate([]Predicate{EQ("$.email", "bob@example.com")}).ToSlice(); len(got) != 1 || got[0] != 1 {
-		t.Fatalf(`EQ("$.email", "bob@example.com") = %v, want [1]`, got)
 	}
 
 	if got := idx.Evaluate([]Predicate{EQ("$.email", As("strict", "bob@example.com"))}).ToSlice(); len(got) != 1 || got[0] != 1 {
