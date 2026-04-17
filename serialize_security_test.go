@@ -2388,3 +2388,95 @@ func TestDecodeCraftedInnerMagic(t *testing.T) {
 		t.Errorf("expected ErrInvalidFormat, got: %v", err)
 	}
 }
+
+// TestSerializeReadersWrapTruncationAsInvalidFormat verifies that every reader
+// in the decode pipeline wraps its first binary.Read / io.ReadFull truncation
+// failure as ErrInvalidFormat rather than leaking bare io.EOF /
+// io.ErrUnexpectedEOF to the caller. One truncation point per reader is enough
+// to prove the wrap is in place; exhaustive per-field coverage lives in
+// dedicated tests above.
+func TestSerializeReadersWrapTruncationAsInvalidFormat(t *testing.T) {
+	cases := []struct {
+		name   string
+		invoke func(t *testing.T) error
+	}{
+		{
+			name: "readHeader",
+			invoke: func(t *testing.T) error {
+				// Inner magic matches, but nothing follows → version read hits EOF.
+				idx := NewGINIndex()
+				return readHeader(bytes.NewReader([]byte(MagicBytes)), idx)
+			},
+		},
+		{
+			name: "readStringIndexes",
+			invoke: func(t *testing.T) error {
+				// Empty buffer → leading uint32 path count read fails.
+				idx := NewGINIndex()
+				return readStringIndexes(bytes.NewReader(nil), idx)
+			},
+		},
+		{
+			name: "readAdaptiveStringIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readAdaptiveStringIndexes(bytes.NewReader(nil), idx)
+			},
+		},
+		{
+			name: "readStringLengthIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readStringLengthIndexes(bytes.NewReader(nil), idx, 8)
+			},
+		},
+		{
+			name: "readNumericIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readNumericIndexes(bytes.NewReader(nil), idx, 8)
+			},
+		},
+		{
+			name: "readNullIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readNullIndexes(bytes.NewReader(nil), idx)
+			},
+		},
+		{
+			name: "readTrigramIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readTrigramIndexes(bytes.NewReader(nil), idx)
+			},
+		},
+		{
+			name: "readHyperLogLogs",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readHyperLogLogs(bytes.NewReader(nil), idx)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.invoke(t)
+			if err == nil {
+				t.Fatalf("%s: error = nil, want truncation error", tc.name)
+			}
+			if !stderrors.Is(err, ErrInvalidFormat) {
+				t.Fatalf("%s: expected ErrInvalidFormat, got %v", tc.name, err)
+			}
+			// Must NOT leak bare io.EOF / io.ErrUnexpectedEOF as the top-level
+			// sentinel — callers should branch on ErrInvalidFormat only.
+			if stderrors.Is(err, io.EOF) {
+				t.Fatalf("%s: err leaks bare io.EOF: %v", tc.name, err)
+			}
+			if stderrors.Is(err, io.ErrUnexpectedEOF) {
+				t.Fatalf("%s: err leaks bare io.ErrUnexpectedEOF: %v", tc.name, err)
+			}
+		})
+	}
+}

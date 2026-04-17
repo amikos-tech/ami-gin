@@ -378,36 +378,39 @@ func writeHeader(w io.Writer, idx *GINIndex) error {
 
 func readHeader(r io.Reader, idx *GINIndex) error {
 	if _, err := io.ReadFull(r, idx.Header.Magic[:]); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header magic: %v", err)
 	}
 	if string(idx.Header.Magic[:]) != MagicBytes {
 		return errors.Wrapf(ErrInvalidFormat, "invalid inner magic bytes: %q", string(idx.Header.Magic[:]))
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.Version); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header version: %v", err)
 	}
 	if idx.Header.Version != Version {
 		return errors.Wrapf(ErrVersionMismatch, "got version %d, expected %d", idx.Header.Version, Version)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.Flags); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header flags: %v", err)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumRowGroups); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header num row groups: %v", err)
 	}
 	if idx.Header.NumRowGroups > maxHeaderRowGroups {
 		return errors.Wrapf(ErrInvalidFormat, "row-group count %d exceeds max %d", idx.Header.NumRowGroups, maxHeaderRowGroups)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumDocs); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header num docs: %v", err)
 	}
 	if idx.Header.NumDocs > maxHeaderDocs {
 		return errors.Wrapf(ErrInvalidFormat, "doc count %d exceeds max %d", idx.Header.NumDocs, maxHeaderDocs)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &idx.Header.NumPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read header num paths: %v", err)
 	}
-	return binary.Read(r, binary.LittleEndian, &idx.Header.CardinalityThresh)
+	if err := binary.Read(r, binary.LittleEndian, &idx.Header.CardinalityThresh); err != nil {
+		return errors.Wrapf(ErrInvalidFormat, "read header cardinality threshold: %v", err)
+	}
+	return nil
 }
 
 func rejectDuplicateSectionPath[T any](kind string, sections map[uint16]T, pathID uint16) error {
@@ -763,7 +766,7 @@ func writeStringIndexes(w io.Writer, idx *GINIndex) error {
 func readStringIndexes(r io.Reader, idx *GINIndex) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read string index path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "string index path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -771,14 +774,14 @@ func readStringIndexes(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string index path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("string index", idx.StringIndexes, pathID); err != nil {
 			return err
 		}
 		var numTerms uint32
 		if err := binary.Read(r, binary.LittleEndian, &numTerms); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string index term count: %v", err)
 		}
 		if numTerms > maxTermsPerPath {
 			return errors.Wrapf(ErrInvalidFormat, "terms count %d for path %d exceeds max %d", numTerms, pathID, maxTermsPerPath)
@@ -870,7 +873,7 @@ func writeAdaptiveStringIndexes(w io.Writer, idx *GINIndex) error {
 func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read adaptive string index path count: %v", err)
 	}
 	if numPaths > maxAdaptivePaths {
 		return errors.Wrapf(ErrInvalidFormat, "adaptive path count %d exceeds max %d", numPaths, maxAdaptivePaths)
@@ -879,7 +882,7 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read adaptive string index path id: %v", err)
 		}
 		if int(pathID) >= len(idx.PathDirectory) {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive string index path id %d out of range", pathID)
@@ -893,7 +896,7 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 
 		var numTerms uint32
 		if err := binary.Read(r, binary.LittleEndian, &numTerms); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read adaptive string index term count: %v", err)
 		}
 		if numTerms > maxAdaptiveTermsPerPath {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive term count %d for path %d exceeds max %d", numTerms, pathID, maxAdaptiveTermsPerPath)
@@ -901,7 +904,7 @@ func readAdaptiveStringIndexes(r io.Reader, idx *GINIndex) error {
 
 		var bucketCount uint32
 		if err := binary.Read(r, binary.LittleEndian, &bucketCount); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read adaptive string index bucket count: %v", err)
 		}
 		if bucketCount == 0 {
 			return errors.Wrapf(ErrInvalidFormat, "adaptive bucket count for path %d must be greater than 0", pathID)
@@ -997,7 +1000,7 @@ func writeStringLengthIndexes(w io.Writer, idx *GINIndex) error {
 func readStringLengthIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read string length index path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "string length index path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -1005,21 +1008,21 @@ func readStringLengthIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string length index path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("string length index", idx.StringLengthIndexes, pathID); err != nil {
 			return err
 		}
 		sli := &StringLengthIndex{}
 		if err := binary.Read(r, binary.LittleEndian, &sli.GlobalMin); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string length index global min: %v", err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &sli.GlobalMax); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string length index global max: %v", err)
 		}
 		var numRGs uint32
 		if err := binary.Read(r, binary.LittleEndian, &numRGs); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read string length index rg count: %v", err)
 		}
 		if numRGs > maxRGs {
 			return errors.Wrapf(ErrInvalidFormat, "string length index rg count %d for path %d exceeds max %d", numRGs, pathID, maxRGs)
@@ -1027,14 +1030,14 @@ func readStringLengthIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 		sli.RGStats = make([]RGStringLengthStat, numRGs)
 		for j := uint32(0); j < numRGs; j++ {
 			if err := binary.Read(r, binary.LittleEndian, &sli.RGStats[j].Min); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read string length index rg min: %v", err)
 			}
 			if err := binary.Read(r, binary.LittleEndian, &sli.RGStats[j].Max); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read string length index rg max: %v", err)
 			}
 			var hasValue uint8
 			if err := binary.Read(r, binary.LittleEndian, &hasValue); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read string length index rg has-value flag: %v", err)
 			}
 			sli.RGStats[j].HasValue = hasValue != 0
 		}
@@ -1098,7 +1101,7 @@ func writeNumericIndexes(w io.Writer, idx *GINIndex) error {
 func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read numeric index path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "numeric index path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -1106,34 +1109,34 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("numeric index", idx.NumericIndexes, pathID); err != nil {
 			return err
 		}
 		ni := &NumericIndex{}
 		if err := binary.Read(r, binary.LittleEndian, &ni.ValueType); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index value type: %v", err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &ni.IntGlobalMin); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index int global min: %v", err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &ni.IntGlobalMax); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index int global max: %v", err)
 		}
 		var minBits, maxBits uint64
 		if err := binary.Read(r, binary.LittleEndian, &minBits); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index global min: %v", err)
 		}
 		if err := binary.Read(r, binary.LittleEndian, &maxBits); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index global max: %v", err)
 		}
 		ni.GlobalMin = math.Float64frombits(minBits)
 		ni.GlobalMax = math.Float64frombits(maxBits)
 
 		var numRGs uint32
 		if err := binary.Read(r, binary.LittleEndian, &numRGs); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read numeric index rg count: %v", err)
 		}
 		if numRGs > maxRGs {
 			return errors.Wrapf(ErrInvalidFormat, "numeric index rg count %d for path %d exceeds max %d", numRGs, pathID, maxRGs)
@@ -1141,20 +1144,20 @@ func readNumericIndexes(r io.Reader, idx *GINIndex, maxRGs uint32) error {
 		ni.RGStats = make([]RGNumericStat, numRGs)
 		for j := uint32(0); j < numRGs; j++ {
 			if err := binary.Read(r, binary.LittleEndian, &ni.RGStats[j].IntMin); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read numeric index rg int min: %v", err)
 			}
 			if err := binary.Read(r, binary.LittleEndian, &ni.RGStats[j].IntMax); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read numeric index rg int max: %v", err)
 			}
 			if err := binary.Read(r, binary.LittleEndian, &minBits); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read numeric index rg min: %v", err)
 			}
 			if err := binary.Read(r, binary.LittleEndian, &maxBits); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read numeric index rg max: %v", err)
 			}
 			var hasValue uint8
 			if err := binary.Read(r, binary.LittleEndian, &hasValue); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read numeric index rg has-value flag: %v", err)
 			}
 			ni.RGStats[j].Min = math.Float64frombits(minBits)
 			ni.RGStats[j].Max = math.Float64frombits(maxBits)
@@ -1187,7 +1190,7 @@ func writeNullIndexes(w io.Writer, idx *GINIndex) error {
 func readNullIndexes(r io.Reader, idx *GINIndex) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read null index path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "null index path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -1195,7 +1198,7 @@ func readNullIndexes(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read null index path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("null index", idx.NullIndexes, pathID); err != nil {
 			return err
@@ -1268,7 +1271,7 @@ func writeTrigramIndexes(w io.Writer, idx *GINIndex) error {
 func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read trigram index path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "trigram index path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -1276,28 +1279,28 @@ func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read trigram index path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("trigram index", idx.TrigramIndexes, pathID); err != nil {
 			return err
 		}
 		var numRGs uint32
 		if err := binary.Read(r, binary.LittleEndian, &numRGs); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read trigram index rg count: %v", err)
 		}
 		var n uint8
 		if err := binary.Read(r, binary.LittleEndian, &n); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read trigram index ngram size: %v", err)
 		}
 		var padLen uint8
 		if err := binary.Read(r, binary.LittleEndian, &padLen); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read trigram index padding length: %v", err)
 		}
 		var padding string
 		if padLen > 0 {
 			padBytes := make([]byte, padLen)
 			if _, err := io.ReadFull(r, padBytes); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read trigram index padding bytes: %v", err)
 			}
 			padding = string(padBytes)
 		}
@@ -1307,7 +1310,7 @@ func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 		}
 		var numTrigrams uint32
 		if err := binary.Read(r, binary.LittleEndian, &numTrigrams); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read trigram index trigram count: %v", err)
 		}
 		if numTrigrams > maxTrigramsPerPath {
 			return errors.Wrapf(ErrInvalidFormat, "trigram count %d for path %d exceeds max %d", numTrigrams, pathID, maxTrigramsPerPath)
@@ -1315,11 +1318,11 @@ func readTrigramIndexes(r io.Reader, idx *GINIndex) error {
 		for j := uint32(0); j < numTrigrams; j++ {
 			var trigramLen uint8
 			if err := binary.Read(r, binary.LittleEndian, &trigramLen); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read trigram index trigram length: %v", err)
 			}
 			trigramBytes := make([]byte, trigramLen)
 			if _, err := io.ReadFull(r, trigramBytes); err != nil {
-				return err
+				return errors.Wrapf(ErrInvalidFormat, "read trigram index trigram bytes: %v", err)
 			}
 			rgSet, err := readRGSet(r, idx.Header.NumRowGroups)
 			if err != nil {
@@ -1358,7 +1361,7 @@ func writeHyperLogLogs(w io.Writer, idx *GINIndex) error {
 func readHyperLogLogs(r io.Reader, idx *GINIndex) error {
 	var numPaths uint32
 	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
-		return err
+		return errors.Wrapf(ErrInvalidFormat, "read hll path count: %v", err)
 	}
 	if numPaths > maxNumPaths {
 		return errors.Wrapf(ErrInvalidFormat, "hll path count %d exceeds max %d", numPaths, maxNumPaths)
@@ -1366,25 +1369,25 @@ func readHyperLogLogs(r io.Reader, idx *GINIndex) error {
 	for i := uint32(0); i < numPaths; i++ {
 		var pathID uint16
 		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read hll path id: %v", err)
 		}
 		if err := rejectDuplicateSectionPath("hyperloglog", idx.PathCardinality, pathID); err != nil {
 			return err
 		}
 		var precision uint8
 		if err := binary.Read(r, binary.LittleEndian, &precision); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read hll precision: %v", err)
 		}
 		var numRegisters uint32
 		if err := binary.Read(r, binary.LittleEndian, &numRegisters); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read hll register count: %v", err)
 		}
 		if numRegisters > maxHLLRegisters {
 			return errors.Wrapf(ErrInvalidFormat, "hll register count %d exceeds max %d", numRegisters, maxHLLRegisters)
 		}
 		registers := make([]uint8, numRegisters)
 		if _, err := io.ReadFull(r, registers); err != nil {
-			return err
+			return errors.Wrapf(ErrInvalidFormat, "read hll registers: %v", err)
 		}
 		idx.PathCardinality[pathID] = HyperLogLogFromRegisters(registers, precision)
 	}
