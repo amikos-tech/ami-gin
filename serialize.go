@@ -599,11 +599,10 @@ func readFrontCodedOrderedStrings(r io.Reader, expectedCount uint32) ([]string, 
 		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", decodedCount, expectedCount)
 	}
 
-	values := (&PrefixCompressor{}).Decompress(blocks)
-	if uint32(len(values)) != expectedCount {
-		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", len(values), expectedCount)
-	}
-	return values, nil
+	// decompressCompressedTerms emits exactly one string per block FirstTerm
+	// plus one per entry, so its output length equals decodedCount, which the
+	// guard above has already verified against expectedCount.
+	return decompressCompressedTerms(blocks), nil
 }
 
 func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {

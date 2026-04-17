@@ -108,6 +108,14 @@ func (pc *PrefixCompressor) compressBlock(terms []string) CompressedTermBlock {
 }
 
 func (pc *PrefixCompressor) Decompress(blocks []CompressedTermBlock) []string {
+	return decompressCompressedTerms(blocks)
+}
+
+// decompressCompressedTerms reconstructs the original term list from a
+// sequence of front-coded blocks. It does not depend on the compressor
+// configuration, which lets callers decode without materialising a
+// PrefixCompressor receiver.
+func decompressCompressedTerms(blocks []CompressedTermBlock) []string {
 	var result []string
 
 	for _, block := range blocks {
