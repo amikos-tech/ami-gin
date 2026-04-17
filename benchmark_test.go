@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -1203,6 +1204,269 @@ func BenchmarkQueryVsIndexSize(b *testing.B) {
 // =============================================================================
 // Serialization Performance Benchmarks
 // =============================================================================
+
+type phase10BenchmarkQuery struct {
+	name      string
+	predicate Predicate
+}
+
+type phase10BenchmarkFixture struct {
+	idx     *GINIndex
+	queries []phase10BenchmarkQuery
+}
+
+type phase10BenchmarkMetrics struct {
+	legacyRawBytes   int
+	compactRawBytes  int
+	defaultZstdBytes int
+	bytesSavedPct    float64
+}
+
+func mustBuildBenchmarkIndex(config GINConfig, docs []string) *GINIndex {
+	builder, err := NewBuilder(config, len(docs))
+	if err != nil {
+		panic(err)
+	}
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			panic(err)
+		}
+	}
+	return builder.Finalize()
+}
+
+func buildPhase10MixedFixture() phase10BenchmarkFixture {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower"),
+		WithEmailDomainTransformer("$.email", "domain"),
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	docs := []string{
+		`{"email":"Alice@Example.COM","team":"search","city":"Sofia"}`,
+		`{"email":"bob@example.com","team":"search","city":"Sofia"}`,
+		`{"email":"carol@other.dev","team":"platform","city":"Plovdiv"}`,
+		`{"email":"dave@example.com","team":"data","city":"Varna"}`,
+		`{"email":"eve@other.dev","team":"platform","city":"Burgas"}`,
+		`{"email":"frank@example.com","team":"search","city":"Sofia"}`,
+	}
+
+	return phase10BenchmarkFixture{
+		idx: mustBuildBenchmarkIndex(config, docs),
+		queries: []phase10BenchmarkQuery{
+			{name: "RawPath", predicate: EQ("$.email", "Alice@Example.COM")},
+			{name: "Alias", predicate: EQ("$.email", As("domain", "example.com"))},
+		},
+	}
+}
+
+func buildPhase10HighPrefixFixture() phase10BenchmarkFixture {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 4
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.80
+	config.AdaptiveBucketCount = 16
+
+	docs := make([]string, 0, 16)
+	for i := 0; i < 16; i++ {
+		userID := fmt.Sprintf("tenant-eu-prod-user-tail-%03d", i)
+		switch {
+		case i < 4:
+			userID = "tenant-eu-prod-user-hot-000"
+		case i < 8:
+			userID = "tenant-eu-prod-user-hot-001"
+		}
+		docs = append(docs, fmt.Sprintf(`{"user_id":"%s","cluster":"tenant-eu-prod-cluster-%02d","service":"tenant-eu-prod-service-%02d"}`, userID, i%4, i%3))
+	}
+
+	return phase10BenchmarkFixture{
+		idx: mustBuildBenchmarkIndex(config, docs),
+		queries: []phase10BenchmarkQuery{
+			{name: "AdaptiveHot", predicate: EQ("$.user_id", "tenant-eu-prod-user-hot-000")},
+		},
+	}
+}
+
+func buildPhase10RandomLikeFixture() phase10BenchmarkFixture {
+	rng := rand.New(rand.NewSource(42))
+	docs := make([]string, 0, 32)
+	rawProbe := ""
+	for i := 0; i < 32; i++ {
+		token := fmt.Sprintf("%08x%08x", rng.Uint32(), rng.Uint32())
+		if i == 0 {
+			rawProbe = token
+		}
+		docs = append(docs, fmt.Sprintf(`{"token":"%s","bucket":"r%02d"}`, token, i%8))
+	}
+
+	return phase10BenchmarkFixture{
+		idx: mustBuildBenchmarkIndex(DefaultConfig(), docs),
+		queries: []phase10BenchmarkQuery{
+			{name: "RawPath", predicate: EQ("$.token", rawProbe)},
+		},
+	}
+}
+
+func phase10LegacyStringPayloadBytes(idx *GINIndex) int {
+	total := 0
+	for _, entry := range idx.PathDirectory {
+		total += 2 + len(entry.PathName)
+	}
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		for _, term := range idx.StringIndexes[pathID].Terms {
+			total += 2 + len(term)
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
+		for _, term := range idx.AdaptiveStringIndexes[pathID].Terms {
+			total += 2 + len(term)
+		}
+	}
+	return total
+}
+
+func phase10CompactStringPayloadBytes(idx *GINIndex) int {
+	blockSize := orderedStringBlockSize(idx)
+	total := 0
+
+	var buf bytes.Buffer
+	pathNames := make([]string, len(idx.PathDirectory))
+	for i, entry := range idx.PathDirectory {
+		pathNames[i] = entry.PathName
+	}
+	if err := writeOrderedStrings(&buf, pathNames, blockSize); err != nil {
+		panic(err)
+	}
+	total += buf.Len()
+
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		buf.Reset()
+		if err := writeOrderedStrings(&buf, idx.StringIndexes[pathID].Terms, blockSize); err != nil {
+			panic(err)
+		}
+		total += buf.Len()
+	}
+	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
+		buf.Reset()
+		if err := writeOrderedStrings(&buf, idx.AdaptiveStringIndexes[pathID].Terms, blockSize); err != nil {
+			panic(err)
+		}
+		total += buf.Len()
+	}
+
+	return total
+}
+
+func phase10BenchmarkMetricsForFixture(fixture phase10BenchmarkFixture) phase10BenchmarkMetrics {
+	compactRaw, err := EncodeWithLevel(fixture.idx, CompressionNone)
+	if err != nil {
+		panic(err)
+	}
+	defaultZstd, err := Encode(fixture.idx)
+	if err != nil {
+		panic(err)
+	}
+
+	legacyPayloadBytes := phase10LegacyStringPayloadBytes(fixture.idx)
+	compactPayloadBytes := phase10CompactStringPayloadBytes(fixture.idx)
+	legacyRawBytes := len(compactRaw) - compactPayloadBytes + legacyPayloadBytes
+	bytesSavedPct := 0.0
+	if legacyRawBytes > 0 {
+		bytesSavedPct = (float64(legacyRawBytes-len(compactRaw)) / float64(legacyRawBytes)) * 100
+	}
+
+	return phase10BenchmarkMetrics{
+		legacyRawBytes:   legacyRawBytes,
+		compactRawBytes:  len(compactRaw),
+		defaultZstdBytes: len(defaultZstd),
+		bytesSavedPct:    bytesSavedPct,
+	}
+}
+
+func phase10ReportMetrics(b *testing.B, metrics phase10BenchmarkMetrics) {
+	b.ReportMetric(float64(metrics.legacyRawBytes), "legacy_raw_bytes")
+	b.ReportMetric(float64(metrics.compactRawBytes), "compact_raw_bytes")
+	b.ReportMetric(float64(metrics.defaultZstdBytes), "default_zstd_bytes")
+	b.ReportMetric(metrics.bytesSavedPct, "bytes_saved_pct")
+}
+
+func BenchmarkPhase10SerializationCompaction(b *testing.B) {
+	fixtures := []struct {
+		name  string
+		build func() phase10BenchmarkFixture
+	}{
+		{name: "Mixed", build: buildPhase10MixedFixture},
+		{name: "HighPrefix", build: buildPhase10HighPrefixFixture},
+		{name: "RandomLike", build: buildPhase10RandomLikeFixture},
+	}
+
+	for _, fixtureDef := range fixtures {
+		fixtureDef := fixtureDef
+		b.Run(fixtureDef.name, func(b *testing.B) {
+			fixture := fixtureDef.build()
+			metrics := phase10BenchmarkMetricsForFixture(fixture)
+			compactRaw, err := EncodeWithLevel(fixture.idx, CompressionNone)
+			if err != nil {
+				b.Fatalf("EncodeWithLevel() error = %v", err)
+			}
+			defaultZstd, err := Encode(fixture.idx)
+			if err != nil {
+				b.Fatalf("Encode() error = %v", err)
+			}
+
+			b.Run("Size", func(b *testing.B) {
+				phase10ReportMetrics(b, metrics)
+				for i := 0; i < b.N; i++ {
+				}
+			})
+
+			b.Run("Encode", func(b *testing.B) {
+				phase10ReportMetrics(b, metrics)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := Encode(fixture.idx); err != nil {
+						b.Fatalf("Encode() error = %v", err)
+					}
+				}
+			})
+
+			b.Run("Decode", func(b *testing.B) {
+				phase10ReportMetrics(b, metrics)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					if _, err := Decode(defaultZstd); err != nil {
+						b.Fatalf("Decode() error = %v", err)
+					}
+				}
+			})
+
+			b.Run("QueryAfterDecode", func(b *testing.B) {
+				decoded, err := Decode(compactRaw)
+				if err != nil {
+					b.Fatalf("Decode(compactRaw) error = %v", err)
+				}
+				for _, query := range fixture.queries {
+					query := query
+					b.Run(query.name, func(b *testing.B) {
+						phase10ReportMetrics(b, metrics)
+						if got := decoded.Evaluate([]Predicate{query.predicate}).Count(); got == 0 {
+							b.Fatalf("query %s returned 0 matches", query.name)
+						}
+						b.ResetTimer()
+						for i := 0; i < b.N; i++ {
+							_ = decoded.Evaluate([]Predicate{query.predicate})
+						}
+					})
+				}
+			})
+		})
+	}
+}
 
 func BenchmarkEncode(b *testing.B) {
 	sizes := []int{100, 500, 1000}
