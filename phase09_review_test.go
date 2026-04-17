@@ -118,6 +118,32 @@ func TestPhase09UnknownAliasFallsBackToAllRowGroups(t *testing.T) {
 	requirePredicateResult(t, after, predicates, want, "after missing alias")
 }
 
+func TestPhase09MixedAliasSlicesFallBackToAllRowGroups(t *testing.T) {
+	before, after := buildPhase09DerivedRepresentationFixture(t)
+
+	cases := []struct {
+		label      string
+		predicates []Predicate
+		want       []int
+	}{
+		{
+			label:      `IN("$.email", As("lower", "alice@example.com"), As("domain", "example.com"))`,
+			predicates: []Predicate{IN("$.email", As("lower", "alice@example.com"), As("domain", "example.com"))},
+			want:       []int{0, 1, 2, 3},
+		},
+		{
+			label:      `NIN("$.email", As("lower", "alice@example.com"), As("domain", "example.com"))`,
+			predicates: []Predicate{NIN("$.email", As("lower", "alice@example.com"), As("domain", "example.com"))},
+			want:       []int{0, 1, 2, 3},
+		},
+	}
+
+	for _, tc := range cases {
+		requirePredicateResult(t, before, tc.predicates, tc.want, "before "+tc.label)
+		requirePredicateResult(t, after, tc.predicates, tc.want, "after "+tc.label)
+	}
+}
+
 func TestPhase09InSubnetUsesDerivedAliases(t *testing.T) {
 	defaultPredicates := InSubnet("$.client_ip", "192.168.1.0/24")
 	if len(defaultPredicates) != 2 {
@@ -275,5 +301,15 @@ func TestPhase09ConfigValidationErrors(t *testing.T) {
 		t.Fatal("NewConfig(WithNumericBucketTransformer NaN) error = nil, want marshal error")
 	} else if !strings.Contains(err.Error(), "marshal transformer params") {
 		t.Fatalf("NewConfig(WithNumericBucketTransformer NaN) error = %v, want marshal transformer params", err)
+	}
+}
+
+func TestPhase09RepresentationsInvalidPathReturnsNil(t *testing.T) {
+	before, after := buildPhase09DerivedRepresentationFixture(t)
+
+	for _, idx := range []*GINIndex{before, after} {
+		if got := idx.Representations("$.email[0]"); got != nil {
+			t.Fatalf("Representations($.email[0]) = %v, want nil for invalid path", got)
+		}
 	}
 }

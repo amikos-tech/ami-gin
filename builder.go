@@ -1118,6 +1118,9 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	idx.Header.NumPaths = uint32(len(idx.PathDirectory))
 	idx.representations = collectMaterializedRepresentationsFromConfig(idx.Config, idx.pathLookup)
 	if err := idx.rebuildRepresentationLookup(); err != nil {
+		// Finalize() only panics here on broken builder invariants. User-driven
+		// cases such as missing derived values are filtered out above when we
+		// collect only materialized representations.
 		panic(err)
 	}
 	return idx
