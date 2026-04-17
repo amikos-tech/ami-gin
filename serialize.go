@@ -507,18 +507,70 @@ func readOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
 	case compactStringModeRaw:
 		return readRawOrderedStrings(r, expectedCount)
 	case compactStringModeFrontCoded:
-		blocks, err := ReadCompressedTerms(r)
-		if err != nil {
-			return nil, wrapOrderedStringFormatError("read front-coded ordered strings", err)
-		}
-		values := (&PrefixCompressor{}).Decompress(blocks)
-		if uint32(len(values)) != expectedCount {
-			return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", len(values), expectedCount)
-		}
-		return values, nil
+		return readFrontCodedOrderedStrings(r, expectedCount)
 	default:
 		return nil, errors.Wrapf(ErrInvalidFormat, "unknown compact string mode %d", mode)
 	}
+}
+
+func readFrontCodedOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {
+	var numBlocks uint32
+	if err := binary.Read(r, binary.LittleEndian, &numBlocks); err != nil {
+		return nil, wrapOrderedStringFormatError("read front-coded block count", err)
+	}
+	if numBlocks > expectedCount {
+		return nil, errors.Wrapf(ErrInvalidFormat, "front-coded block count %d exceeds expected count %d", numBlocks, expectedCount)
+	}
+
+	blocks := make([]CompressedTermBlock, numBlocks)
+	decodedCount := uint32(0)
+	for i := uint32(0); i < numBlocks; i++ {
+		var firstLen uint16
+		if err := binary.Read(r, binary.LittleEndian, &firstLen); err != nil {
+			return nil, wrapOrderedStringFormatError("read front-coded first length", err)
+		}
+		firstBytes := make([]byte, firstLen)
+		if _, err := io.ReadFull(r, firstBytes); err != nil {
+			return nil, wrapOrderedStringFormatError("read front-coded first bytes", err)
+		}
+		blocks[i].FirstTerm = string(firstBytes)
+
+		var numEntries uint16
+		if err := binary.Read(r, binary.LittleEndian, &numEntries); err != nil {
+			return nil, wrapOrderedStringFormatError("read front-coded entry count", err)
+		}
+		decodedCount++
+		if decodedCount+uint32(numEntries) > expectedCount {
+			return nil, errors.Wrapf(ErrInvalidFormat, "front-coded block %d entry count %d exceeds expected total %d", i, numEntries, expectedCount)
+		}
+
+		blocks[i].Entries = make([]PrefixEntry, numEntries)
+		for j := uint16(0); j < numEntries; j++ {
+			if err := binary.Read(r, binary.LittleEndian, &blocks[i].Entries[j].PrefixLen); err != nil {
+				return nil, wrapOrderedStringFormatError("read front-coded prefix length", err)
+			}
+			var suffixLen uint16
+			if err := binary.Read(r, binary.LittleEndian, &suffixLen); err != nil {
+				return nil, wrapOrderedStringFormatError("read front-coded suffix length", err)
+			}
+			suffixBytes := make([]byte, suffixLen)
+			if _, err := io.ReadFull(r, suffixBytes); err != nil {
+				return nil, wrapOrderedStringFormatError("read front-coded suffix bytes", err)
+			}
+			blocks[i].Entries[j].Suffix = string(suffixBytes)
+		}
+		decodedCount += uint32(numEntries)
+	}
+
+	if decodedCount != expectedCount {
+		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", decodedCount, expectedCount)
+	}
+
+	values := (&PrefixCompressor{}).Decompress(blocks)
+	if uint32(len(values)) != expectedCount {
+		return nil, errors.Wrapf(ErrInvalidFormat, "ordered string count mismatch: got %d want %d", len(values), expectedCount)
+	}
+	return values, nil
 }
 
 func readRawOrderedStrings(r io.Reader, expectedCount uint32) ([]string, error) {

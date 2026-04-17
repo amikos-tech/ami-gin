@@ -696,6 +696,68 @@ func TestDecodeRejectsOrderedStringModePayloadMismatch(t *testing.T) {
 	}
 }
 
+func TestReadOrderedStringsRejectsFrontCodedOversizedBlockCount(t *testing.T) {
+	var buf bytes.Buffer
+	if err := buf.WriteByte(compactStringModeFrontCoded); err != nil {
+		t.Fatalf("WriteByte(compactStringModeFrontCoded) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(2)); err != nil {
+		t.Fatalf("binary.Write(numBlocks) error = %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+			t.Fatalf("binary.Write(firstLen[%d]) error = %v", i, err)
+		}
+		if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+			t.Fatalf("binary.Write(numEntries[%d]) error = %v", i, err)
+		}
+	}
+
+	_, err := readOrderedStrings(bytes.NewReader(buf.Bytes()), 1)
+	if err == nil {
+		t.Fatal("readOrderedStrings() error = nil, want oversized block count rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "block count") {
+		t.Fatalf("expected block-count context, got %v", err)
+	}
+}
+
+func TestReadOrderedStringsRejectsFrontCodedOversizedEntryCount(t *testing.T) {
+	var buf bytes.Buffer
+	if err := buf.WriteByte(compactStringModeFrontCoded); err != nil {
+		t.Fatalf("WriteByte(compactStringModeFrontCoded) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(1)); err != nil {
+		t.Fatalf("binary.Write(numBlocks) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(firstLen) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(1)); err != nil {
+		t.Fatalf("binary.Write(numEntries) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(prefixLen) error = %v", err)
+	}
+	if err := binary.Write(&buf, binary.LittleEndian, uint16(0)); err != nil {
+		t.Fatalf("binary.Write(suffixLen) error = %v", err)
+	}
+
+	_, err := readOrderedStrings(bytes.NewReader(buf.Bytes()), 1)
+	if err == nil {
+		t.Fatal("readOrderedStrings() error = nil, want oversized entry count rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "entry count") {
+		t.Fatalf("expected entry-count context, got %v", err)
+	}
+}
+
 func TestWriteOrderedStringsPrefersRawOnTie(t *testing.T) {
 	var buf bytes.Buffer
 	if err := writeOrderedStrings(&buf, nil, defaultPrefixBlockSize); err != nil {
