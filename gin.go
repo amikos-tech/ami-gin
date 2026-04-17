@@ -557,6 +557,24 @@ func WithBoolNormalizeTransformer(path, alias string, opts ...TransformerOption)
 	return WithRegisteredTransformer(path, alias, TransformerBoolNormalize, nil, opts...)
 }
 
+// WithPrefixBlockSize configures the block size for front-coded prefix
+// compression used in ordered string sections. Zero keeps the use-default
+// sentinel (the library falls back to defaultPrefixBlockSize). Values above
+// math.MaxUint16 are rejected because the on-wire entry count is encoded as
+// uint16 (see prefix.go:WriteCompressedTerms).
+func WithPrefixBlockSize(blockSize int) ConfigOption {
+	return func(c *GINConfig) error {
+		if blockSize < 0 {
+			return errors.New("prefix block size must be non-negative")
+		}
+		if blockSize > math.MaxUint16 {
+			return errors.Errorf("prefix block size must be <= %d", math.MaxUint16)
+		}
+		c.PrefixBlockSize = blockSize
+		return nil
+	}
+}
+
 // WithAdaptiveMinRGCoverage sets the minimum number of row groups a term must
 // cover to be eligible for promotion to the exact adaptive index.
 // Terms below this threshold fall into the bucket layer.
