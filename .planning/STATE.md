@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: ready
-stopped_at: Phase 10 verified and marked complete
-last_updated: "2026-04-17T14:32:14.339Z"
+status: planning
+stopped_at: Phase 11 added to roadmap; planning pending
+last_updated: "2026-04-17T17:01:34.539Z"
 last_activity: 2026-04-17
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 5
   total_plans: 13
   completed_plans: 13
@@ -21,22 +21,22 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-14)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 999.1 — lefthook-pre-push-quality-gates-(backlog)
+**Current focus:** Phase 11 — real-corpus-prefix-compression-benchmarking
 
 ## Current Position
 
-Phase: 999.1 (lefthook-pre-push-quality-gates-(backlog))
+Phase: 11 (real-corpus-prefix-compression-benchmarking)
 Plan: Not started
-Status: Phase 10 complete; backlog candidate next
-Last activity: 2026-04-17
+Status: Phase 11 added to roadmap; planning pending
+Last activity: 2026-04-17 - Completed quick task 260417-tnm: PR #23 review fixes
 
-Progress: [██████████] 100%
+Progress: [████████░░] 83%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed in this milestone: 10
+- Total plans completed in this milestone: 13
 - Average duration: -
 - Total execution time: -
 
@@ -49,6 +49,7 @@ Progress: [██████████] 100%
 | 08 | 3 | - | - |
 | 09 | 3 | - | - |
 | 10 | 3 | - | - |
+| 11 | 0 | - | - |
 
 ## Accumulated Context
 
@@ -63,16 +64,27 @@ Recent decisions affecting current work:
 - Treat derived representations as additive to raw indexing
 - Leave serialization compaction until after the functional layout changes land
 
+### Roadmap Evolution
+
+- Phase 11 added: Real-Corpus Prefix Compression Benchmarking
+
 ### Pending Todos
 
-- Review backlog phase `999.1` and decide whether to promote it into the next active milestone cycle
+- Plan Phase `11` around representative external benchmark datasets and bounded corpus sizes
 
 ### Blockers/Concerns
 
 - No active blockers on the completed Phase 10 workstream
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260417-pvi | Phase-10 review follow-ups: T1 second-entry PrefixLen test, T2 table-driven path-directory truncation test, wrap bare io.EOF leaks in 8 serialize readers, PrefixBlockSize > MaxUint16 guard | 2026-04-17 | 8eb78f5 | [260417-pvi-phase-10-review-follow-ups-t1-subsequent](./quick/260417-pvi-phase-10-review-follow-ups-t1-subsequent/) |
+| 260417-tnm | PR #23 review fixes: unexport readCompressedTerms, drop zero-value PrefixCompressor + redundant count check in ordered-string decode, short-circuit writeOrderedStrings for trivial inputs, add WithPrefixBlockSize ConfigOption, document compact-path corruption byte layout | 2026-04-17 | c28957f | [260417-tnm-address-pr-23-feedback-unexport-readcomp](./quick/260417-tnm-address-pr-23-feedback-unexport-readcomp/) |
+
 ## Session Continuity
 
-Last session: 2026-04-17T14:28:39Z
-Stopped at: Phase 10 verified and marked complete
+Last session: 2026-04-17T14:49:23Z
+Stopped at: Phase 11 added to roadmap; planning pending
 Resume file: .planning/ROADMAP.md
