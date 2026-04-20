@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: planning
 stopped_at: Phase 11 added to roadmap; planning pending
-last_updated: "2026-04-17T17:01:34.539Z"
-last_activity: 2026-04-17
+last_updated: "2026-04-20T09:20:00.000Z"
+last_activity: 2026-04-20
 progress:
   total_phases: 9
   completed_phases: 5
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-14)
 Phase: 11 (real-corpus-prefix-compression-benchmarking)
 Plan: Not started
 Status: Phase 11 added to roadmap; planning pending
-Last activity: 2026-04-17 - Completed quick task 260417-tnm: PR #23 review fixes
+Last activity: 2026-04-20 - Completed quick task 260420-h1a: unexport WriteCompressedTerms (PR #23 review item 2)
 
 Progress: [████████░░] 83%
 
@@ -82,6 +82,7 @@ Recent decisions affecting current work:
 |---|-------------|------|--------|-----------|
 | 260417-pvi | Phase-10 review follow-ups: T1 second-entry PrefixLen test, T2 table-driven path-directory truncation test, wrap bare io.EOF leaks in 8 serialize readers, PrefixBlockSize > MaxUint16 guard | 2026-04-17 | 8eb78f5 | [260417-pvi-phase-10-review-follow-ups-t1-subsequent](./quick/260417-pvi-phase-10-review-follow-ups-t1-subsequent/) |
 | 260417-tnm | PR #23 review fixes: unexport readCompressedTerms, drop zero-value PrefixCompressor + redundant count check in ordered-string decode, short-circuit writeOrderedStrings for trivial inputs, add WithPrefixBlockSize ConfigOption, document compact-path corruption byte layout | 2026-04-17 | c28957f | [260417-tnm-address-pr-23-feedback-unexport-readcomp](./quick/260417-tnm-address-pr-23-feedback-unexport-readcomp/) |
+| 260420-h1a | Unexport WriteCompressedTerms to writeCompressedTerms — PR #23 review feedback item 2; removes unused public API surface now that ReadCompressedTerms counterpart is gone | 2026-04-20 | 1e8746d | [260420-h1a-unexport-writecompressedterms-to-writeco](./quick/260420-h1a-unexport-writecompressedterms-to-writeco/) |
 
 ## Session Continuity
 
