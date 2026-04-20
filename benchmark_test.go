@@ -121,7 +121,7 @@ func phase11WriteTempJSONL(t *testing.T, records []phase11CorpusRecord) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "fixture.jsonl")
-	var lines []string
+	lines := make([]string, 0, len(records))
 	for _, record := range records {
 		data, err := json.Marshal(record)
 		if err != nil {
