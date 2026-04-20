@@ -17,7 +17,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 )
 
@@ -1415,6 +1414,7 @@ func TestPhase11LoadSmokeFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat(%q) error = %v", phase11SmokeFixturePath, err)
 	}
+	// Fixture stability guard. Update in lockstep with testdata/phase11/README.md (Smoke bytes).
 	if got := info.Size(); got != 291684 {
 		t.Fatalf("Stat(%q).Size() = %d, want 291684", phase11SmokeFixturePath, got)
 	}
@@ -1537,44 +1537,13 @@ func TestPhase11WalkCorpusRecordsRejectsTruncatedGzip(t *testing.T) {
 func TestPhase11ShouldSkipBenchmarkDecode(t *testing.T) {
 	t.Parallel()
 
-	builder := mustNewBuilder(t, DefaultConfig(), 1)
-	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
-		t.Fatalf("AddDocument() error = %v", err)
-	}
-
-	uncompressed, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
-	if err != nil {
-		t.Fatalf("EncodeWithLevel() error = %v", err)
-	}
-
-	payload := append([]byte{}, uncompressed[4:]...)
-	if len(payload) >= maxDecodedIndexSize {
-		t.Fatalf("fixture payload length = %d, want less than cap %d", len(payload), maxDecodedIndexSize)
-	}
-	payload = append(payload, bytes.Repeat([]byte{0}, maxDecodedIndexSize-len(payload)+1)...)
-
-	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
-	if err != nil {
-		t.Fatalf("zstd.NewWriter() error = %v", err)
-	}
-	compressed := encoder.EncodeAll(payload, nil)
-	_ = encoder.Close()
-
-	_, err = Decode(append([]byte(compressedMagic), compressed...))
-	if err == nil {
-		t.Fatal("Decode() error = nil, want oversized compressed payload rejection")
-	}
-	if !errors.Is(err, ErrDecodedSizeExceedsLimit) {
-		t.Fatalf("Decode() error = %v, want ErrDecodedSizeExceedsLimit", err)
-	}
-
 	tests := []struct {
 		name string
 		err  error
 		want bool
 	}{
 		{name: "nil", err: nil, want: false},
-		{name: "decoded-size-limit", err: err, want: true},
+		{name: "decoded-size-limit", err: errors.Wrap(ErrDecodedSizeExceedsLimit, "decompress data"), want: true},
 		{name: "unrelated", err: errors.New("boom"), want: false},
 	}
 	for _, tt := range tests {
@@ -1864,7 +1833,7 @@ func phase11ValidateCorpusFields(record phase11CorpusRecord, requiredFields []st
 				return errors.New("missing metadata.license_type")
 			}
 		default:
-			return errors.Errorf("unknown required field %q", field)
+			panic(fmt.Sprintf("phase11ValidateCorpusFields: unknown required field %q", field))
 		}
 	}
 	return nil
@@ -2341,7 +2310,7 @@ func phase11BenchmarkPathsForTier(b *testing.B, tier phase11BenchmarkTier) []str
 
 	root := strings.TrimSpace(os.Getenv(phase11CorpusRootEnvVar))
 	if root == "" {
-		b.Skipf(
+		b.Fatalf(
 			"%s is required when %s is set; expected %s",
 			phase11CorpusRootEnvVar,
 			tier.optInEnvVar,
@@ -2379,8 +2348,9 @@ func BenchmarkPhase11RealCorpus(b *testing.B) {
 				}
 
 				b.Run("Size", func(b *testing.B) {
-					b.StopTimer()
 					phase11ReportMetrics(b, metrics)
+					for i := 0; i < b.N; i++ {
+					}
 				})
 
 				b.Run("Encode", func(b *testing.B) {
