@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 11 added to roadmap; planning pending
-last_updated: "2026-04-20T09:20:00.000Z"
-last_activity: 2026-04-20
+status: "Phase 11 shipped — PR #25"
+stopped_at: Phase 11 plans completed
+last_updated: "2026-04-20T14:19:42.327Z"
+last_activity: "2026-04-20 - Shipped Phase 11 via PR #25"
 progress:
-  total_phases: 9
-  completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
+  total_phases: 11
+  completed_phases: 6
+  total_plans: 16
+  completed_plans: 16
   percent: 100
 ---
 
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-14)
 ## Current Position
 
 Phase: 11 (real-corpus-prefix-compression-benchmarking)
-Plan: Not started
-Status: Phase 11 added to roadmap; planning pending
-Last activity: 2026-04-20 - Completed quick task 260420-h1a: unexport WriteCompressedTerms (PR #23 review item 2)
+Plan: 3/3 plans complete; verification passed
+Status: Phase 11 shipped — PR #25
+Last activity: 2026-04-20 - Shipped Phase 11 via PR #25
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -49,7 +49,7 @@ Progress: [████████░░] 83%
 | 08 | 3 | - | - |
 | 09 | 3 | - | - |
 | 10 | 3 | - | - |
-| 11 | 0 | - | - |
+| 11 | 3 | - | - |
 
 ## Accumulated Context
 
@@ -67,14 +67,18 @@ Recent decisions affecting current work:
 ### Roadmap Evolution
 
 - Phase 11 added: Real-Corpus Prefix Compression Benchmarking
+- Phase 11 planned into `11-01`, `11-02`, and `11-03`
+- Completed `11-01`: smoke corpus, provenance note, and env-gated benchmark structure
+- Completed `11-02`: pinned snapshot acquisition, benchmark metrics, and raw results artifact
+- Completed `11-03`: final recommendation report and README reproduction guidance
 
 ### Pending Todos
 
-- Plan Phase `11` around representative external benchmark datasets and bounded corpus sizes
+- Run `$gsd-secure-phase 11` if security enforcement is still enabled for this milestone
 
 ### Blockers/Concerns
 
-- No active blockers on the completed Phase 10 workstream
+- No active blockers on the Phase 11 deliverables
 
 ### Quick Tasks Completed
 
@@ -86,6 +90,8 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-04-17T14:49:23Z
-Stopped at: Phase 11 added to roadmap; planning pending
-Resume file: .planning/ROADMAP.md
+Last session: --stopped-at
+Stopped at: Phase 11 plans completed
+Resume file: --resume-file
+
+**Planned Phase:** 11 (real-corpus-prefix-compression-benchmarking) — 3 plans — 2026-04-20T11:36:56.964Z

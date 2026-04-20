@@ -1932,8 +1932,11 @@ func TestDecodeRejectsOversizedCompressedPayload(t *testing.T) {
 	if err == nil {
 		t.Fatal("Decode() error = nil, want oversized compressed payload rejection")
 	}
+	if !stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
+		t.Fatalf("expected ErrDecodedSizeExceedsLimit, got %v", err)
+	}
 	if !strings.Contains(err.Error(), "decompress data") {
-		t.Fatalf("expected decompress data error, got %v", err)
+		t.Fatalf("expected decompress data context, got %v", err)
 	}
 }
 

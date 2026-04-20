@@ -78,6 +78,10 @@ var (
 	// ErrInvalidFormat is returned by Decode when the binary data is structurally
 	// invalid: unrecognized magic bytes, oversized allocations, or corrupt fields.
 	ErrInvalidFormat = errors.New("invalid format")
+
+	// ErrDecodedSizeExceedsLimit is returned by Decode when compressed input
+	// expands beyond maxDecodedIndexSize during zstd decompression.
+	ErrDecodedSizeExceedsLimit = errors.New("decoded size exceeds configured limit")
 )
 
 // CompressionLevel specifies the compression level for index serialization.
@@ -274,6 +278,9 @@ func Decode(data []byte) (*GINIndex, error) {
 
 		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
 		if err != nil {
+			if stderrors.Is(err, zstd.ErrDecoderSizeExceeded) {
+				return nil, errors.Wrap(ErrDecodedSizeExceedsLimit, "decompress data")
+			}
 			return nil, errors.Wrap(err, "decompress data")
 		}
 	default:
