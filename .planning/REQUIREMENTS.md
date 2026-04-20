@@ -21,11 +21,11 @@
 
 ### Adaptive High-Cardinality Indexing
 
-- [ ] **HCARD-01**: High-cardinality string paths can retain exact row-group bitmaps for frequent terms instead of degrading entirely to bloom-only
-- [ ] **HCARD-02**: Hot-term selection is frequency-driven and configurable at build time
-- [ ] **HCARD-03**: Non-hot terms on adaptive paths still use a compact fallback with no false negatives
-- [ ] **HCARD-04**: Index metadata surfaces whether a path is exact, bloom-only, or adaptive-hybrid
-- [ ] **HCARD-05**: Benchmarks and fixtures quantify pruning improvement and size impact for realistic high-cardinality distributions
+- [x] **HCARD-01**: High-cardinality string paths can retain exact row-group bitmaps for frequent terms instead of degrading entirely to bloom-only — validated in Phase 08
+- [x] **HCARD-02**: Hot-term selection is frequency-driven and configurable at build time — validated in Phase 08
+- [x] **HCARD-03**: Non-hot terms on adaptive paths still use a compact fallback with no false negatives — validated in Phase 08
+- [x] **HCARD-04**: Index metadata surfaces whether a path is exact, bloom-only, or adaptive-hybrid — validated in Phase 08
+- [x] **HCARD-05**: Benchmarks and fixtures quantify pruning improvement and size impact for realistic high-cardinality distributions — validated in Phase 08
 
 ### Derived Representations
 
@@ -36,9 +36,9 @@
 
 ### Serialization Compaction
 
-- [ ] **SIZE-01**: Path directory serialization uses prefix compression or an equivalent compact representation
-- [ ] **SIZE-02**: String term serialization uses prefix compression or block compaction instead of raw repeated strings
-- [ ] **SIZE-03**: Compact encoding introduces explicit format-version handling with round-trip coverage for legacy and new index formats
+- [x] **SIZE-01**: Path directory serialization uses prefix compression or an equivalent compact representation — validated in Phase 10
+- [x] **SIZE-02**: String term serialization uses prefix compression or block compaction instead of raw repeated strings — validated in Phase 10
+- [x] **SIZE-03**: Compact encoding introduces explicit format-version handling with round-trip coverage for legacy and new index formats — validated in Phase 10
 
 ## Out of Scope
 
@@ -57,29 +57,30 @@
 | PATH-01 | Phase 06 | Complete |
 | PATH-02 | Phase 06 | Complete |
 | PATH-03 | Phase 06 | Complete |
-| BUILD-01 | Phase 07 | Pending |
-| BUILD-02 | Phase 07 | Pending |
-| BUILD-03 | Phase 07 | Pending |
-| BUILD-04 | Phase 07 | Pending |
-| BUILD-05 | Phase 07 | Pending |
-| HCARD-01 | Phase 08 | Pending |
-| HCARD-02 | Phase 08 | Pending |
-| HCARD-03 | Phase 08 | Pending |
-| HCARD-04 | Phase 08 | Pending |
-| HCARD-05 | Phase 08 | Pending |
-| DERIVE-01 | Phase 09 | Pending |
-| DERIVE-02 | Phase 09 | Pending |
-| DERIVE-03 | Phase 09 | Pending |
-| DERIVE-04 | Phase 09 | Pending |
-| SIZE-01 | Phase 10 | Pending |
-| SIZE-02 | Phase 10 | Pending |
-| SIZE-03 | Phase 10 | Pending |
+| BUILD-01 | Phase 12 | Pending |
+| BUILD-02 | Phase 12 | Pending |
+| BUILD-03 | Phase 12 | Pending |
+| BUILD-04 | Phase 12 | Pending |
+| BUILD-05 | Phase 12 | Pending |
+| HCARD-01 | Phase 08 | Complete |
+| HCARD-02 | Phase 08 | Complete |
+| HCARD-03 | Phase 08 | Complete |
+| HCARD-04 | Phase 08 | Complete |
+| HCARD-05 | Phase 08 | Complete |
+| DERIVE-01 | Phase 12 | Pending |
+| DERIVE-02 | Phase 12 | Pending |
+| DERIVE-03 | Phase 12 | Pending |
+| DERIVE-04 | Phase 12 | Pending |
+| SIZE-01 | Phase 10 | Complete |
+| SIZE-02 | Phase 10 | Complete |
+| SIZE-03 | Phase 10 | Complete |
 
 **Coverage:**
 - Requirements total: 20
+- Checked off: 11
 - Mapped to phases: 20
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-14*
-*Last updated: 2026-04-14 after Phase 06 completion*
+*Last updated: 2026-04-20 after milestone gap planning*
