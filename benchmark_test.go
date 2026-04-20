@@ -1,14 +1,23 @@
 package gin
 
 import (
+	"bufio"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/pkg/errors"
 )
 
 // =============================================================================
@@ -1205,6 +1214,342 @@ func BenchmarkQueryVsIndexSize(b *testing.B) {
 // Serialization Performance Benchmarks
 // =============================================================================
 
+func TestPhase11DiscoverExternalShardsRejectsMissingLayout(t *testing.T) {
+	t.Parallel()
+
+	_, err := phase11DiscoverExternalShards(t.TempDir(), 4)
+	if err == nil {
+		t.Fatal("phase11DiscoverExternalShards() error = nil, want layout error")
+	}
+	if !strings.Contains(err.Error(), phase11CorpusRootEnvVar) {
+		t.Fatalf("phase11DiscoverExternalShards() error = %q, want mention of %s", err, phase11CorpusRootEnvVar)
+	}
+	if !strings.Contains(err.Error(), filepath.Join("gharchive", "v0", "documents")) {
+		t.Fatalf("phase11DiscoverExternalShards() error = %q, want expected shard layout", err)
+	}
+}
+
+func TestPhase11LoadSmokeFixture(t *testing.T) {
+	t.Parallel()
+
+	records, err := phase11LoadCorpusRecordsFromJSONL(phase11SmokeFixturePath)
+	if err != nil {
+		t.Fatalf("phase11LoadCorpusRecordsFromJSONL(%q) error = %v", phase11SmokeFixturePath, err)
+	}
+	if got := len(records); got < 500 {
+		t.Fatalf("phase11LoadCorpusRecordsFromJSONL(%q) returned %d records, want at least 500", phase11SmokeFixturePath, got)
+	}
+
+	first := records[0]
+	if first.Source == "" {
+		t.Fatal("first smoke record source is empty")
+	}
+	if first.Text == "" {
+		t.Fatal("first smoke record text is empty")
+	}
+	if first.Metadata.Repo == "" || first.Metadata.URL == "" || first.Metadata.License == "" || first.Metadata.LicenseType == "" {
+		t.Fatalf("first smoke record metadata = %#v, want repo/url/license/license_type populated", first.Metadata)
+	}
+}
+
+const (
+	phase11SmokeFixturePath      = "testdata/phase11/github_archive_smoke.jsonl"
+	phase11CorpusRootEnvVar      = "GIN_PHASE11_GITHUB_ARCHIVE_ROOT"
+	phase11EnableSubsetEnvVar    = "GIN_PHASE11_ENABLE_SUBSET"
+	phase11EnableLargeEnvVar     = "GIN_PHASE11_ENABLE_LARGE"
+	phase11ExternalShardLayout   = "gharchive/v0/documents/*.jsonl.gz"
+	phase11DocsPerRowGroup       = 128
+	phase11SubsetShardCount      = 4
+	phase11LargeShardCount       = 32
+	phase11ScannerBufferCapacity = 8 * 1024 * 1024
+)
+
+type phase11CorpusMetadata struct {
+	Repo        string `json:"repo"`
+	URL         string `json:"url"`
+	License     string `json:"license"`
+	LicenseType string `json:"license_type"`
+}
+
+type phase11CorpusRecord struct {
+	ID       string                `json:"id"`
+	Source   string                `json:"source"`
+	Created  string                `json:"created"`
+	Text     string                `json:"text"`
+	Metadata phase11CorpusMetadata `json:"metadata"`
+}
+
+type phase11BenchmarkTier struct {
+	name        string
+	optInEnvVar string
+	shardCount  int
+}
+
+type phase11BenchmarkProjection struct {
+	name        string
+	buildDoc    func(phase11CorpusRecord) string
+	buildProbe  func(phase11CorpusRecord) phase10BenchmarkQuery
+	description string
+}
+
+type phase11BenchmarkFixture struct {
+	idx          *GINIndex
+	queries      []phase10BenchmarkQuery
+	docsIndexed  int
+	shardsLoaded int
+}
+
+type phase11BenchmarkMetrics struct {
+	phase10BenchmarkMetrics
+	legacyStringPayloadBytes  int
+	compactStringPayloadBytes int
+	docsIndexed               int
+	shardsLoaded              int
+}
+
+var phase11BenchmarkTiers = []phase11BenchmarkTier{
+	{name: "smoke"},
+	{name: "subset", optInEnvVar: phase11EnableSubsetEnvVar, shardCount: phase11SubsetShardCount},
+	{name: "large", optInEnvVar: phase11EnableLargeEnvVar, shardCount: phase11LargeShardCount},
+}
+
+var phase11BenchmarkProjections = []phase11BenchmarkProjection{
+	{
+		name: "projection=structured",
+		buildDoc: func(record phase11CorpusRecord) string {
+			return phase11MustMarshalBenchmarkDoc(map[string]any{
+				"source":  record.Source,
+				"created": record.Created,
+				"metadata": map[string]any{
+					"repo":         record.Metadata.Repo,
+					"license":      record.Metadata.License,
+					"license_type": record.Metadata.LicenseType,
+				},
+			})
+		},
+		buildProbe: func(record phase11CorpusRecord) phase10BenchmarkQuery {
+			return phase10BenchmarkQuery{
+				name:      "RepoEQ",
+				predicate: EQ("$.metadata.repo", record.Metadata.Repo),
+			}
+		},
+		description: "Repeated nested metadata paths with shared repo/license values.",
+	},
+	{
+		name: "projection=text-heavy",
+		buildDoc: func(record phase11CorpusRecord) string {
+			return phase11MustMarshalBenchmarkDoc(map[string]any{
+				"source":  record.Source,
+				"created": record.Created,
+				"text":    record.Text,
+				"metadata": map[string]any{
+					"url": record.Metadata.URL,
+				},
+			})
+		},
+		buildProbe: func(record phase11CorpusRecord) phase10BenchmarkQuery {
+			return phase10BenchmarkQuery{
+				name:      "SourceEQ",
+				predicate: EQ("$.source", record.Source),
+			}
+		},
+		description: "High-cardinality free text plus minimal supporting metadata.",
+	},
+}
+
+func phase11MustMarshalBenchmarkDoc(doc map[string]any) string {
+	data, err := json.Marshal(doc)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func phase11LoadCorpusRecordsFromJSONL(path string) ([]phase11CorpusRecord, error) {
+	var records []phase11CorpusRecord
+	err := phase11WalkCorpusRecords([]string{path}, func(record phase11CorpusRecord) error {
+		records = append(records, record)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func phase11ExpectedShardGlob(root string) string {
+	return filepath.Join(filepath.Clean(root), "gharchive", "v0", "documents", "*.jsonl.gz")
+}
+
+func phase11DiscoverExternalShards(root string, limit int) ([]string, error) {
+	cleanedRoot := filepath.Clean(strings.TrimSpace(root))
+	if cleanedRoot == "." || cleanedRoot == "" {
+		return nil, errors.Errorf(
+			"%s must point to a local snapshot root containing %s",
+			phase11CorpusRootEnvVar,
+			phase11ExternalShardLayout,
+		)
+	}
+
+	if _, err := os.Stat(cleanedRoot); err != nil {
+		return nil, errors.Wrapf(
+			err,
+			"%s=%q; expected %s",
+			phase11CorpusRootEnvVar,
+			cleanedRoot,
+			phase11ExternalShardLayout,
+		)
+	}
+
+	glob := phase11ExpectedShardGlob(cleanedRoot)
+	matches, err := filepath.Glob(glob)
+	if err != nil {
+		return nil, errors.Wrapf(err, "resolve %s shards from %q", phase11CorpusRootEnvVar, cleanedRoot)
+	}
+	sort.Strings(matches)
+	if len(matches) == 0 {
+		return nil, errors.Errorf(
+			"%s=%q does not contain %s",
+			phase11CorpusRootEnvVar,
+			cleanedRoot,
+			phase11ExternalShardLayout,
+		)
+	}
+	if limit > 0 && len(matches) < limit {
+		return nil, errors.Errorf(
+			"%s=%q provides %d shard(s); need at least %d under %s",
+			phase11CorpusRootEnvVar,
+			cleanedRoot,
+			len(matches),
+			limit,
+			phase11ExternalShardLayout,
+		)
+	}
+	if limit > 0 {
+		return matches[:limit], nil
+	}
+	return matches, nil
+}
+
+func phase11WalkCorpusRecords(paths []string, fn func(phase11CorpusRecord) error) error {
+	for _, path := range paths {
+		cleanedPath := filepath.Clean(path)
+		file, err := os.Open(cleanedPath)
+		if err != nil {
+			return errors.Wrapf(err, "open corpus shard %q", cleanedPath)
+		}
+
+		var reader io.Reader = file
+		var gzipReader *gzip.Reader
+		if strings.HasSuffix(cleanedPath, ".gz") {
+			gzipReader, err = gzip.NewReader(file)
+			if err != nil {
+				_ = file.Close()
+				return errors.Wrapf(err, "open gzip corpus shard %q", cleanedPath)
+			}
+			reader = gzipReader
+		}
+
+		scanner := bufio.NewScanner(reader)
+		scanner.Buffer(make([]byte, 0, 64*1024), phase11ScannerBufferCapacity)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var record phase11CorpusRecord
+			if err := json.Unmarshal([]byte(line), &record); err != nil {
+				if gzipReader != nil {
+					_ = gzipReader.Close()
+				}
+				_ = file.Close()
+				return errors.Wrapf(err, "decode corpus record from %q", cleanedPath)
+			}
+			if err := fn(record); err != nil {
+				if gzipReader != nil {
+					_ = gzipReader.Close()
+				}
+				_ = file.Close()
+				return err
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			if gzipReader != nil {
+				_ = gzipReader.Close()
+			}
+			_ = file.Close()
+			return errors.Wrapf(err, "scan corpus shard %q", cleanedPath)
+		}
+		if gzipReader != nil {
+			_ = gzipReader.Close()
+		}
+		_ = file.Close()
+	}
+	return nil
+}
+
+func phase11LoadBenchmarkFixture(paths []string, projection phase11BenchmarkProjection) (phase11BenchmarkFixture, error) {
+	docCount := 0
+	var probe *phase11CorpusRecord
+	if err := phase11WalkCorpusRecords(paths, func(record phase11CorpusRecord) error {
+		docCount++
+		if probe == nil {
+			recordCopy := record
+			probe = &recordCopy
+		}
+		return nil
+	}); err != nil {
+		return phase11BenchmarkFixture{}, err
+	}
+	if docCount == 0 {
+		return phase11BenchmarkFixture{}, errors.New("corpus fixture contains no records")
+	}
+
+	rowGroups := (docCount + phase11DocsPerRowGroup - 1) / phase11DocsPerRowGroup
+	builder, err := NewBuilder(DefaultConfig(), rowGroups)
+	if err != nil {
+		return phase11BenchmarkFixture{}, errors.Wrap(err, "NewBuilder")
+	}
+
+	docIndex := 0
+	if err := phase11WalkCorpusRecords(paths, func(record phase11CorpusRecord) error {
+		projectedDoc := projection.buildDoc(record)
+		if err := builder.AddDocument(DocID(docIndex/phase11DocsPerRowGroup), []byte(projectedDoc)); err != nil {
+			return errors.Wrapf(err, "AddDocument(doc=%d)", docIndex)
+		}
+		docIndex++
+		return nil
+	}); err != nil {
+		return phase11BenchmarkFixture{}, err
+	}
+
+	return phase11BenchmarkFixture{
+		idx:          builder.Finalize(),
+		queries:      []phase10BenchmarkQuery{projection.buildProbe(*probe)},
+		docsIndexed:  docCount,
+		shardsLoaded: len(paths),
+	}, nil
+}
+
+func phase11BenchmarkMetricsForFixture(fixture phase11BenchmarkFixture) phase11BenchmarkMetrics {
+	baseMetrics := phase10BenchmarkMetricsForFixture(phase10BenchmarkFixture{idx: fixture.idx})
+	return phase11BenchmarkMetrics{
+		phase10BenchmarkMetrics:   baseMetrics,
+		legacyStringPayloadBytes:  phase10LegacyStringPayloadBytes(fixture.idx),
+		compactStringPayloadBytes: phase10CompactStringPayloadBytes(fixture.idx),
+		docsIndexed:               fixture.docsIndexed,
+		shardsLoaded:              fixture.shardsLoaded,
+	}
+}
+
+func phase11ReportMetrics(b *testing.B, metrics phase11BenchmarkMetrics) {
+	phase10ReportMetrics(b, metrics.phase10BenchmarkMetrics)
+	b.ReportMetric(float64(metrics.legacyStringPayloadBytes), "legacy_string_payload_bytes")
+	b.ReportMetric(float64(metrics.compactStringPayloadBytes), "compact_string_payload_bytes")
+	b.ReportMetric(float64(metrics.docsIndexed), "docs_indexed")
+	b.ReportMetric(float64(metrics.shardsLoaded), "shards_loaded")
+}
+
 type phase10BenchmarkQuery struct {
 	name      string
 	predicate Predicate
@@ -1482,6 +1827,108 @@ func BenchmarkPhase10SerializationCompaction(b *testing.B) {
 				}
 			})
 		})
+	}
+}
+
+func phase11BenchmarkPathsForTier(b *testing.B, tier phase11BenchmarkTier) []string {
+	b.Helper()
+
+	if tier.optInEnvVar == "" {
+		return []string{phase11SmokeFixturePath}
+	}
+	if os.Getenv(tier.optInEnvVar) == "" {
+		b.Skipf("%s not set; %s is opt-in only", tier.optInEnvVar, tier.name)
+	}
+
+	root := strings.TrimSpace(os.Getenv(phase11CorpusRootEnvVar))
+	if root == "" {
+		b.Fatalf(
+			"%s is required when %s is set; expected %s",
+			phase11CorpusRootEnvVar,
+			tier.optInEnvVar,
+			phase11ExternalShardLayout,
+		)
+	}
+
+	paths, err := phase11DiscoverExternalShards(root, tier.shardCount)
+	if err != nil {
+		b.Fatalf("phase11DiscoverExternalShards(%q, %d) error = %v", root, tier.shardCount, err)
+	}
+	return paths
+}
+
+func BenchmarkPhase11RealCorpus(b *testing.B) {
+	for _, tier := range phase11BenchmarkTiers {
+		tier := tier
+		for _, projection := range phase11BenchmarkProjections {
+			projection := projection
+			b.Run(fmt.Sprintf("tier=%s/%s", tier.name, projection.name), func(b *testing.B) {
+				paths := phase11BenchmarkPathsForTier(b, tier)
+				fixture, err := phase11LoadBenchmarkFixture(paths, projection)
+				if err != nil {
+					b.Fatalf("phase11LoadBenchmarkFixture(%s, %s) error = %v", tier.name, projection.name, err)
+				}
+				metrics := phase11BenchmarkMetricsForFixture(fixture)
+
+				compactRaw, err := EncodeWithLevel(fixture.idx, CompressionNone)
+				if err != nil {
+					b.Fatalf("EncodeWithLevel() error = %v", err)
+				}
+				defaultZstd, err := Encode(fixture.idx)
+				if err != nil {
+					b.Fatalf("Encode() error = %v", err)
+				}
+
+				b.Run("Size", func(b *testing.B) {
+					phase11ReportMetrics(b, metrics)
+					for i := 0; i < b.N; i++ {
+					}
+				})
+
+				b.Run("Encode", func(b *testing.B) {
+					phase11ReportMetrics(b, metrics)
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := Encode(fixture.idx); err != nil {
+							b.Fatalf("Encode() error = %v", err)
+						}
+					}
+				})
+
+				b.Run("Decode", func(b *testing.B) {
+					phase11ReportMetrics(b, metrics)
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := Decode(defaultZstd); err != nil {
+							b.Fatalf("Decode() error = %v", err)
+						}
+					}
+				})
+
+				b.Run("QueryAfterDecode", func(b *testing.B) {
+					decoded, err := Decode(compactRaw)
+					if err != nil {
+						b.Fatalf("Decode(compactRaw) error = %v", err)
+					}
+					for _, query := range fixture.queries {
+						query := query
+						b.Run(query.name, func(b *testing.B) {
+							phase11ReportMetrics(b, metrics)
+							b.ReportAllocs()
+							if got := decoded.Evaluate([]Predicate{query.predicate}).Count(); got == 0 {
+								b.Fatalf("query %s returned 0 matches", query.name)
+							}
+							b.ResetTimer()
+							for i := 0; i < b.N; i++ {
+								_ = decoded.Evaluate([]Predicate{query.predicate})
+							}
+						})
+					}
+				})
+			})
+		}
 	}
 }
 
