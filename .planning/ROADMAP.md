@@ -16,6 +16,7 @@
 - [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
 - [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
 - [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
+- [ ] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work
 
 ## Phase Details
 
@@ -79,10 +80,24 @@ Plans:
   4. Size benchmarks show a clear encoded-size reduction on representative fixtures without query regressions
 **Plans:** 3/3 plans complete
 
+### Phase 11: Real-Corpus Prefix Compression Benchmarking
+**Goal**: Validate Phase 10's real-world payoff on representative external corpora without expanding the serialization-change scope again
+**Depends on**: Phase 10
+**Requirements**: TBD
+**Success Criteria** (what must be TRUE):
+  1. Benchmark coverage includes at least one realistic external log-style corpus large enough to stress repeated paths and repeated string terms
+  2. The benchmark plan defines practical dataset scales such as smoke, meaningful subset, and larger corpus runs instead of relying only on tiny synthetic fixtures
+  3. Results report both raw serialized string-section deltas and final encoded artifact size on those corpora
+  4. The final write-up makes it explicit where prefix compaction helps, where it is flat, and whether further format work is justified
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 11 to break down)
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
+Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11`
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -91,6 +106,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 | 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
 | 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
+| 11. Real-Corpus Prefix Compression Benchmarking | 0/0 | Not started | - |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
