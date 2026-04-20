@@ -1,5 +1,6 @@
 # Phase 11 Smoke Fixture
 
+Fixture path: `testdata/phase11/github_archive_smoke.jsonl`
 Dataset: common-pile/github_archive
 Dataset revision: 93d90fbdbc8f06c1fab72e74d5270dc897e1a090
 Fixture origin: synthesized-from-shape

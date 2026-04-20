@@ -589,11 +589,13 @@ go test -bench=. -benchmem -benchtime=1s
 
 ### Phase 11 Real-Corpus Workflow
 
-The default Phase 11 path stays smoke-only:
+The default Phase 11 path stays smoke-only and uses the checked-in fixture at `testdata/phase11/github_archive_smoke.jsonl`:
 
 ```bash
 go test ./... -run '^$' -bench 'BenchmarkPhase11RealCorpus/tier=smoke' -benchtime=1x -count=1 -benchmem
 ```
+
+`-benchtime=1x -count=1` is load-bearing here because Phase 11 reports metrics for a finite pre-materialized corpus; rerunning calibration loops would only repeat the same fixture work and distort the intended one-pass numbers.
 
 Opt-in external tiers use the pinned `common-pile/github_archive` snapshot root and the exact env vars `GIN_PHASE11_GITHUB_ARCHIVE_ROOT`, `GIN_PHASE11_ENABLE_SUBSET`, and `GIN_PHASE11_ENABLE_LARGE`.
 
