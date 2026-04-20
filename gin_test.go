@@ -2,9 +2,11 @@ package gin
 
 import (
 	"bytes"
+	"encoding/binary"
 	stderrors "errors"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"reflect"
 	"strings"
@@ -270,6 +272,105 @@ func TestNewBuilderAllowsLegacyConfigLiteralWhenAdaptiveDisabled(t *testing.T) {
 
 	if _, err := NewBuilder(config, 2); err != nil {
 		t.Fatalf("NewBuilder() error = %v, want legacy struct literal to remain valid", err)
+	}
+}
+
+func TestGINConfigValidateRejectsPrefixBlockSizeOverflow(t *testing.T) {
+	// baseValidConfig returns a minimal config literal that passes validate().
+	// PrefixBlockSize is left as the zero value (use-default sentinel) so each
+	// sub-test can set exactly the value under test.
+	baseValidConfig := func() GINConfig {
+		return GINConfig{
+			BloomFilterSize:   1,
+			BloomFilterHashes: 1,
+			HLLPrecision:      12,
+		}
+	}
+
+	t.Run("default_accepted", func(t *testing.T) {
+		if err := DefaultConfig().validate(); err != nil {
+			t.Fatalf("DefaultConfig().validate() error = %v, want nil", err)
+		}
+	})
+
+	t.Run("zero_accepted", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = 0
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("validate(PrefixBlockSize=0) error = %v, want nil (use-default sentinel)", err)
+		}
+	})
+
+	t.Run("negative_rejected", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = -1
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("validate(PrefixBlockSize=-1) error = nil, want negative rejection")
+		}
+		if !strings.Contains(err.Error(), "prefix block size") {
+			t.Fatalf("validate error = %v, want 'prefix block size' context", err)
+		}
+	})
+
+	t.Run("overflow_rejected", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = math.MaxUint16 + 1
+		err := cfg.validate()
+		if err == nil {
+			t.Fatal("validate(PrefixBlockSize=MaxUint16+1) error = nil, want overflow rejection")
+		}
+		if !strings.Contains(err.Error(), "prefix block size") {
+			t.Fatalf("validate error = %v, want 'prefix block size' context", err)
+		}
+	})
+
+	t.Run("maxuint16_accepted", func(t *testing.T) {
+		cfg := baseValidConfig()
+		cfg.PrefixBlockSize = math.MaxUint16
+		if err := cfg.validate(); err != nil {
+			t.Fatalf("validate(PrefixBlockSize=MaxUint16) error = %v, want nil", err)
+		}
+	})
+}
+
+func TestWithPrefixBlockSize(t *testing.T) {
+	cases := []struct {
+		name           string
+		input          int
+		wantErr        bool
+		wantErrContain string
+		wantValue      int
+	}{
+		{name: "zero_sentinel", input: 0, wantErr: false, wantValue: 0},
+		{name: "valid_small", input: 16, wantErr: false, wantValue: 16},
+		{name: "valid_maxuint16", input: math.MaxUint16, wantErr: false, wantValue: math.MaxUint16},
+		{name: "negative_rejected", input: -1, wantErr: true, wantErrContain: "non-negative"},
+		{name: "overflow_rejected", input: math.MaxUint16 + 1, wantErr: true, wantErrContain: "65535"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &GINConfig{}
+			err := WithPrefixBlockSize(tc.input)(cfg)
+
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("WithPrefixBlockSize(%d) error = nil, want error", tc.input)
+				}
+				if tc.wantErrContain != "" && !strings.Contains(err.Error(), tc.wantErrContain) {
+					t.Fatalf("WithPrefixBlockSize(%d) error = %v, want containing %q", tc.input, err, tc.wantErrContain)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("WithPrefixBlockSize(%d) error = %v, want nil", tc.input, err)
+			}
+			if cfg.PrefixBlockSize != tc.wantValue {
+				t.Fatalf("cfg.PrefixBlockSize = %d, want %d", cfg.PrefixBlockSize, tc.wantValue)
+			}
+		})
 	}
 }
 
@@ -1122,6 +1223,313 @@ func TestSerializeRoundTripWithArrays(t *testing.T) {
 	result = decoded.Evaluate([]Predicate{EQ("$.name", "alice")})
 	if !result.IsSet(0) || result.IsSet(1) {
 		t.Errorf("flat field query on decoded index failed: got %v", result.ToSlice())
+	}
+}
+
+func assertPathEntryRoundTrip(t *testing.T, got, want PathEntry) {
+	t.Helper()
+
+	if got.PathID != want.PathID {
+		t.Fatalf("PathID = %d, want %d", got.PathID, want.PathID)
+	}
+	if got.PathName != want.PathName {
+		t.Fatalf("PathName = %q, want %q", got.PathName, want.PathName)
+	}
+	if got.ObservedTypes != want.ObservedTypes {
+		t.Fatalf("ObservedTypes = %d, want %d", got.ObservedTypes, want.ObservedTypes)
+	}
+	if got.Cardinality != want.Cardinality {
+		t.Fatalf("Cardinality = %d, want %d", got.Cardinality, want.Cardinality)
+	}
+	if got.Mode != want.Mode {
+		t.Fatalf("Mode = %v, want %v", got.Mode, want.Mode)
+	}
+	if got.Flags != want.Flags {
+		t.Fatalf("Flags = %d, want %d", got.Flags, want.Flags)
+	}
+}
+
+func assertRGSetRoundTrip(t *testing.T, got, want *RGSet) {
+	t.Helper()
+
+	if got == nil || want == nil {
+		t.Fatalf("RGSet nil mismatch: got=%v want=%v", got, want)
+	}
+	if !reflect.DeepEqual(got.ToSlice(), want.ToSlice()) {
+		t.Fatalf("RGSet = %v, want %v", got.ToSlice(), want.ToSlice())
+	}
+}
+
+func TestPathDirectoryCompactionRoundTrip(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+	if reps := idx.Representations("$.email"); len(reps) == 0 {
+		t.Fatal("expected representation-bearing fixture for $.email")
+	}
+
+	encoded, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	sectionReader := bytes.NewReader(encoded[len(uncompressedMagic):])
+	sectionIdx := NewGINIndex()
+	if err := readHeader(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+
+	pathNames, err := readOrderedStrings(sectionReader, idx.Header.NumPaths)
+	if err != nil {
+		t.Fatalf("readOrderedStrings(path directory) error = %v", err)
+	}
+	if len(pathNames) != len(idx.PathDirectory) {
+		t.Fatalf("len(pathNames) = %d, want %d", len(pathNames), len(idx.PathDirectory))
+	}
+
+	for i, want := range idx.PathDirectory {
+		if pathNames[i] != want.PathName {
+			t.Fatalf("pathNames[%d] = %q, want %q", i, pathNames[i], want.PathName)
+		}
+
+		var got PathEntry
+		if err := binary.Read(sectionReader, binary.LittleEndian, &got.PathID); err != nil {
+			t.Fatalf("binary.Read(pathID[%d]) error = %v", i, err)
+		}
+		if err := binary.Read(sectionReader, binary.LittleEndian, &got.ObservedTypes); err != nil {
+			t.Fatalf("binary.Read(observedTypes[%d]) error = %v", i, err)
+		}
+		if err := binary.Read(sectionReader, binary.LittleEndian, &got.Cardinality); err != nil {
+			t.Fatalf("binary.Read(cardinality[%d]) error = %v", i, err)
+		}
+		if err := binary.Read(sectionReader, binary.LittleEndian, &got.Mode); err != nil {
+			t.Fatalf("binary.Read(mode[%d]) error = %v", i, err)
+		}
+		if err := binary.Read(sectionReader, binary.LittleEndian, &got.Flags); err != nil {
+			t.Fatalf("binary.Read(flags[%d]) error = %v", i, err)
+		}
+		got.PathName = pathNames[i]
+
+		assertPathEntryRoundTrip(t, got, want)
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if len(decoded.PathDirectory) != len(idx.PathDirectory) {
+		t.Fatalf("len(decoded.PathDirectory) = %d, want %d", len(decoded.PathDirectory), len(idx.PathDirectory))
+	}
+	for i := range idx.PathDirectory {
+		assertPathEntryRoundTrip(t, decoded.PathDirectory[i], idx.PathDirectory[i])
+	}
+}
+
+func TestStringIndexCompactionRoundTrip(t *testing.T) {
+	idx := buildRepresentationSerializationFixture(t)
+	entry := findPathEntry(idx, "$.email")
+	if entry == nil {
+		t.Fatal("expected $.email path entry")
+	}
+	if idx.StringIndexes[entry.PathID] == nil {
+		t.Fatal("expected classic string index for $.email")
+	}
+
+	encoded, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	sectionReader := bytes.NewReader(encoded[len(uncompressedMagic):])
+	sectionIdx := NewGINIndex()
+	if err := readHeader(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if err := readPathDirectory(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readPathDirectory() error = %v", err)
+	}
+	if _, err := readBloomFilter(sectionReader); err != nil {
+		t.Fatalf("readBloomFilter() error = %v", err)
+	}
+
+	var numPaths uint32
+	if err := binary.Read(sectionReader, binary.LittleEndian, &numPaths); err != nil {
+		t.Fatalf("binary.Read(numStringIndexPaths) error = %v", err)
+	}
+	if numPaths != uint32(len(idx.StringIndexes)) {
+		t.Fatalf("numPaths = %d, want %d", numPaths, len(idx.StringIndexes))
+	}
+
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		var gotPathID uint16
+		if err := binary.Read(sectionReader, binary.LittleEndian, &gotPathID); err != nil {
+			t.Fatalf("binary.Read(pathID=%d) error = %v", pathID, err)
+		}
+		if gotPathID != pathID {
+			t.Fatalf("string index pathID = %d, want %d", gotPathID, pathID)
+		}
+
+		var numTerms uint32
+		if err := binary.Read(sectionReader, binary.LittleEndian, &numTerms); err != nil {
+			t.Fatalf("binary.Read(numTerms for path %d) error = %v", pathID, err)
+		}
+
+		terms, err := readOrderedStrings(sectionReader, numTerms)
+		if err != nil {
+			t.Fatalf("readOrderedStrings(string index path %d) error = %v", pathID, err)
+		}
+
+		want := idx.StringIndexes[pathID]
+		if !reflect.DeepEqual(terms, want.Terms) {
+			t.Fatalf("Terms(path=%d) = %v, want %v", pathID, terms, want.Terms)
+		}
+		for i := range want.Terms {
+			rgSet, err := readRGSet(sectionReader, idx.Header.NumRowGroups)
+			if err != nil {
+				t.Fatalf("readRGSet(path=%d term=%d) error = %v", pathID, i, err)
+			}
+			assertRGSetRoundTrip(t, rgSet, want.RGBitmaps[i])
+		}
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	for _, pathID := range sortedPathIDs(idx.StringIndexes) {
+		got := decoded.StringIndexes[pathID]
+		want := idx.StringIndexes[pathID]
+		if got == nil {
+			t.Fatalf("decoded string index for path %d is nil", pathID)
+		}
+		if !reflect.DeepEqual(got.Terms, want.Terms) {
+			t.Fatalf("decoded terms(path=%d) = %v, want %v", pathID, got.Terms, want.Terms)
+		}
+		if len(got.RGBitmaps) != len(want.RGBitmaps) {
+			t.Fatalf("decoded RGBitmaps len(path=%d) = %d, want %d", pathID, len(got.RGBitmaps), len(want.RGBitmaps))
+		}
+		for i := range want.RGBitmaps {
+			assertRGSetRoundTrip(t, got.RGBitmaps[i], want.RGBitmaps[i])
+		}
+	}
+}
+
+func TestAdaptiveStringIndexCompactionRoundTrip(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 3
+	config.AdaptiveMinRGCoverage = 2
+	config.AdaptivePromotedTermCap = 8
+	config.AdaptiveCoverageCeiling = 0.75
+	config.AdaptiveBucketCount = 16
+
+	idx := buildAdaptiveSerializationFixture(t, config)
+	entry := findPathEntry(idx, "$.field")
+	if entry == nil {
+		t.Fatal("expected $.field path entry")
+	}
+	if entry.Mode != PathModeAdaptiveHybrid {
+		t.Fatalf("Mode = %v, want adaptive hybrid", entry.Mode)
+	}
+	adaptive := idx.AdaptiveStringIndexes[entry.PathID]
+	if adaptive == nil {
+		t.Fatal("expected adaptive string index for $.field")
+	}
+
+	encoded, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	sectionReader := bytes.NewReader(encoded[len(uncompressedMagic):])
+	sectionIdx := NewGINIndex()
+	if err := readHeader(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if err := readPathDirectory(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readPathDirectory() error = %v", err)
+	}
+	if _, err := readBloomFilter(sectionReader); err != nil {
+		t.Fatalf("readBloomFilter() error = %v", err)
+	}
+	if err := readStringIndexes(sectionReader, sectionIdx); err != nil {
+		t.Fatalf("readStringIndexes() error = %v", err)
+	}
+
+	var numAdaptivePaths uint32
+	if err := binary.Read(sectionReader, binary.LittleEndian, &numAdaptivePaths); err != nil {
+		t.Fatalf("binary.Read(numAdaptivePaths) error = %v", err)
+	}
+	if numAdaptivePaths != uint32(len(idx.AdaptiveStringIndexes)) {
+		t.Fatalf("numAdaptivePaths = %d, want %d", numAdaptivePaths, len(idx.AdaptiveStringIndexes))
+	}
+
+	for _, pathID := range sortedPathIDs(idx.AdaptiveStringIndexes) {
+		var gotPathID uint16
+		if err := binary.Read(sectionReader, binary.LittleEndian, &gotPathID); err != nil {
+			t.Fatalf("binary.Read(adaptive pathID=%d) error = %v", pathID, err)
+		}
+		if gotPathID != pathID {
+			t.Fatalf("adaptive pathID = %d, want %d", gotPathID, pathID)
+		}
+
+		var numTerms uint32
+		if err := binary.Read(sectionReader, binary.LittleEndian, &numTerms); err != nil {
+			t.Fatalf("binary.Read(adaptive numTerms path=%d) error = %v", pathID, err)
+		}
+		var bucketCount uint32
+		if err := binary.Read(sectionReader, binary.LittleEndian, &bucketCount); err != nil {
+			t.Fatalf("binary.Read(adaptive bucketCount path=%d) error = %v", pathID, err)
+		}
+
+		terms, err := readOrderedStrings(sectionReader, numTerms)
+		if err != nil {
+			t.Fatalf("readOrderedStrings(adaptive path %d) error = %v", pathID, err)
+		}
+
+		want := idx.AdaptiveStringIndexes[pathID]
+		if !reflect.DeepEqual(terms, want.Terms) {
+			t.Fatalf("adaptive Terms(path=%d) = %v, want %v", pathID, terms, want.Terms)
+		}
+		if bucketCount != uint32(len(want.BucketRGBitmaps)) {
+			t.Fatalf("bucketCount(path=%d) = %d, want %d", pathID, bucketCount, len(want.BucketRGBitmaps))
+		}
+
+		for i := range want.Terms {
+			rgSet, err := readRGSet(sectionReader, idx.Header.NumRowGroups)
+			if err != nil {
+				t.Fatalf("readRGSet(adaptive path=%d term=%d) error = %v", pathID, i, err)
+			}
+			assertRGSetRoundTrip(t, rgSet, want.RGBitmaps[i])
+		}
+		for bucketID := range want.BucketRGBitmaps {
+			rgSet, err := readRGSet(sectionReader, idx.Header.NumRowGroups)
+			if err != nil {
+				t.Fatalf("readRGSet(adaptive path=%d bucket=%d) error = %v", pathID, bucketID, err)
+			}
+			assertRGSetRoundTrip(t, rgSet, want.BucketRGBitmaps[bucketID])
+		}
+	}
+
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	got := decoded.AdaptiveStringIndexes[entry.PathID]
+	if got == nil {
+		t.Fatal("decoded adaptive string index is nil")
+	}
+	if !reflect.DeepEqual(got.Terms, adaptive.Terms) {
+		t.Fatalf("decoded adaptive Terms = %v, want %v", got.Terms, adaptive.Terms)
+	}
+	if len(got.RGBitmaps) != len(adaptive.RGBitmaps) {
+		t.Fatalf("decoded adaptive RGBitmaps len = %d, want %d", len(got.RGBitmaps), len(adaptive.RGBitmaps))
+	}
+	for i := range adaptive.RGBitmaps {
+		assertRGSetRoundTrip(t, got.RGBitmaps[i], adaptive.RGBitmaps[i])
+	}
+	if len(got.BucketRGBitmaps) != len(adaptive.BucketRGBitmaps) {
+		t.Fatalf("decoded adaptive BucketRGBitmaps len = %d, want %d", len(got.BucketRGBitmaps), len(adaptive.BucketRGBitmaps))
+	}
+	for i := range adaptive.BucketRGBitmaps {
+		assertRGSetRoundTrip(t, got.BucketRGBitmaps[i], adaptive.BucketRGBitmaps[i])
 	}
 }
 

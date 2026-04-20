@@ -2,6 +2,7 @@ package gin
 
 import (
 	"encoding/json"
+	"math"
 	"sort"
 	"strings"
 
@@ -13,6 +14,8 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v9: phase 10 compaction for ordered-string sections, including path
+	//       directory names and string/adaptive term payloads
 	//   v8: explicit companion transformer failure modes in serialized config
 	//       and representation metadata (strict by default, soft-fail opt-in)
 	//   v7: explicit representation metadata for derived alias routing
@@ -23,11 +26,15 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(8)
+	Version = uint16(9)
 )
 
 const (
 	FlagHasDocIDMap uint16 = 1 << iota
+)
+
+const (
+	defaultPrefixBlockSize = 16
 )
 
 const (
@@ -550,6 +557,24 @@ func WithBoolNormalizeTransformer(path, alias string, opts ...TransformerOption)
 	return WithRegisteredTransformer(path, alias, TransformerBoolNormalize, nil, opts...)
 }
 
+// WithPrefixBlockSize configures the block size for front-coded prefix
+// compression used in ordered string sections. Zero keeps the use-default
+// sentinel (the library falls back to defaultPrefixBlockSize). Values above
+// math.MaxUint16 are rejected because the on-wire entry count is encoded as
+// uint16 (see prefix.go:writeCompressedTerms).
+func WithPrefixBlockSize(blockSize int) ConfigOption {
+	return func(c *GINConfig) error {
+		if blockSize < 0 {
+			return errors.New("prefix block size must be non-negative")
+		}
+		if blockSize > math.MaxUint16 {
+			return errors.Errorf("prefix block size must be <= %d", math.MaxUint16)
+		}
+		c.PrefixBlockSize = blockSize
+		return nil
+	}
+}
+
 // WithAdaptiveMinRGCoverage sets the minimum number of row groups a term must
 // cover to be eligible for promotion to the exact adaptive index.
 // Terms below this threshold fall into the bucket layer.
@@ -628,7 +653,7 @@ func DefaultConfig() GINConfig {
 		EnableTrigrams:          true,
 		TrigramMinLength:        3,
 		HLLPrecision:            12,
-		PrefixBlockSize:         16,
+		PrefixBlockSize:         defaultPrefixBlockSize,
 		AdaptiveMinRGCoverage:   2,
 		AdaptivePromotedTermCap: 64,
 		AdaptiveCoverageCeiling: 0.80,
@@ -675,6 +700,17 @@ func (c GINConfig) validate() error {
 	}
 	if c.AdaptiveBucketCount < 0 {
 		return errors.New("adaptive bucket count must be non-negative")
+	}
+
+	// PrefixBlockSize=0 is the use-default sentinel (orderedStringBlockSize
+	// falls back to defaultPrefixBlockSize). Negative values are rejected.
+	// Values above math.MaxUint16 would silently overflow the uint16 entry
+	// count on the wire (see prefix.go:writeCompressedTerms).
+	if c.PrefixBlockSize < 0 {
+		return errors.New("prefix block size must be non-negative")
+	}
+	if c.PrefixBlockSize > math.MaxUint16 {
+		return errors.Errorf("prefix block size must be <= %d", math.MaxUint16)
 	}
 
 	if c.AdaptiveEnabled() {

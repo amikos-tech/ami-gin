@@ -15,7 +15,8 @@
 - [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
 - [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
 - [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
-- [ ] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes
+- [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
+- [ ] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work
 
 ## Phase Details
 
@@ -77,12 +78,26 @@ Plans:
   2. String term encoding no longer stores every term as raw repeated bytes
   3. Format-version handling is explicit and covered by round-trip tests for legacy and compact formats
   4. Size benchmarks show a clear encoded-size reduction on representative fixtures without query regressions
-**Plans:** TBD
+**Plans:** 3/3 plans complete
+
+### Phase 11: Real-Corpus Prefix Compression Benchmarking
+**Goal**: Validate Phase 10's real-world payoff on representative external corpora without expanding the serialization-change scope again
+**Depends on**: Phase 10
+**Requirements**: TBD
+**Success Criteria** (what must be TRUE):
+  1. Benchmark coverage includes at least one realistic external log-style corpus large enough to stress repeated paths and repeated string terms
+  2. The benchmark plan defines practical dataset scales such as smoke, meaningful subset, and larger corpus runs instead of relying only on tiny synthetic fixtures
+  3. Results report both raw serialized string-section deltas and final encoded artifact size on those corpora
+  4. The final write-up makes it explicit where prefix compaction helps, where it is flat, and whether further format work is justified
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd-plan-phase 11 to break down)
 
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
+Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11`
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -90,7 +105,8 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10`
 | 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
 | 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
-| 10. Serialization Compaction | 0/0 | Not started | - |
+| 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
+| 11. Real-Corpus Prefix Compression Benchmarking | 0/0 | Not started | - |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
@@ -117,3 +133,21 @@ Plans:
 **Goal:** Address non-blocking observations from Phase 06 review: (a) add comment on `findPath` bounds check explaining it guards against corruption; (b) reorder or comment `validatePathReferences` to clarify it reads the original directory; (c) make benchmark fixture path count assertion less brittle.
 **Requirements:** None — cosmetic improvements only.
 **Plans:** 0 plans
+
+### Phase 999.4: WithEncodeStrategy Config Option (BACKLOG)
+
+**Goal:** Expose `WithEncodeStrategy(Auto|RawOnly|FrontCodedOnly)` ConfigOption for ordered string sections so callers can declare data shape per-index and skip the dual-encode pass on known-random paths (UUIDs, hashes). Implementation sketch: new `EncodeStrategy` uint8 iota, field on `GINConfig`, option in `gin.go`, threaded through to `writeOrderedStrings` in `serialize.go:440`. Follows RocksDB's `block_restart_interval` precedent — industry-standard "knob, not heuristic" pattern confirmed by 2026-04-20 research sweep across Lucene BlockTree, Tantivy SSTable, PostgreSQL GIN, RocksDB/LevelDB, Roaring Bitmaps, Bleve/Vellum, Badger, and Lasch VLDB 2020. Zero libraries use upfront sampling to choose front-coded vs raw.
+**Requirements:** Blocked on profiling data from Phase 999.5 justifying the API surface. Originates from PR #23 review feedback (non-blocking).
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.5: Profile Encode CPU on Real Workloads (BACKLOG)
+
+**Goal:** Measure encode CPU and allocations for `writeOrderedStrings` on representative workloads (UUID-heavy paths, log-style timestamp paths, mixed JSON corpora) before committing to the Phase 999.4 API surface. Per Roaring Bitmaps' measure-first philosophy and the PR #23 reviewer's own framing — "if encode performance ever shows up in profiling" — we want profiling data to justify whether the dual-encode cost in `serialize.go:456-474` is a real bottleneck or a speculative optimization. Deliverable: a benchmark + flamegraph report showing encode CPU share on realistic fixtures, decision record on whether 999.4 is worth shipping.
+**Requirements:** TBD — define workload fixtures (UUID, timestamp, mixed) during planning.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)

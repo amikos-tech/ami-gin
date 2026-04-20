@@ -3,6 +3,7 @@ package gin
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -20,6 +21,11 @@ type PrefixCompressorOption func(*PrefixCompressor) error
 func NewPrefixCompressor(blockSize int, opts ...PrefixCompressorOption) (*PrefixCompressor, error) {
 	if blockSize < 1 {
 		return nil, errors.New("blockSize must be at least 1")
+	}
+	// writeCompressedTerms encodes block entry counts as uint16, so block
+	// sizes larger than math.MaxUint16 silently overflow on the wire.
+	if blockSize > math.MaxUint16 {
+		return nil, errors.Errorf("blockSize %d exceeds max %d", blockSize, math.MaxUint16)
 	}
 	pc := &PrefixCompressor{blockSize: blockSize}
 	for _, opt := range opts {
@@ -57,13 +63,24 @@ func (pc *PrefixCompressor) Compress(terms []string) []CompressedTermBlock {
 	copy(sorted, terms)
 	sort.Strings(sorted)
 
+	return pc.CompressInOrder(sorted)
+}
+
+// CompressInOrder applies front coding without reordering the caller-provided
+// terms. Use this for serialized sections whose bitmap/layout metadata must
+// stay aligned with the original slice position.
+func (pc *PrefixCompressor) CompressInOrder(terms []string) []CompressedTermBlock {
+	if len(terms) == 0 {
+		return nil
+	}
+
 	var blocks []CompressedTermBlock
-	for i := 0; i < len(sorted); i += pc.blockSize {
+	for i := 0; i < len(terms); i += pc.blockSize {
 		end := i + pc.blockSize
-		if end > len(sorted) {
-			end = len(sorted)
+		if end > len(terms) {
+			end = len(terms)
 		}
-		block := pc.compressBlock(sorted[i:end])
+		block := pc.compressBlock(terms[i:end])
 		blocks = append(blocks, block)
 	}
 
@@ -91,6 +108,14 @@ func (pc *PrefixCompressor) compressBlock(terms []string) CompressedTermBlock {
 }
 
 func (pc *PrefixCompressor) Decompress(blocks []CompressedTermBlock) []string {
+	return decompressCompressedTerms(blocks)
+}
+
+// decompressCompressedTerms reconstructs the original term list from a
+// sequence of front-coded blocks. It does not depend on the compressor
+// configuration, which lets callers decode without materialising a
+// PrefixCompressor receiver.
+func decompressCompressedTerms(blocks []CompressedTermBlock) []string {
 	var result []string
 
 	for _, block := range blocks {
@@ -124,7 +149,7 @@ func (pc *PrefixCompressor) BlockSize() int {
 	return pc.blockSize
 }
 
-func WriteCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
+func writeCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(blocks))); err != nil {
 		return err
 	}
@@ -159,49 +184,6 @@ func WriteCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
 	return nil
 }
 
-func ReadCompressedTerms(r io.Reader) ([]CompressedTermBlock, error) {
-	var numBlocks uint32
-	if err := binary.Read(r, binary.LittleEndian, &numBlocks); err != nil {
-		return nil, err
-	}
-
-	blocks := make([]CompressedTermBlock, numBlocks)
-	for i := uint32(0); i < numBlocks; i++ {
-		var firstLen uint16
-		if err := binary.Read(r, binary.LittleEndian, &firstLen); err != nil {
-			return nil, err
-		}
-		firstBytes := make([]byte, firstLen)
-		if _, err := io.ReadFull(r, firstBytes); err != nil {
-			return nil, err
-		}
-		blocks[i].FirstTerm = string(firstBytes)
-
-		var numEntries uint16
-		if err := binary.Read(r, binary.LittleEndian, &numEntries); err != nil {
-			return nil, err
-		}
-		blocks[i].Entries = make([]PrefixEntry, numEntries)
-
-		for j := uint16(0); j < numEntries; j++ {
-			if err := binary.Read(r, binary.LittleEndian, &blocks[i].Entries[j].PrefixLen); err != nil {
-				return nil, err
-			}
-			var suffixLen uint16
-			if err := binary.Read(r, binary.LittleEndian, &suffixLen); err != nil {
-				return nil, err
-			}
-			suffixBytes := make([]byte, suffixLen)
-			if _, err := io.ReadFull(r, suffixBytes); err != nil {
-				return nil, err
-			}
-			blocks[i].Entries[j].Suffix = string(suffixBytes)
-		}
-	}
-
-	return blocks, nil
-}
-
 // CompressionRatio returns the compression ratio for a set of terms.
 // Returns (compressed size, original size, ratio).
 func CompressionStats(terms []string) (compressed, original int, ratio float64) {
@@ -209,7 +191,7 @@ func CompressionStats(terms []string) (compressed, original int, ratio float64) 
 		original += len(t)
 	}
 
-	pc := MustNewPrefixCompressor(16)
+	pc := MustNewPrefixCompressor(defaultPrefixBlockSize)
 	blocks := pc.Compress(terms)
 
 	for _, block := range blocks {
