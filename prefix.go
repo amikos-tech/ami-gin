@@ -184,49 +184,6 @@ func WriteCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
 	return nil
 }
 
-func readCompressedTerms(r io.Reader) ([]CompressedTermBlock, error) {
-	var numBlocks uint32
-	if err := binary.Read(r, binary.LittleEndian, &numBlocks); err != nil {
-		return nil, err
-	}
-
-	blocks := make([]CompressedTermBlock, numBlocks)
-	for i := uint32(0); i < numBlocks; i++ {
-		var firstLen uint16
-		if err := binary.Read(r, binary.LittleEndian, &firstLen); err != nil {
-			return nil, err
-		}
-		firstBytes := make([]byte, firstLen)
-		if _, err := io.ReadFull(r, firstBytes); err != nil {
-			return nil, err
-		}
-		blocks[i].FirstTerm = string(firstBytes)
-
-		var numEntries uint16
-		if err := binary.Read(r, binary.LittleEndian, &numEntries); err != nil {
-			return nil, err
-		}
-		blocks[i].Entries = make([]PrefixEntry, numEntries)
-
-		for j := uint16(0); j < numEntries; j++ {
-			if err := binary.Read(r, binary.LittleEndian, &blocks[i].Entries[j].PrefixLen); err != nil {
-				return nil, err
-			}
-			var suffixLen uint16
-			if err := binary.Read(r, binary.LittleEndian, &suffixLen); err != nil {
-				return nil, err
-			}
-			suffixBytes := make([]byte, suffixLen)
-			if _, err := io.ReadFull(r, suffixBytes); err != nil {
-				return nil, err
-			}
-			blocks[i].Entries[j].Suffix = string(suffixBytes)
-		}
-	}
-
-	return blocks, nil
-}
-
 // CompressionRatio returns the compression ratio for a set of terms.
 // Returns (compressed size, original size, ratio).
 func CompressionStats(terms []string) (compressed, original int, ratio float64) {
