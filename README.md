@@ -587,6 +587,44 @@ Run benchmarks with:
 go test -bench=. -benchmem -benchtime=1s
 ```
 
+### Phase 11 Real-Corpus Workflow
+
+The default Phase 11 path stays smoke-only:
+
+```bash
+go test ./... -run '^$' -bench 'BenchmarkPhase11RealCorpus/tier=smoke' -benchtime=1x -count=1 -benchmem
+```
+
+Opt-in external tiers use the pinned `common-pile/github_archive` snapshot root and the exact env vars `GIN_PHASE11_GITHUB_ARCHIVE_ROOT`, `GIN_PHASE11_ENABLE_SUBSET`, and `GIN_PHASE11_ENABLE_LARGE`.
+
+Supported acquisition example:
+
+```python
+from huggingface_hub import snapshot_download
+
+snapshot_download(
+    repo_id="common-pile/github_archive",
+    repo_type="dataset",
+    revision="93d90fbdbc8f06c1fab72e74d5270dc897e1a090",
+    allow_patterns="gharchive/v0/documents/*.jsonl.gz",
+)
+```
+
+With the snapshot root exported once:
+
+```bash
+export GIN_PHASE11_GITHUB_ARCHIVE_ROOT=/path/to/common-pile-github-archive
+GIN_PHASE11_ENABLE_SUBSET=1 go test ./... -run '^$' -bench 'BenchmarkPhase11RealCorpus/tier=subset' -benchtime=1x -count=1 -benchmem
+GIN_PHASE11_ENABLE_LARGE=1 go test ./... -run '^$' -bench 'BenchmarkPhase11RealCorpus/tier=large' -benchtime=1x -count=1 -benchmem
+```
+
+Tier notes:
+- Smoke: checked-in 640-row synthesized fixture; default path for lightweight local verification.
+- Subset: opt-in only; first 4 shards from `gharchive/v0/documents/*.jsonl.gz`; moderate local disk, RAM, and runtime cost.
+- Large: opt-in only; first 32 shards from `gharchive/v0/documents/*.jsonl.gz`; materially higher local disk, RAM, and runtime cost.
+
+Pinned provenance and interpretation live in [`11-BENCHMARK-RESULTS.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-BENCHMARK-RESULTS.md) and [`11-REAL-CORPUS-REPORT.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-REAL-CORPUS-REPORT.md).
+
 ### Performance Summary (Apple M3 Max)
 
 | Operation | Latency | Notes |

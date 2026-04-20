@@ -89,12 +89,12 @@ Plans:
   2. The benchmark plan defines practical dataset scales such as smoke, meaningful subset, and larger corpus runs instead of relying only on tiny synthetic fixtures
   3. Results report both raw serialized string-section deltas and final encoded artifact size on those corpora
   4. The final write-up makes it explicit where prefix compaction helps, where it is flat, and whether further format work is justified
-**Plans:** 1/3 plans complete
+**Plans:** 3/3 plans complete
 
 Plans:
 - [x] `11-01-PLAN.md` — Checked-in smoke fixture, deterministic external-tier loading, and env-gated benchmark structure
-- [ ] `11-02-PLAN.md` — Real-corpus size metrics plus checked-in subset/large benchmark results artifact
-- [ ] `11-03-PLAN.md` — Final interpretive report and README workflow for reproducing the opt-in corpus runs
+- [x] `11-02-PLAN.md` — Real-corpus size metrics plus checked-in subset/large benchmark results artifact
+- [x] `11-03-PLAN.md` — Final interpretive report and README workflow for reproducing the opt-in corpus runs
 
 ## Progress
 
@@ -108,7 +108,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11`
 | 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
 | 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
-| 11. Real-Corpus Prefix Compression Benchmarking | 1/3 | In progress | - |
+| 11. Real-Corpus Prefix Compression Benchmarking | 3/3 | Complete | 2026-04-20 |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
