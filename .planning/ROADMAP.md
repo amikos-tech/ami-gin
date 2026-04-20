@@ -133,3 +133,21 @@ Plans:
 **Goal:** Address non-blocking observations from Phase 06 review: (a) add comment on `findPath` bounds check explaining it guards against corruption; (b) reorder or comment `validatePathReferences` to clarify it reads the original directory; (c) make benchmark fixture path count assertion less brittle.
 **Requirements:** None — cosmetic improvements only.
 **Plans:** 0 plans
+
+### Phase 999.4: WithEncodeStrategy Config Option (BACKLOG)
+
+**Goal:** Expose `WithEncodeStrategy(Auto|RawOnly|FrontCodedOnly)` ConfigOption for ordered string sections so callers can declare data shape per-index and skip the dual-encode pass on known-random paths (UUIDs, hashes). Implementation sketch: new `EncodeStrategy` uint8 iota, field on `GINConfig`, option in `gin.go`, threaded through to `writeOrderedStrings` in `serialize.go:440`. Follows RocksDB's `block_restart_interval` precedent — industry-standard "knob, not heuristic" pattern confirmed by 2026-04-20 research sweep across Lucene BlockTree, Tantivy SSTable, PostgreSQL GIN, RocksDB/LevelDB, Roaring Bitmaps, Bleve/Vellum, Badger, and Lasch VLDB 2020. Zero libraries use upfront sampling to choose front-coded vs raw.
+**Requirements:** Blocked on profiling data from Phase 999.5 justifying the API surface. Originates from PR #23 review feedback (non-blocking).
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.5: Profile Encode CPU on Real Workloads (BACKLOG)
+
+**Goal:** Measure encode CPU and allocations for `writeOrderedStrings` on representative workloads (UUID-heavy paths, log-style timestamp paths, mixed JSON corpora) before committing to the Phase 999.4 API surface. Per Roaring Bitmaps' measure-first philosophy and the PR #23 reviewer's own framing — "if encode performance ever shows up in profiling" — we want profiling data to justify whether the dual-encode cost in `serialize.go:456-474` is a real bottleneck or a speculative optimization. Deliverable: a benchmark + flamegraph report showing encode CPU share on realistic fixtures, decision record on whether 999.4 is worth shipping.
+**Requirements:** TBD — define workload fixtures (UUID, timestamp, mixed) during planning.
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
