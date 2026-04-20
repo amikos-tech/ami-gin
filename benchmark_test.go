@@ -17,6 +17,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 )
 
@@ -1252,6 +1253,41 @@ func TestPhase11LoadSmokeFixture(t *testing.T) {
 	}
 }
 
+func TestPhase11ShouldSkipBenchmarkDecodeOnConfiguredLimit(t *testing.T) {
+	t.Parallel()
+
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	uncompressed, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	payload := append([]byte{}, uncompressed[4:]...)
+	if len(payload) >= maxDecodedIndexSize {
+		t.Fatalf("fixture payload length = %d, want less than cap %d", len(payload), maxDecodedIndexSize)
+	}
+	payload = append(payload, bytes.Repeat([]byte{0}, maxDecodedIndexSize-len(payload)+1)...)
+
+	encoder, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest))
+	if err != nil {
+		t.Fatalf("zstd.NewWriter() error = %v", err)
+	}
+	compressed := encoder.EncodeAll(payload, nil)
+	_ = encoder.Close()
+
+	_, err = Decode(append([]byte(compressedMagic), compressed...))
+	if err == nil {
+		t.Fatal("Decode() error = nil, want oversized compressed payload rejection")
+	}
+	if !phase11ShouldSkipBenchmarkDecode(err) {
+		t.Fatalf("phase11ShouldSkipBenchmarkDecode(%v) = false, want true", err)
+	}
+}
+
 const (
 	phase11SmokeFixturePath      = "testdata/phase11/github_archive_smoke.jsonl"
 	phase11CorpusRootEnvVar      = "GIN_PHASE11_GITHUB_ARCHIVE_ROOT"
@@ -1548,6 +1584,10 @@ func phase11ReportMetrics(b *testing.B, metrics phase11BenchmarkMetrics) {
 	b.ReportMetric(float64(metrics.compactStringPayloadBytes), "compact_string_payload_bytes")
 	b.ReportMetric(float64(metrics.docsIndexed), "docs_indexed")
 	b.ReportMetric(float64(metrics.shardsLoaded), "shards_loaded")
+}
+
+func phase11ShouldSkipBenchmarkDecode(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "decompress data: decompressed size exceeds configured limit")
 }
 
 type phase10BenchmarkQuery struct {
@@ -1898,10 +1938,19 @@ func BenchmarkPhase11RealCorpus(b *testing.B) {
 
 				b.Run("Decode", func(b *testing.B) {
 					phase11ReportMetrics(b, metrics)
+					if _, err := Decode(defaultZstd); err != nil {
+						if phase11ShouldSkipBenchmarkDecode(err) {
+							b.Skipf("Decode() skipped: %v", err)
+						}
+						b.Fatalf("Decode() error = %v", err)
+					}
 					b.ReportAllocs()
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
 						if _, err := Decode(defaultZstd); err != nil {
+							if phase11ShouldSkipBenchmarkDecode(err) {
+								b.Skipf("Decode() skipped: %v", err)
+							}
 							b.Fatalf("Decode() error = %v", err)
 						}
 					}
