@@ -625,6 +625,10 @@ Tier notes:
 - Subset: opt-in only; first 4 shards from `gharchive/v0/documents/*.jsonl.gz`; moderate local disk, RAM, and runtime cost.
 - Large: opt-in only; first 32 shards from `gharchive/v0/documents/*.jsonl.gz`; materially higher local disk, RAM, and runtime cost.
 
+Validation contract:
+- Smoke fixture loading validates the full checked-in record shape (`id`, `source`, `created`, `text`, and the four metadata fields) so fixture drift fails fast.
+- Real-corpus benchmarks validate only the fields each projection indexes. `projection=structured` requires `source`, `created`, `metadata.repo`, `metadata.license`, and `metadata.license_type`; `projection=text-heavy` requires `source`, `created`, `text`, and `metadata.url`.
+
 Pinned provenance and interpretation live in [`11-BENCHMARK-RESULTS.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-BENCHMARK-RESULTS.md) and [`11-REAL-CORPUS-REPORT.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-REAL-CORPUS-REPORT.md).
 
 ### Performance Summary (Apple M3 Max)

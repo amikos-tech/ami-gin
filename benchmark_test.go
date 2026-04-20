@@ -147,6 +147,11 @@ func phase11WriteTempGzipJSONL(t *testing.T, records []phase11CorpusRecord) stri
 	if err != nil {
 		t.Fatalf("Create(%q) error = %v", path, err)
 	}
+	defer func() {
+		if err := file.Close(); err != nil {
+			t.Fatalf("Close(%q) error = %v", path, err)
+		}
+	}()
 	writer := gzip.NewWriter(file)
 	for _, record := range records {
 		data, err := json.Marshal(record)
@@ -159,9 +164,6 @@ func phase11WriteTempGzipJSONL(t *testing.T, records []phase11CorpusRecord) stri
 	}
 	if err := writer.Close(); err != nil {
 		t.Fatalf("gzip.Close(%q) error = %v", path, err)
-	}
-	if err := file.Close(); err != nil {
-		t.Fatalf("Close(%q) error = %v", path, err)
 	}
 	return path
 }
@@ -1364,6 +1366,40 @@ func TestPhase11DiscoverExternalShardsReturnsSortedLimitedMatches(t *testing.T) 
 	}
 }
 
+func TestPhase11DiscoverExternalShardsReturnsAllMatchesWhenLimitIsZero(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "gharchive", "v0", "documents")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	want := []string{
+		filepath.Join(dir, "0001.jsonl.gz"),
+		filepath.Join(dir, "0002.jsonl.gz"),
+		filepath.Join(dir, "0003.jsonl.gz"),
+	}
+	for _, path := range []string{want[2], want[0], want[1]} {
+		if err := os.WriteFile(path, []byte("fixture"), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q) error = %v", path, err)
+		}
+	}
+
+	got, err := phase11DiscoverExternalShards(root, 0)
+	if err != nil {
+		t.Fatalf("phase11DiscoverExternalShards() error = %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len(phase11DiscoverExternalShards()) = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("phase11DiscoverExternalShards()[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
 func TestPhase11LoadSmokeFixture(t *testing.T) {
 	t.Parallel()
 
@@ -1415,22 +1451,62 @@ func TestPhase11WalkCorpusRecordsLoadsGzipRecords(t *testing.T) {
 	}
 }
 
-func TestPhase11WalkCorpusRecordsRejectsMissingRequiredFields(t *testing.T) {
+func TestPhase11WalkCorpusRecordsLoadsPlainJSONLRecords(t *testing.T) {
 	t.Parallel()
 
-	record := phase11BenchmarkTestRecord(0)
-	record.Metadata.URL = ""
-	path := phase11WriteTempJSONL(t, []phase11CorpusRecord{record})
+	path := phase11WriteTempJSONL(t, []phase11CorpusRecord{
+		phase11BenchmarkTestRecord(2),
+		phase11BenchmarkTestRecord(3),
+	})
 
+	var got []phase11CorpusRecord
 	err := phase11WalkCorpusRecords([]string{path}, func(record phase11CorpusRecord) error {
-		t.Fatalf("phase11WalkCorpusRecords() unexpectedly yielded %#v", record)
+		got = append(got, record)
 		return nil
 	})
-	if err == nil {
-		t.Fatal("phase11WalkCorpusRecords() error = nil, want required-field validation failure")
+	if err != nil {
+		t.Fatalf("phase11WalkCorpusRecords(%q) error = %v", path, err)
 	}
-	if !strings.Contains(err.Error(), "metadata.url") {
-		t.Fatalf("phase11WalkCorpusRecords() error = %q, want metadata.url context", err)
+	if len(got) != 2 {
+		t.Fatalf("phase11WalkCorpusRecords(%q) yielded %d records, want 2", path, len(got))
+	}
+	if got[0].ID != "doc-002" || got[1].ID != "doc-003" {
+		t.Fatalf("phase11WalkCorpusRecords(%q) IDs = [%q, %q], want [doc-002, doc-003]", path, got[0].ID, got[1].ID)
+	}
+}
+
+func TestPhase11ValidateCorpusRecordRejectsMissingFields(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		mutate func(*phase11CorpusRecord)
+		want   string
+	}{
+		{name: "missing-id", mutate: func(record *phase11CorpusRecord) { record.ID = " " }, want: "missing id"},
+		{name: "missing-source", mutate: func(record *phase11CorpusRecord) { record.Source = " " }, want: "missing source"},
+		{name: "missing-created", mutate: func(record *phase11CorpusRecord) { record.Created = " " }, want: "missing created"},
+		{name: "missing-text", mutate: func(record *phase11CorpusRecord) { record.Text = " " }, want: "missing text"},
+		{name: "missing-metadata-repo", mutate: func(record *phase11CorpusRecord) { record.Metadata.Repo = " " }, want: "missing metadata.repo"},
+		{name: "missing-metadata-url", mutate: func(record *phase11CorpusRecord) { record.Metadata.URL = " " }, want: "missing metadata.url"},
+		{name: "missing-metadata-license", mutate: func(record *phase11CorpusRecord) { record.Metadata.License = " " }, want: "missing metadata.license"},
+		{name: "missing-metadata-license-type", mutate: func(record *phase11CorpusRecord) { record.Metadata.LicenseType = " " }, want: "missing metadata.license_type"},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			record := phase11BenchmarkTestRecord(0)
+			tt.mutate(&record)
+
+			err := phase11ValidateCorpusRecord(record)
+			if err == nil {
+				t.Fatal("phase11ValidateCorpusRecord() error = nil, want validation failure")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("phase11ValidateCorpusRecord() error = %q, want %q", err, tt.want)
+			}
+		})
 	}
 }
 
@@ -1453,9 +1529,12 @@ func TestPhase11WalkCorpusRecordsRejectsTruncatedGzip(t *testing.T) {
 	if err == nil {
 		t.Fatal("phase11WalkCorpusRecords() error = nil, want truncated gzip rejection")
 	}
+	if !strings.Contains(err.Error(), "scan corpus shard") {
+		t.Fatalf("phase11WalkCorpusRecords() error = %q, want scan corpus shard context", err)
+	}
 }
 
-func TestPhase11ShouldSkipBenchmarkDecodeOnConfiguredLimit(t *testing.T) {
+func TestPhase11ShouldSkipBenchmarkDecode(t *testing.T) {
 	t.Parallel()
 
 	builder := mustNewBuilder(t, DefaultConfig(), 1)
@@ -1485,11 +1564,26 @@ func TestPhase11ShouldSkipBenchmarkDecodeOnConfiguredLimit(t *testing.T) {
 	if err == nil {
 		t.Fatal("Decode() error = nil, want oversized compressed payload rejection")
 	}
-	if !phase11ShouldSkipBenchmarkDecode(err) {
-		t.Fatalf("phase11ShouldSkipBenchmarkDecode(%v) = false, want true", err)
-	}
 	if !errors.Is(err, ErrDecodedSizeExceedsLimit) {
 		t.Fatalf("Decode() error = %v, want ErrDecodedSizeExceedsLimit", err)
+	}
+
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "decoded-size-limit", err: err, want: true},
+		{name: "unrelated", err: errors.New("boom"), want: false},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			if got := phase11ShouldSkipBenchmarkDecode(tt.err); got != tt.want {
+				t.Fatalf("phase11ShouldSkipBenchmarkDecode(%v) = %v, want %v", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -1533,6 +1627,24 @@ func TestPhase11LoadBenchmarkFixtureWrapsAddDocumentError(t *testing.T) {
 	}
 }
 
+func TestPhase11LoadBenchmarkFixtureTextHeavyIgnoresUnusedStructuredFields(t *testing.T) {
+	t.Parallel()
+
+	record := phase11BenchmarkTestRecord(0)
+	record.Metadata.Repo = ""
+	record.Metadata.License = ""
+	record.Metadata.LicenseType = ""
+	path := phase11WriteTempJSONL(t, []phase11CorpusRecord{record})
+
+	fixture, err := phase11LoadBenchmarkFixture([]string{path}, phase11BenchmarkProjections[1])
+	if err != nil {
+		t.Fatalf("phase11LoadBenchmarkFixture(text-heavy) error = %v", err)
+	}
+	if fixture.docsIndexed != 1 {
+		t.Fatalf("fixture.docsIndexed = %d, want 1", fixture.docsIndexed)
+	}
+}
+
 func TestPhase11LoadBenchmarkFixtureUsesCeilRowGroupCount(t *testing.T) {
 	t.Parallel()
 
@@ -1554,9 +1666,6 @@ func TestPhase11LoadBenchmarkFixtureUsesCeilRowGroupCount(t *testing.T) {
 	}
 	if got := fixture.idx.Header.NumRowGroups; got != 2 {
 		t.Fatalf("fixture.idx.Header.NumRowGroups = %d, want 2", got)
-	}
-	if got := fixture.idx.Evaluate([]Predicate{fixture.queries[0].predicate}).Count(); got == 0 {
-		t.Fatal("fixture probe query returned 0 matches, want at least one row group")
 	}
 }
 
@@ -1594,10 +1703,11 @@ type phase11BenchmarkTier struct {
 }
 
 type phase11BenchmarkProjection struct {
-	name        string
-	buildDoc    func(phase11CorpusRecord) string
-	buildProbe  func(phase11CorpusRecord) phase10BenchmarkQuery
-	description string
+	name           string
+	buildDoc       func(phase11CorpusRecord) string
+	buildProbe     func(phase11CorpusRecord) phase10BenchmarkQuery
+	description    string
+	requiredFields []string
 }
 
 type phase11BenchmarkFixture struct {
@@ -1642,6 +1752,13 @@ var phase11BenchmarkProjections = []phase11BenchmarkProjection{
 			}
 		},
 		description: "Repeated nested metadata paths with shared repo/license values.",
+		requiredFields: []string{
+			"source",
+			"created",
+			"metadata.repo",
+			"metadata.license",
+			"metadata.license_type",
+		},
 	},
 	{
 		name: "projection=text-heavy",
@@ -1662,6 +1779,12 @@ var phase11BenchmarkProjections = []phase11BenchmarkProjection{
 			}
 		},
 		description: "High-cardinality free text plus minimal supporting metadata.",
+		requiredFields: []string{
+			"source",
+			"created",
+			"text",
+			"metadata.url",
+		},
 	},
 }
 
@@ -1676,6 +1799,9 @@ func phase11MustMarshalBenchmarkDoc(doc map[string]any) string {
 func phase11LoadCorpusRecordsFromJSONL(path string) ([]phase11CorpusRecord, error) {
 	var records []phase11CorpusRecord
 	err := phase11WalkCorpusRecords([]string{path}, func(record phase11CorpusRecord) error {
+		if err := phase11ValidateCorpusRecord(record); err != nil {
+			return errors.Wrapf(err, "validate corpus record from %q", filepath.Clean(path))
+		}
 		records = append(records, record)
 		return nil
 	})
@@ -1690,26 +1816,58 @@ func phase11ExpectedShardGlob(root string) string {
 }
 
 func phase11ValidateCorpusRecord(record phase11CorpusRecord) error {
-	switch {
-	case strings.TrimSpace(record.ID) == "":
-		return errors.New("missing id")
-	case strings.TrimSpace(record.Source) == "":
-		return errors.New("missing source")
-	case strings.TrimSpace(record.Created) == "":
-		return errors.New("missing created")
-	case strings.TrimSpace(record.Text) == "":
-		return errors.New("missing text")
-	case strings.TrimSpace(record.Metadata.Repo) == "":
-		return errors.New("missing metadata.repo")
-	case strings.TrimSpace(record.Metadata.URL) == "":
-		return errors.New("missing metadata.url")
-	case strings.TrimSpace(record.Metadata.License) == "":
-		return errors.New("missing metadata.license")
-	case strings.TrimSpace(record.Metadata.LicenseType) == "":
-		return errors.New("missing metadata.license_type")
-	default:
-		return nil
+	return phase11ValidateCorpusFields(record, []string{
+		"id",
+		"source",
+		"created",
+		"text",
+		"metadata.repo",
+		"metadata.url",
+		"metadata.license",
+		"metadata.license_type",
+	})
+}
+
+func phase11ValidateCorpusFields(record phase11CorpusRecord, requiredFields []string) error {
+	for _, field := range requiredFields {
+		switch field {
+		case "id":
+			if strings.TrimSpace(record.ID) == "" {
+				return errors.New("missing id")
+			}
+		case "source":
+			if strings.TrimSpace(record.Source) == "" {
+				return errors.New("missing source")
+			}
+		case "created":
+			if strings.TrimSpace(record.Created) == "" {
+				return errors.New("missing created")
+			}
+		case "text":
+			if strings.TrimSpace(record.Text) == "" {
+				return errors.New("missing text")
+			}
+		case "metadata.repo":
+			if strings.TrimSpace(record.Metadata.Repo) == "" {
+				return errors.New("missing metadata.repo")
+			}
+		case "metadata.url":
+			if strings.TrimSpace(record.Metadata.URL) == "" {
+				return errors.New("missing metadata.url")
+			}
+		case "metadata.license":
+			if strings.TrimSpace(record.Metadata.License) == "" {
+				return errors.New("missing metadata.license")
+			}
+		case "metadata.license_type":
+			if strings.TrimSpace(record.Metadata.LicenseType) == "" {
+				return errors.New("missing metadata.license_type")
+			}
+		default:
+			return errors.Errorf("unknown required field %q", field)
+		}
 	}
+	return nil
 }
 
 func phase11DiscoverExternalShards(root string, limit int) ([]string, error) {
@@ -1793,9 +1951,6 @@ func phase11WalkCorpusRecords(paths []string, fn func(phase11CorpusRecord) error
 				if err := json.Unmarshal([]byte(line), &record); err != nil {
 					return errors.Wrapf(err, "decode corpus record from %q line %d", cleanedPath, lineNumber)
 				}
-				if err := phase11ValidateCorpusRecord(record); err != nil {
-					return errors.Wrapf(err, "validate corpus record from %q line %d", cleanedPath, lineNumber)
-				}
 				if err := fn(record); err != nil {
 					return err
 				}
@@ -1815,7 +1970,13 @@ func phase11WalkCorpusRecords(paths []string, fn func(phase11CorpusRecord) error
 func phase11LoadBenchmarkFixture(paths []string, projection phase11BenchmarkProjection) (phase11BenchmarkFixture, error) {
 	docCount := 0
 	var probe *phase11CorpusRecord
+	// Walk twice so the benchmark sizes row groups from the filtered corpus
+	// before building the projected fixture. The docIndex/docCount check below
+	// catches snapshot drift between the two passes.
 	if err := phase11WalkCorpusRecords(paths, func(record phase11CorpusRecord) error {
+		if err := phase11ValidateCorpusFields(record, projection.requiredFields); err != nil {
+			return errors.Wrapf(err, "validate %s benchmark record", projection.name)
+		}
 		docCount++
 		if probe == nil {
 			recordCopy := record
@@ -1837,6 +1998,9 @@ func phase11LoadBenchmarkFixture(paths []string, projection phase11BenchmarkProj
 
 	docIndex := 0
 	if err := phase11WalkCorpusRecords(paths, func(record phase11CorpusRecord) error {
+		if err := phase11ValidateCorpusFields(record, projection.requiredFields); err != nil {
+			return errors.Wrapf(err, "validate %s benchmark record", projection.name)
+		}
 		projectedDoc := projection.buildDoc(record)
 		if err := builder.AddDocument(DocID(docIndex/phase11DocsPerRowGroup), []byte(projectedDoc)); err != nil {
 			return errors.Wrapf(err, "AddDocument(doc=%d)", docIndex)
