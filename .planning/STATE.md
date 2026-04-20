@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: planning
-stopped_at: Phase 11 context gathered
-last_updated: "2026-04-20T10:29:05.831Z"
-last_activity: "2026-04-20 - Completed quick task 260420-h1a: unexport WriteCompressedTerms (PR #23 review item 2)"
+status: executing
+stopped_at: Phase 11 plan 11-01 completed
+last_updated: "2026-04-20T11:55:10Z"
+last_activity: 2026-04-20 - Completed plan 11-01: smoke corpus and benchmark structure
 progress:
   total_phases: 11
   completed_phases: 5
-  total_plans: 13
-  completed_plans: 13
-  percent: 100
+  total_plans: 16
+  completed_plans: 14
+  percent: 88
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-14)
 ## Current Position
 
 Phase: 11 (real-corpus-prefix-compression-benchmarking)
-Plan: Not started
-Status: Phase 11 added to roadmap; planning pending
-Last activity: 2026-04-20 - Completed quick task 260420-h1a: unexport WriteCompressedTerms (PR #23 review item 2)
+Plan: 11-02 blocked on local external snapshot
+Status: Wave 1 complete; awaiting opt-in external corpus for 11-02
+Last activity: 2026-04-20 - Completed plan 11-01: smoke corpus and benchmark structure
 
-Progress: [████████░░] 83%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -49,7 +49,7 @@ Progress: [████████░░] 83%
 | 08 | 3 | - | - |
 | 09 | 3 | - | - |
 | 10 | 3 | - | - |
-| 11 | 0 | - | - |
+| 11 | 3 | - | - |
 
 ## Accumulated Context
 
@@ -67,14 +67,18 @@ Recent decisions affecting current work:
 ### Roadmap Evolution
 
 - Phase 11 added: Real-Corpus Prefix Compression Benchmarking
+- Phase 11 planned into `11-01`, `11-02`, and `11-03`
+- Completed `11-01`: smoke corpus, provenance note, and env-gated benchmark structure
 
 ### Pending Todos
 
-- Plan Phase `11` around representative external benchmark datasets and bounded corpus sizes
+- Acquire a local `common-pile/github_archive` snapshot matching the pinned revision for `11-02`
+- Capture subset and large Phase 11 benchmark evidence in `11-BENCHMARK-RESULTS.md`
+- Publish the final Phase 11 report and README reproduction guidance
 
 ### Blockers/Concerns
 
-- No active blockers on the completed Phase 10 workstream
+- `GIN_PHASE11_GITHUB_ARCHIVE_ROOT` is not set yet, so `11-02` cannot run the opt-in subset and large tiers
 
 ### Quick Tasks Completed
 
@@ -87,5 +91,7 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 11 context gathered
+Stopped at: Phase 11 plan 11-01 completed
 Resume file: --resume-file
+
+**Planned Phase:** 11 (real-corpus-prefix-compression-benchmarking) — 3 plans — 2026-04-20T11:36:56.964Z
