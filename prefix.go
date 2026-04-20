@@ -22,7 +22,7 @@ func NewPrefixCompressor(blockSize int, opts ...PrefixCompressorOption) (*Prefix
 	if blockSize < 1 {
 		return nil, errors.New("blockSize must be at least 1")
 	}
-	// WriteCompressedTerms encodes block entry counts as uint16, so block
+	// writeCompressedTerms encodes block entry counts as uint16, so block
 	// sizes larger than math.MaxUint16 silently overflow on the wire.
 	if blockSize > math.MaxUint16 {
 		return nil, errors.Errorf("blockSize %d exceeds max %d", blockSize, math.MaxUint16)
@@ -149,7 +149,7 @@ func (pc *PrefixCompressor) BlockSize() int {
 	return pc.blockSize
 }
 
-func WriteCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
+func writeCompressedTerms(w io.Writer, blocks []CompressedTermBlock) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(len(blocks))); err != nil {
 		return err
 	}

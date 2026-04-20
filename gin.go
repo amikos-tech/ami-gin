@@ -561,7 +561,7 @@ func WithBoolNormalizeTransformer(path, alias string, opts ...TransformerOption)
 // compression used in ordered string sections. Zero keeps the use-default
 // sentinel (the library falls back to defaultPrefixBlockSize). Values above
 // math.MaxUint16 are rejected because the on-wire entry count is encoded as
-// uint16 (see prefix.go:WriteCompressedTerms).
+// uint16 (see prefix.go:writeCompressedTerms).
 func WithPrefixBlockSize(blockSize int) ConfigOption {
 	return func(c *GINConfig) error {
 		if blockSize < 0 {
@@ -705,7 +705,7 @@ func (c GINConfig) validate() error {
 	// PrefixBlockSize=0 is the use-default sentinel (orderedStringBlockSize
 	// falls back to defaultPrefixBlockSize). Negative values are rejected.
 	// Values above math.MaxUint16 would silently overflow the uint16 entry
-	// count on the wire (see prefix.go:WriteCompressedTerms).
+	// count on the wire (see prefix.go:writeCompressedTerms).
 	if c.PrefixBlockSize < 0 {
 		return errors.New("prefix block size must be non-negative")
 	}

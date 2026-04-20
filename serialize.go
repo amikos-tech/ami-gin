@@ -521,7 +521,7 @@ func encodeFrontCodedOrderedStrings(values []string, blockSize int) (*bytes.Buff
 	if err := buf.WriteByte(compactStringModeFrontCoded); err != nil {
 		return nil, err
 	}
-	if err := WriteCompressedTerms(&buf, pc.CompressInOrder(values)); err != nil {
+	if err := writeCompressedTerms(&buf, pc.CompressInOrder(values)); err != nil {
 		return nil, err
 	}
 	return &buf, nil
