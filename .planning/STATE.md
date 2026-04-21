@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: "Phase 12 shipped — PR #26"
-stopped_at: Phase 12 execution completed
-last_updated: "2026-04-21T06:43:47.504Z"
-last_activity: 2026-04-21
+milestone: v1.1
+milestone_name: Performance, Observability & Experimentation
+status: defining_requirements
+stopped_at: Milestone v1.1 started — defining requirements
+last_updated: "2026-04-21T07:00:00Z"
+last_activity: 2026-04-21 — Milestone v1.1 started
 progress:
-  total_phases: 12
-  completed_phases: 7
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,14 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 ## Current Position
 
-Phase: 12 (milestone-evidence-reconciliation)
-Plan: 3/3 plans complete; verification passed
-Status: Phase 12 shipped — PR #26
-Last activity: 2026-04-21
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements for v1.1
+Last activity: 2026-04-21 — Milestone v1.1 started
 
-> Note: `completed_phases: 7` counts all phases in this milestone (06-12, including the Phase 12 reconciliation phase). The `v1.0-MILESTONE-AUDIT.md` `phases: 6/6` scopes to the six shipping feature phases (06-11); Phase 12 is a reconciliation phase and is intentionally out of the audit's feature scope.
-
-Progress: [██████████] 100%
+Progress: [          ] 0%
 
 ## Performance Metrics
 

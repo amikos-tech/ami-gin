@@ -8,6 +8,17 @@
 - **Library size:** ~25,500 LOC Go, 12 operators, 14 built-in transformers, Parquet + S3 integrations
 - **Next milestone:** to be defined via `/gsd-new-milestone`
 
+## Current Milestone: v1.1 Performance, Observability & Experimentation
+
+**Goal:** Introduce a SIMD-accelerated JSON ingest path, add observability/logging primitives that surface index internals and hot-path costs, and ship a small CLI that builds an index from a JSONL file for experimentation and teaching.
+
+**Target themes:**
+- **SIMD JSON integration** — evaluate `github.com/amikos-tech/pure-simdjson` as an alternative/opt-in builder parser, preserve v1.0's exact-int semantics, benchmark against the explicit `json.Decoder.UseNumber()` baseline; pull in simdjson example datasets per SEED-001 for realistic benchmark corpus.
+- **Observability & logging** — examine the current builder/query telemetry seams, plan logger/tracer interfaces inspired by `github.com/amikos-tech/go-wand`'s patterns; add structured events for index build, query evaluation, and pruning decisions. Must stay zero-cost when disabled.
+- **Experimentation CLI** — a subcommand (likely `gin-index experiment` or similar) that accepts a JSONL file, builds an index, and emits a human-readable summary (per-path stats, mode, adaptive bucketing, pruning candidates).
+
+**Active seeds:** SEED-001 (simdjson test datasets) — included.
+
 ## What This Is
 
 GIN Index is a Generalized Inverted Index for JSON data, designed for row-group pruning in columnar storage (Parquet). It enables fast predicate evaluation to determine which row groups MAY contain matching documents — filling the gap between a full scan and standing up a database.
@@ -95,4 +106,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-21 after v1.0 milestone close*
+*Last updated: 2026-04-21 — v1.1 milestone started*
