@@ -40,7 +40,12 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
   2. A `parser_parity_test.go` harness runs the existing builder corpus through the legacy direct-call path and through `stdlibParser`, asserting byte-identical encoded index output and identical `Evaluate` results for every representative predicate.
   3. Public surface adds only the `Parser` interface, the narrow `ParserSink` write-side, `WithParser`, and `stdlibParser` — no existing method signature changes, no breaking rename, `go test ./...` and the v1.0 benchmark suite remain green.
   4. `Parser.Name()` is reachable from telemetry attribute sites (consumed by Phase 14) — verified by a unit test that asserts the default builder reports `"stdlib"`.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 13-01-PLAN.md — Parser interface + stdlibParser + sink adapters (additive; no AddDocument wiring yet)
+- [ ] 13-02-PLAN.md — Wire AddDocument through b.parser.Parse + NewBuilder default + delete dead walkers
+- [ ] 13-03-PLAN.md — Parity harness (authored goldens + gopter determinism + 12-operator Evaluate matrix) — merge gate
 
 ### Phase 14: Observability Seams
 **Goal**: Make index build, query evaluation, and serialization observable through a backend-neutral logger and a `Signals`-style OTel container — zero-cost when disabled, no global OTel mutation, one logging convention across the codebase.
@@ -79,7 +84,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 | 10. Serialization Compaction | v1.0 | 3/3 | Complete | 2026-04-17 |
 | 11. Real-Corpus Prefix Compression Benchmarking | v1.0 | 3/3 | Complete | 2026-04-20 |
 | 12. Milestone Evidence Reconciliation | v1.0 | 3/3 | Complete | 2026-04-21 |
-| 13. Parser Seam Extraction | v1.1 | 0/- | Not started | - |
+| 13. Parser Seam Extraction | v1.1 | 0/3 | Not started | - |
 | 14. Observability Seams | v1.1 | 0/- | Not started | - |
 | 15. Experimentation CLI | v1.1 | 0/- | Not started | - |
 
