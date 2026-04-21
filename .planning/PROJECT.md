@@ -1,8 +1,18 @@
-# GIN Index — v1.0 Query & Index Quality
+# GIN Index
+
+## Current State
+
+- **Shipped:** `v1.0` Query & Index Quality (2026-04-21)
+- **Tag:** `v1.0` on `main`
+- **Scope delivered:** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
+- **Library size:** ~25,500 LOC Go, 12 operators, 14 built-in transformers, Parquet + S3 integrations
+- **Next milestone:** to be defined via `/gsd-new-milestone`
 
 ## What This Is
 
-GIN Index has shipped `v0.1.0` and proven the core pruning model: compact sidecar bytes, row-group candidate evaluation, and broad JSON predicate support. This milestone shifts the project from open-source readiness to product quality work on the index itself: better query hot-path performance, lower build-time overhead, stronger numeric fidelity, improved pruning on high-cardinality paths, and smaller serialized artifacts.
+GIN Index is a Generalized Inverted Index for JSON data, designed for row-group pruning in columnar storage (Parquet). It enables fast predicate evaluation to determine which row groups MAY contain matching documents — filling the gap between a full scan and standing up a database.
+
+As of `v1.0`, the library has a canonical hot-path lookup, exact-int numeric semantics, adaptive high-cardinality string pruning, queryable derived representations alongside raw indexing, and compact prefix-encoded serialized layout.
 
 ## Core Value
 
@@ -28,7 +38,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 
 ### Active
 
-- None. The v1.0 milestone requirements are fully validated as of Phase 12 evidence reconciliation.
+- None. The v1.0 milestone requirements are fully validated as of Phase 12 evidence reconciliation. Next-milestone requirements will be defined via `/gsd-new-milestone`.
 
 ### Out of Scope
 
@@ -85,4 +95,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-21 after Phase 12 completion*
+*Last updated: 2026-04-21 after v1.0 milestone close*

@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: milestone_complete
+status: "Phase 12 shipped — PR #26"
 stopped_at: Phase 12 execution completed
-last_updated: "2026-04-21T05:17:21Z"
-last_activity: "2026-04-21 - Shipped Phase 12 — PR #26"
+last_updated: "2026-04-21T06:43:47.504Z"
+last_activity: 2026-04-21
 progress:
   total_phases: 12
   completed_phases: 7
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-21)
 Phase: 12 (milestone-evidence-reconciliation)
 Plan: 3/3 plans complete; verification passed
 Status: Phase 12 shipped — PR #26
-Last activity: 2026-04-21 - Shipped Phase 12 — PR #26
+Last activity: 2026-04-21
 
 > Note: `completed_phases: 7` counts all phases in this milestone (06-12, including the Phase 12 reconciliation phase). The `v1.0-MILESTONE-AUDIT.md` `phases: 6/6` scopes to the six shipping feature phases (06-11); Phase 12 is a reconciliation phase and is intentionally out of the audit's feature scope.
 
@@ -92,6 +92,17 @@ Recent decisions affecting current work:
 | 260417-pvi | Phase-10 review follow-ups: T1 second-entry PrefixLen test, T2 table-driven path-directory truncation test, wrap bare io.EOF leaks in 8 serialize readers, PrefixBlockSize > MaxUint16 guard | 2026-04-17 | 8eb78f5 | [260417-pvi-phase-10-review-follow-ups-t1-subsequent](./quick/260417-pvi-phase-10-review-follow-ups-t1-subsequent/) |
 | 260417-tnm | PR #23 review fixes: unexport readCompressedTerms, drop zero-value PrefixCompressor + redundant count check in ordered-string decode, short-circuit writeOrderedStrings for trivial inputs, add WithPrefixBlockSize ConfigOption, document compact-path corruption byte layout | 2026-04-17 | c28957f | [260417-tnm-address-pr-23-feedback-unexport-readcomp](./quick/260417-tnm-address-pr-23-feedback-unexport-readcomp/) |
 | 260420-h1a | Unexport WriteCompressedTerms to writeCompressedTerms — PR #23 review feedback item 2; removes unused public API surface now that ReadCompressedTerms counterpart is gone | 2026-04-20 | 1e8746d | [260420-h1a-unexport-writecompressedterms-to-writeco](./quick/260420-h1a-unexport-writecompressedterms-to-writeco/) |
+
+## Deferred Items
+
+Items acknowledged and deferred at v1.0 milestone close on 2026-04-21:
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| quick_task | 260417-pvi-phase-10-review-follow-ups-t1-subsequent | missing | Shipped in commit 8eb78f5; audit tool flag is false positive |
+| quick_task | 260417-tnm-address-pr-23-feedback-unexport-readcomp | missing | Shipped in commit c28957f; audit tool flag is false positive |
+| quick_task | 260420-h1a-unexport-writecompressedterms-to-writeco | missing | Shipped in commit 1e8746d; audit tool flag is false positive |
+| seed | SEED-001-simdjson-test-datasets | dormant | Intentional backlog seed — simdjson test datasets for future benchmarking |
 
 ## Session Continuity
 
