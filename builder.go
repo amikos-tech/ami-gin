@@ -596,6 +596,7 @@ func stagedNumericFromValue(value any) (stagedNumericValue, error) {
 
 func (b *GINBuilder) stageNumericObservation(path string, observation stagedNumericValue, state *documentBuildState) error {
 	pathState := state.getOrCreatePath(path)
+	pathState.present = true
 	b.seedNumericSimulation(path, pathState)
 
 	if !pathState.numericSimHasValue {

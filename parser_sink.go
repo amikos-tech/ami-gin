@@ -10,6 +10,14 @@ package gin
 //     Parser MUST pre-normalize before calling.
 //   - path: raw, un-normalized path. The sink impl normalizes internally
 //     (matches today's stageMaterializedValue behavior).
+//
+// Numeric staging: prefer StageJSONNumber when the parser still has the
+// raw source text — the builder's classifier is the single source of
+// truth for numeric type (see BUILD-03 / Phase 07) and raw text preserves
+// exact-int64 semantics outside [-2^53, 2^53]. Use StageNativeNumeric
+// only when the parser has already decoded to a Go numeric inside the
+// float64-exact range (e.g. SIMD / streaming parsers that skip the
+// json.Number intermediate).
 type parserSink interface {
 	BeginDocument(rgID int) *documentBuildState
 	MarkPresent(state *documentBuildState, canonicalPath string)

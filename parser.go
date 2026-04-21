@@ -29,6 +29,13 @@ type Parser interface {
 	// The parser's first sink call MUST be sink.BeginDocument(rgID), and
 	// Parse MUST call BeginDocument exactly once. AddDocument enforces
 	// this with a post-Parse runtime guard.
+	//
+	// Present-marking contract: for object and array roots, Parse MUST
+	// call sink.MarkPresent for the container's canonicalPath before
+	// staging children; otherwise IsNull / IsNotNull queries will return
+	// wrong results for that path. All Stage* sink methods (StageScalar,
+	// StageJSONNumber, StageNativeNumeric, StageMaterialized) implicitly
+	// mark their path present.
 	Parse(jsonDoc []byte, rgID int, sink parserSink) error
 }
 
