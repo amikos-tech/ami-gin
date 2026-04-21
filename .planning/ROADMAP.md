@@ -84,7 +84,7 @@ Plans:
 | 10. Serialization Compaction | v1.0 | 3/3 | Complete | 2026-04-17 |
 | 11. Real-Corpus Prefix Compression Benchmarking | v1.0 | 3/3 | Complete | 2026-04-20 |
 | 12. Milestone Evidence Reconciliation | v1.0 | 3/3 | Complete | 2026-04-21 |
-| 13. Parser Seam Extraction | v1.1 | 0/3 | Not started | - |
+| 13. Parser Seam Extraction | v1.1 | 2/3 | Executing | - |
 | 14. Observability Seams | v1.1 | 0/- | Not started | - |
 | 15. Experimentation CLI | v1.1 | 0/- | Not started | - |
 

@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
 status: executing
-stopped_at: Phase 13 context gathered
-last_updated: "2026-04-21T11:18:30Z"
-last_activity: 2026-04-21 -- Phase 13 plan 13-02 completed
+stopped_at: Phase 13 benchmark review pending
+last_updated: "2026-04-21T11:33:25Z"
+last_activity: 2026-04-21 -- Phase 13 plan 13-03 parity harness landed; benchmark gate needs review
 progress:
   total_phases: 8
   completed_phases: 0
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 13 — parser-seam-extraction (plan 13-03 next)
+**Current focus:** Phase 13 — parser-seam-extraction (plan 13-03 benchmark review)
 
 ## Current Position
 
 Phase: 13 (parser-seam-extraction) — EXECUTING
 Plan: 3 of 3
-Status: Executing Phase 13
-Last activity: 2026-04-21 -- Plan 13-02 complete (`refactor(parser): wire AddDocument through parser seam`)
+Status: Benchmark review pending for Phase 13
+Last activity: 2026-04-21 -- Plan 13-03 parity harness landed (`test(parser): add phase 13 parity harness`)
 
 Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
@@ -85,12 +85,13 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- Continue `/gsd-execute-phase 13` — add the parity harness assertions against the committed authored goldens
+- Review [13-03-BENCH.md](./phases/13-parser-seam-extraction/13-03-BENCH.md) and decide whether to accept the benchmark noise or keep investigating the transformer-heavy explicit-number path before closing Phase 13
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
 
-- No blockers for v1.1 execution. The pure-simdjson blockers (LICENSE, tag, distribution mechanism) are deferred to v1.2 and do not gate Phases 13-15.
+- Phase 13's benchmark artifact is not cleanly green on this machine. The transformer-heavy explicit-number probes fluctuate around and above the `+2%` wall-clock gate even though allocs/op stayed flat and the Plan 03 diff did not change the AddDocument hot path.
+- The pure-simdjson blockers (LICENSE, tag, distribution mechanism) remain deferred to v1.2 and do not gate Phases 13-15.
 
 ### Quick Tasks Completed (v1.0 era — retained for reference)
 
@@ -125,9 +126,9 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 13 context gathered
+Stopped at: Phase 13 benchmark review pending
 Resume file: --resume-file
 
-**Next step:** Continue `/gsd-execute-phase 13` to execute `13-03-PLAN.md` and land the parity harness merge gate.
+**Next step:** Review `13-03-BENCH.md` and decide whether Phase 13 can be accepted with the current noisy benchmark evidence or needs follow-up benchmark work.
 
 **Planned Phase:** 13 (parser-seam-extraction) — 3 plans — 2026-04-21T10:36:01.518Z
