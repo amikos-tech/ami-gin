@@ -1,8 +1,8 @@
 ---
 phase: 13
 slug: parser-seam-extraction
-status: blocked
-threats_open: 1
+status: verified
+threats_open: 0
 asvs_level: 1
 created: 2026-04-21
 ---
@@ -43,7 +43,7 @@ created: 2026-04-21
 | T-13-11 | Tampering | accidental goldens rewrite | mitigate | Closed: [parity_goldens_test.go](../../../parity_goldens_test.go:1) build-tags the writer path, while [parser_parity_test.go](../../../parser_parity_test.go:14) only reads the committed blobs during normal test runs. | closed |
 | T-13-12 | Information Disclosure | committed test fixtures | accept | Accepted: the phase threat model classified the fixtures as contrived and non-sensitive; [parser_parity_test.go](../../../parser_parity_test.go:157) uses synthetic fixture data only, and the committed golden files are encoded index bytes rather than secrets-bearing source payloads. | closed |
 | T-13-13 | Tampering | int64 drift despite parity green | mitigate | Closed: [parser_parity_test.go](../../../parser_parity_test.go:58) continuously verifies the `int64-boundaries` golden, and current-tree `TestNumericIndexPreservesInt64Exactness` passed on 2026-04-21 as defense in depth. | closed |
-| T-13-14 | Denial of Service | performance regression escaping the parity harness | mitigate | Open: the merge-gate benchmark artifact in [13-03-BENCH.md](./13-03-BENCH.md:10) still records `FAIL` on both transformer-heavy focused subbenchmarks, [13-03-BENCH.md](./13-03-BENCH.md:27) leaves the phase in `Needs review`, and [13-parser-seam-extraction-03-SUMMARY.md](./13-parser-seam-extraction-03-SUMMARY.md:75) confirms the phase remains held open on the benchmark gate. Current 2026-04-21 reruns again showed flat allocs/op but did not cleanly clear the wall-clock threshold, so the performance hold remains unresolved. | open |
+| T-13-14 | Denial of Service | performance regression escaping the parity harness | accept | Accepted: the merge-gate benchmark artifact in [13-03-BENCH.md](./13-03-BENCH.md:10) still records `FAIL` on both transformer-heavy focused subbenchmarks, but allocs/op stayed flat and correctness/parity gates remained green. Per explicit user direction on 2026-04-21, this benchmark noise is accepted as residual performance risk rather than treated as unresolved mitigation debt. The benchmark evidence remains preserved for future follow-up. | closed |
 | T-13-15 | Tampering | transformer buffering hook misroute | mitigate | Closed: [parser_stdlib.go](../../../parser_stdlib.go:58) and [parser_stdlib.go](../../../parser_stdlib.go:139) check `ShouldBufferForTransform` before token reads, and the transformer canary fixture passed in [parser_parity_test.go](../../../parser_parity_test.go:58). | closed |
 | T-13-16 | Information Disclosure | gopter shrinker output | accept | Accepted: the generators operate on synthetic `TestDoc` JSON only, and the shrinker output remains local test output rather than product telemetry or user-facing logs, as exercised in [parser_parity_test.go](../../../parser_parity_test.go:69). | closed |
 | T-13-17 | Tampering | gopter determinism property masking encode failure | mitigate | Closed: [parser_parity_test.go](../../../parser_parity_test.go:79) and [parser_parity_test.go](../../../parser_parity_test.go:131) return explicit errors from `encodeDocs` and fail the property on any encode/build error instead of allowing `bytes.Equal(nil, nil)` to mask the failure. | closed |
@@ -61,6 +61,7 @@ created: 2026-04-21
 | R-13-01 | T-13-04 | `stdlibParser` keeps the pre-phase recursive traversal unchanged; this phase was scoped as a behavior-neutral code move, not a recursion-hardening change. | Phase 13 plan threat model | 2026-04-21 |
 | R-13-02 | T-13-12 | The committed fixtures and goldens are synthetic and contain no production or sensitive data. | Phase 13 plan threat model | 2026-04-21 |
 | R-13-03 | T-13-16 | Gopter shrink output is local-only and derived from synthetic generator data, so no sensitive disclosure surface was introduced. | Phase 13 plan threat model | 2026-04-21 |
+| R-13-04 | T-13-14 | Transformer-heavy explicit-number benchmarks remained slightly above the `+2%` wall-clock target on this machine, but allocs/op stayed flat and all correctness/parity gates passed. User explicitly accepted this benchmark noise as residual risk. | User via Codex | 2026-04-21 |
 
 ---
 
@@ -71,8 +72,8 @@ created: 2026-04-21
 - Current-tree targeted re-audit passed on 2026-04-21 with `go test -run 'TestWithParserRejectsNil|TestStdlibParserName|TestBuilderHasParserFields|TestShouldBufferForTransformSignalWhenRegistered|TestBeginDocumentStashesState|TestNewBuilderDefaultsToStdlibParser|TestNewBuilderRejectsEmptyParserName|TestBuilderParserNameReachable|TestWithParserAcceptsCustomParser|TestAddDocumentRoundTripsThroughParser|TestAddDocumentReturnsParserErrorVerbatim|TestAddDocumentDefaultParserErrorStringsPreserved|TestAddDocumentRejectsParserSkippingBeginDocument|TestAddDocumentRejectsBeginDocumentRGIDMismatch|TestParserParity_AuthoredFixtures|TestParserSeam_DeterministicAcrossRuns|TestParserParity_EvaluateMatrix|TestNumericIndexPreservesInt64Exactness' -count=1 -v .`, returning `ok github.com/amikos-tech/ami-gin 1.966s`.
 - Current-tree full-suite re-audit passed on 2026-04-21 with `go test ./... -count=1`, returning `ok github.com/amikos-tech/ami-gin 37.868s` and `ok github.com/amikos-tech/ami-gin/cmd/gin-index 0.593s`.
 - Current-tree lint re-audit passed on 2026-04-21 with `make lint`, returning `golangci-lint run` and `0 issues.`.
-- The committed merge-gate artifact still blocks automatic closeout: [13-03-BENCH.md](./13-03-BENCH.md:12) through [13-03-BENCH.md](./13-03-BENCH.md:16) show the transformer-heavy failures, and [13-parser-seam-extraction-03-SUMMARY.md](./13-parser-seam-extraction-03-SUMMARY.md:77) through [13-parser-seam-extraction-03-SUMMARY.md](./13-parser-seam-extraction-03-SUMMARY.md:79) explicitly leave Phase 13 open pending review.
-- Current-tree benchmark re-audit reran `GOMAXPROCS=1 go test -bench='^BenchmarkAddDocument$|^BenchmarkAddDocumentPhase07/parser=explicit-number/docs=(1000|10000)/shape=(int-only|transformer-heavy)$' -benchmem -count=10 -run=^$ .` and `GOMAXPROCS=1 go test -bench='^BenchmarkAddDocumentPhase07/parser=explicit-number/docs=(1000|10000)/shape=(int-only|transformer-heavy)$' -benchmem -count=10 -run=^$ .` on 2026-04-21. Both reruns preserved flat allocs/op (`734`, `207`, `852`) but did not cleanly clear the wall-clock threshold across the explicit-number benchmark family, so the review hold remains current-tree-valid.
+- The committed merge-gate artifact captures the benchmark risk being accepted here: [13-03-BENCH.md](./13-03-BENCH.md:12) through [13-03-BENCH.md](./13-03-BENCH.md:16) show the transformer-heavy failures, and [13-parser-seam-extraction-03-SUMMARY.md](./13-parser-seam-extraction-03-SUMMARY.md:77) through [13-parser-seam-extraction-03-SUMMARY.md](./13-parser-seam-extraction-03-SUMMARY.md:79) record the original review hold that this security step is now accepting as residual risk.
+- Current-tree benchmark re-audit reran `GOMAXPROCS=1 go test -bench='^BenchmarkAddDocument$|^BenchmarkAddDocumentPhase07/parser=explicit-number/docs=(1000|10000)/shape=(int-only|transformer-heavy)$' -benchmem -count=10 -run=^$ .` and `GOMAXPROCS=1 go test -bench='^BenchmarkAddDocumentPhase07/parser=explicit-number/docs=(1000|10000)/shape=(int-only|transformer-heavy)$' -benchmem -count=10 -run=^$ .` on 2026-04-21. Both reruns preserved flat allocs/op (`734`, `207`, `852`) but did not cleanly clear the wall-clock threshold across the explicit-number benchmark family; the user accepted that remaining drift as residual risk.
 - Phase tracking is still intentionally blocked at the roadmap/state layer: [STATE.md](../../STATE.md:15) records `Phase: 13 (parser-seam-extraction) — EXECUTING`, and [ROADMAP.md](../../ROADMAP.md:47) still leaves `13-03-PLAN.md` unchecked.
 
 ## Security Audit 2026-04-21
@@ -80,8 +81,8 @@ created: 2026-04-21
 | Metric | Count |
 |--------|-------|
 | Threats found | 20 |
-| Closed | 19 |
-| Open | 1 |
+| Closed | 20 |
+| Open | 0 |
 
 ---
 
@@ -90,6 +91,7 @@ created: 2026-04-21
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-04-21 | 20 | 19 | 1 | Codex `gsd-secure-phase` |
+| 2026-04-21 | 20 | 20 | 0 | Codex `gsd-secure-phase` benchmark-risk acceptance |
 
 ---
 
@@ -97,7 +99,7 @@ created: 2026-04-21
 
 - [x] All threats have a disposition (mitigate / accept / transfer)
 - [x] Accepted risks documented in Accepted Risks Log
-- [ ] `threats_open: 0` confirmed
-- [ ] `status: verified` set in frontmatter
+- [x] `threats_open: 0` confirmed
+- [x] `status: verified` set in frontmatter
 
-**Approval:** blocked pending Phase 13 benchmark-risk disposition
+**Approval:** verified 2026-04-21
