@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: "Phase 11 shipped — PR #25"
-stopped_at: Phase 11 plans completed
-last_updated: "2026-04-20T14:19:42.327Z"
-last_activity: "2026-04-20 - Shipped Phase 11 via PR #25"
+status: milestone_complete
+stopped_at: Phase 12 execution completed
+last_updated: "2026-04-21T05:17:21Z"
+last_activity: "2026-04-21 - Shipped Phase 12 — PR #26"
 progress:
-  total_phases: 11
-  completed_phases: 6
-  total_plans: 16
-  completed_plans: 16
+  total_phases: 12
+  completed_phases: 7
+  total_plans: 19
+  completed_plans: 19
   percent: 100
 ---
 
@@ -18,17 +18,19 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-14)
+See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 11 — real-corpus-prefix-compression-benchmarking
+**Current focus:** Milestone v1.0 complete — evidence reconciled
 
 ## Current Position
 
-Phase: 11 (real-corpus-prefix-compression-benchmarking)
+Phase: 12 (milestone-evidence-reconciliation)
 Plan: 3/3 plans complete; verification passed
-Status: Phase 11 shipped — PR #25
-Last activity: 2026-04-20 - Shipped Phase 11 via PR #25
+Status: Phase 12 shipped — PR #26
+Last activity: 2026-04-21 - Shipped Phase 12 — PR #26
+
+> Note: `completed_phases: 7` counts all phases in this milestone (06-12, including the Phase 12 reconciliation phase). The `v1.0-MILESTONE-AUDIT.md` `phases: 6/6` scopes to the six shipping feature phases (06-11); Phase 12 is a reconciliation phase and is intentionally out of the audit's feature scope.
 
 Progress: [██████████] 100%
 
@@ -36,7 +38,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed in this milestone: 13
+- Total plans completed in this milestone: 19
 - Average duration: -
 - Total execution time: -
 
@@ -50,6 +52,7 @@ Progress: [██████████] 100%
 | 09 | 3 | - | - |
 | 10 | 3 | - | - |
 | 11 | 3 | - | - |
+| 12 | 3 | - | - |
 
 ## Accumulated Context
 
@@ -71,6 +74,8 @@ Recent decisions affecting current work:
 - Completed `11-01`: smoke corpus, provenance note, and env-gated benchmark structure
 - Completed `11-02`: pinned snapshot acquisition, benchmark metrics, and raw results artifact
 - Completed `11-03`: final recommendation report and README reproduction guidance
+- Phase 12 added: Milestone Evidence Reconciliation
+- Phase 12 planned into `12-01`, `12-02`, and `12-03`
 
 ### Pending Todos
 
@@ -78,7 +83,7 @@ Recent decisions affecting current work:
 
 ### Blockers/Concerns
 
-- No active blockers on the Phase 11 deliverables
+- No active blockers; the v1.0 milestone audit now passes on reconciled evidence
 
 ### Quick Tasks Completed
 
@@ -91,7 +96,7 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 11 plans completed
+Stopped at: Phase 12 execution completed
 Resume file: --resume-file
 
-**Planned Phase:** 11 (real-corpus-prefix-compression-benchmarking) — 3 plans — 2026-04-20T11:36:56.964Z
+**Completed Phase:** 12 (Milestone Evidence Reconciliation) — 3/3 plans — 2026-04-21T05:17:21Z

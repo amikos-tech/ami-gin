@@ -23,11 +23,12 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 - ✓ Canonical supported JSONPath lookup and constant-time path resolution — validated in Phase 06
 - ✓ Reduce builder ingest cost and preserve numeric intent during parsing/indexing — validated in Phase 07: builder-parsing-numeric-fidelity
 - ✓ Replace all-or-nothing bloom-only fallback with adaptive high-cardinality hybrid indexing — validated in Phase 08: adaptive-high-cardinality-indexing
+- ✓ Support raw-plus-derived index representations instead of transformer replacement only — validated in Phase 09: derived-representations
+- ✓ Compact serialized path and term dictionaries using the existing prefix-compression direction — validated in Phase 10: serialization-compaction
 
 ### Active
 
-- [ ] Support raw-plus-derived index representations instead of transformer replacement only
-- [ ] Compact serialized path and term dictionaries using the existing prefix-compression direction
+- None. The v1.0 milestone requirements are fully validated as of Phase 12 evidence reconciliation.
 
 ### Out of Scope
 
@@ -43,8 +44,12 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 - Phase 06 completed canonical path lookup, decode parity guards, and fixed-width benchmark coverage for EQ, CONTAINS, REGEX, and direct path lookup
 - Phase 07 completed the streaming JSON ingest path and explicit numeric-fidelity handling
 - Phase 08 completed adaptive high-cardinality string indexing with exact hot-term pruning, bounded tail fallback, and benchmark evidence
-- Field transformers currently replace the raw indexed value rather than adding a derived representation alongside it
-- `PrefixCompressor` exists, but path and term serialization still write raw repeated strings
+- Phase 09 completed additive derived representations with explicit alias routing, metadata round-trip, and public example coverage
+- Phase 10 completed serialization compaction for path and term dictionaries with explicit format-version coverage
+- Phase 11 completed real-corpus prefix-compression benchmarking and the final compaction recommendation
+- Phase 12 reconciled missing Phase 07/09 verification artifacts, aligned the requirements ledger, and refreshed the v1.0 milestone audit to a passed state
+- Field transformers now support raw-plus-derived companion representations with explicit alias routing
+- Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
 ## Constraints
 
@@ -80,4 +85,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-15 after Phase 08 completion*
+*Last updated: 2026-04-21 after Phase 12 completion*

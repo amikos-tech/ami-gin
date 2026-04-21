@@ -16,7 +16,8 @@
 - [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
 - [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
 - [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
-- [ ] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work
+- [x] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work (completed 2026-04-20)
+- [x] **Phase 12: Milestone Evidence Reconciliation** - Close the v1.0 audit blockers by reconstructing missing verification artifacts, reconciling requirement status, and clearing milestone-close evidence debt (completed 2026-04-21)
 
 ## Phase Details
 
@@ -96,10 +97,28 @@ Plans:
 - [x] `11-02-PLAN.md` — Real-corpus size metrics plus checked-in subset/large benchmark results artifact
 - [x] `11-03-PLAN.md` — Final interpretive report and README workflow for reproducing the opt-in corpus runs
 
+### Phase 12: Milestone Evidence Reconciliation
+**Goal**: The v1.0 milestone has complete verification artifacts and a reconciled requirements ledger, so milestone close reflects shipped reality instead of stale planning state
+**Depends on**: Phase 11
+**Requirements**: BUILD-01, BUILD-02, BUILD-03, BUILD-04, BUILD-05, DERIVE-01, DERIVE-02, DERIVE-03, DERIVE-04
+**Gap Closure**: Closes the `v1.0-MILESTONE-AUDIT.md` blockers for missing Phase 07/09 verification and stale requirements traceability
+**Success Criteria** (what must be TRUE):
+  1. `07-VERIFICATION.md` exists and covers BUILD-01 through BUILD-05 against the shipped Phase 07 implementation
+  2. `09-VERIFICATION.md` exists and covers DERIVE-01 through DERIVE-04 against the shipped Phase 09 implementation
+  3. `REQUIREMENTS.md` checkboxes and traceability rows match the verified status of PATH, BUILD, HCARD, DERIVE, and SIZE requirements
+  4. Phase 07 validation debt is closed or explicitly accepted with updated milestone audit evidence
+  5. Re-running the milestone audit no longer fails on missing verification artifacts or stale requirement status
+**Plans:** 3/3 plans complete
+
+Plans:
+- [x] `12-01-PLAN.md` — Reconstruct Phase 07 verification evidence and resolve Phase 07 validation debt
+- [x] `12-02-PLAN.md` — Reconstruct Phase 09 verification evidence from the current tree
+- [x] `12-03-PLAN.md` — Reconcile `REQUIREMENTS.md` and refresh `v1.0-MILESTONE-AUDIT.md`
+
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11`
+Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11 → 12`
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
@@ -109,6 +128,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11`
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
 | 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
 | 11. Real-Corpus Prefix Compression Benchmarking | 3/3 | Complete | 2026-04-20 |
+| 12. Milestone Evidence Reconciliation | 3/3 | Complete    | 2026-04-21 |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
