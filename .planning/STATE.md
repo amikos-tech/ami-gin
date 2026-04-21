@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: Roadmap approved; awaiting `/gsd-plan-phase 13`
+status: executing
 stopped_at: Phase 13 context gathered
-last_updated: "2026-04-21T08:33:15.222Z"
-last_activity: 2026-04-21 — v1.1 roadmap created
+last_updated: "2026-04-21T10:49:11Z"
+last_activity: 2026-04-21 -- Phase 13 plan 13-01 completed
 progress:
   total_phases: 8
   completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
+  total_plans: 3
+  completed_plans: 1
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.1 Performance, Observability & Experimentation — parser seam, observability primitives, experimentation CLI
+**Current focus:** Phase 13 — parser-seam-extraction (plan 13-02 next)
 
 ## Current Position
 
-Phase: 13 (parser-seam-extraction) — Not started
-Plan: —
-Status: Roadmap approved; awaiting `/gsd-plan-phase 13`
-Last activity: 2026-04-21 — v1.1 roadmap created
+Phase: 13 (parser-seam-extraction) — EXECUTING
+Plan: 2 of 3
+Status: Executing Phase 13
+Last activity: 2026-04-21 -- Plan 13-01 complete (`refactor(parser): add parser seam surface`)
 
 Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
@@ -85,7 +85,7 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- `/gsd-plan-phase 13` — plan the parser seam phase
+- Continue `/gsd-execute-phase 13` — wire `AddDocument` through `b.parser.Parse`, cache `parserName`, and capture parity goldens
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
@@ -128,4 +128,6 @@ Last session: --stopped-at
 Stopped at: Phase 13 context gathered
 Resume file: --resume-file
 
-**Next step:** `/gsd-plan-phase 13` to decompose Phase 13 (Parser Seam Extraction) into executable plans.
+**Next step:** Continue `/gsd-execute-phase 13` to execute `13-02-PLAN.md` and wire the parser seam onto `AddDocument`.
+
+**Planned Phase:** 13 (parser-seam-extraction) — 3 plans — 2026-04-21T10:36:01.518Z
