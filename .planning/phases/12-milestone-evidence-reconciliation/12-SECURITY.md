@@ -61,6 +61,9 @@ No accepted risks.
 - Phase 07 current-tree proof is explicit and reproducible: [07-VALIDATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/07-builder-parsing-numeric-fidelity/07-VALIDATION.md:74) reran the targeted regression command, [07-VALIDATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/07-builder-parsing-numeric-fidelity/07-VALIDATION.md:75) reran the benchmark smoke harness, and [07-VALIDATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/07-builder-parsing-numeric-fidelity/07-VALIDATION.md:77) reran the full suite.
 - Phase 09 docs/example proof is explicit and reproducible: [09-VERIFICATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/09-derived-representations/09-VERIFICATION.md:49) reran the alias-routing and metadata cluster, [09-VERIFICATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/09-derived-representations/09-VERIFICATION.md:52) reran the date/time example, and [09-VERIFICATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/09-derived-representations/09-VERIFICATION.md:55) plus [09-VERIFICATION.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/09-derived-representations/09-VERIFICATION.md:56) capture representative stdout.
 - The final milestone pass is backed by rerun commands and reconciled traceability: [REQUIREMENTS.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/REQUIREMENTS.md:78) shows 20 checked and mapped requirements, and [v1.0-MILESTONE-AUDIT.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/v1.0-MILESTONE-AUDIT.md:50) through [v1.0-MILESTONE-AUDIT.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/v1.0-MILESTONE-AUDIT.md:52) record the current-tree audit reruns.
+- Current-tree security re-audit reran `go test ./... -count=1` on 2026-04-21 and it passed with `ok github.com/amikos-tech/ami-gin 38.418s` and `ok github.com/amikos-tech/ami-gin/cmd/gin-index 1.099s`.
+- Current-tree security re-audit reran `go run ./examples/transformers/main.go` on 2026-04-21 and observed `Row groups: [3 4] (expected: [3, 4] - September and December)`, confirming the public alias-aware date example still matches the stored Phase 09 evidence.
+- Current-tree security re-audit reran `go run ./examples/transformers-advanced/main.go` on 2026-04-21 and observed `Row groups: [0 2] (expected: [0, 2] - connection errors)`, confirming the advanced alias-aware example still matches the stored Phase 09 evidence.
 
 ## Security Audit 2026-04-21
 
@@ -77,6 +80,7 @@ No accepted risks.
 | Audit Date | Threats Total | Closed | Open | Run By |
 |------------|---------------|--------|------|--------|
 | 2026-04-21 | 8 | 8 | 0 | Codex `gsd-secure-phase` |
+| 2026-04-21 | 8 | 8 | 0 | Codex `gsd-secure-phase` current-tree re-audit |
 
 ---
 
