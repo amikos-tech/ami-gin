@@ -17,7 +17,7 @@
 - [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
 - [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
 - [x] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work (completed 2026-04-20)
-- [ ] **Phase 12: Milestone Evidence Reconciliation** - Close the v1.0 audit blockers by reconstructing missing verification artifacts, reconciling requirement status, and clearing milestone-close evidence debt
+- [x] **Phase 12: Milestone Evidence Reconciliation** - Close the v1.0 audit blockers by reconstructing missing verification artifacts, reconciling requirement status, and clearing milestone-close evidence debt (completed 2026-04-21)
 
 ## Phase Details
 
@@ -108,7 +108,12 @@ Plans:
   3. `REQUIREMENTS.md` checkboxes and traceability rows match the verified status of PATH, BUILD, HCARD, DERIVE, and SIZE requirements
   4. Phase 07 validation debt is closed or explicitly accepted with updated milestone audit evidence
   5. Re-running the milestone audit no longer fails on missing verification artifacts or stale requirement status
-**Plans:** 0 plans
+**Plans:** 3/3 plans complete
+
+Plans:
+- [x] `12-01-PLAN.md` — Reconstruct Phase 07 verification evidence and resolve Phase 07 validation debt
+- [x] `12-02-PLAN.md` — Reconstruct Phase 09 verification evidence from the current tree
+- [x] `12-03-PLAN.md` — Reconcile `REQUIREMENTS.md` and refresh `v1.0-MILESTONE-AUDIT.md`
 
 ## Progress
 
@@ -123,7 +128,7 @@ Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11 → 12`
 | 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
 | 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
 | 11. Real-Corpus Prefix Compression Benchmarking | 3/3 | Complete | 2026-04-20 |
-| 12. Milestone Evidence Reconciliation | 0/0 | Not started | - |
+| 12. Milestone Evidence Reconciliation | 3/3 | Complete    | 2026-04-21 |
 
 ---
 *Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
