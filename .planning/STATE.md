@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
 status: roadmap_ready
-stopped_at: v1.1 roadmap created — Phase 13 ready for planning
+stopped_at: v1.1 roadmap shipped via PR #27; Phase 13 ready for planning after merge
 last_updated: "2026-04-21T10:30:00Z"
 last_activity: 2026-04-21 — v1.1 roadmap created (phases 13-15, 17 requirements mapped)
 progress:
