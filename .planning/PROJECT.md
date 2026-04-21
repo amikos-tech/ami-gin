@@ -5,8 +5,8 @@
 - **Shipped:** `v1.0` Query & Index Quality (2026-04-21)
 - **Tag:** `v1.0` on `main`
 - **Scope delivered:** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
-- **Library size:** ~25,500 LOC Go, 12 operators, 14 built-in transformers, Parquet + S3 integrations
-- **Next milestone:** to be defined via `/gsd-new-milestone`
+- **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
+- **Next milestone:** v1.1 Performance, Observability & Experimentation — defined (see below)
 
 ## Current Milestone: v1.1 Performance, Observability & Experimentation
 
@@ -51,7 +51,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 
 ### Active
 
-- None. The v1.0 milestone requirements are fully validated as of Phase 12 evidence reconciliation. Next-milestone requirements will be defined via `/gsd-new-milestone`.
+- **v1.1 — 17 requirements in progress.** See `.planning/REQUIREMENTS.md` for the full list: PARSER-01 (parser seam), OBS-01..08 (observability), CLI-01..08 (experimentation CLI). All mapped to phases 13-15 in `.planning/ROADMAP.md`.
 
 ### Out of Scope
 

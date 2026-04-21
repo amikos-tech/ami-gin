@@ -67,7 +67,7 @@
 | Milestone | Go LOC | Operators | Transformers | Wire version | Test files |
 |-----------|--------|-----------|--------------|--------------|-----------|
 | v0.1.0 | ~12,000 | 12 | 5 | v8 | ~8 |
-| v1.0 | ~25,500 | 12 | 14 | v9 | ~15 |
+| v1.0 | ~25,500 | 12 | 13 + 3 helpers | v9 | ~15 |
 
 ### Top Lessons (Verified Across Milestones)
 

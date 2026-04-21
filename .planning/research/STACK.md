@@ -311,7 +311,7 @@ This preserves v1.0's pure-Go default posture while enabling the performance pat
 - OpenTelemetry Go API: `go.opentelemetry.io/otel` v1.43.0 — version confirmed from go-wand's pinned deps (HIGH confidence — go-wand is a production library with the pattern actively used)
 - `ebitengine/purego` v0.10.0 — pinned as direct dep of pure-simdjson
 - simdjson example datasets: `https://github.com/simdjson/simdjson/tree/master/jsonexamples` (per SEED-001)
-- v1.0 baseline stack: `/Users/tazarov/experiments/amikos/custom-gin/go.mod` (current tree, post Phase 12)
+- v1.0 baseline stack: `go.mod` (current tree, post Phase 12)
 
 ---
 *Stack research for: v1.1 Performance, Observability & Experimentation*

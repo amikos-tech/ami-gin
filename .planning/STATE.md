@@ -80,7 +80,7 @@ Key decisions shaping v1.1:
   - Phase 13: Parser Seam Extraction (PARSER-01)
   - Phase 14: Observability Seams (OBS-01..08)
   - Phase 15: Experimentation CLI (CLI-01..08)
-- DAG: 13 → 14 → 15 (14 depends on 13 for `Parser.Name()` attribute; 15 depends on 13 and 14 for `--parser` and `--log-level` flags)
+- DAG: 13 → {14} → 15. Phase 14 can run in parallel with the tail of Phase 13 once the `Parser` interface merges (per SUMMARY.md). Phase 15 still requires both landed (consumes `--parser` and `--log-level` flags).
 - 100% requirement coverage — no orphans
 
 ### Pending Todos

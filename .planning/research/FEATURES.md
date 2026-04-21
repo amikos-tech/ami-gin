@@ -245,7 +245,7 @@ Theme 2 (OBS)   ─┤    (differentiator, not table stakes)
 - `simdjson-go` Go Package docs ([pkg.go.dev/github.com/minio/simdjson-go](https://pkg.go.dev/github.com/minio/simdjson-go))
 - v1.0 `builder.go:322 parseAndStageDocument` — the integration point for the SIMD parser seam
 - v1.0 `cmd/gin-index/main.go:30-45` — existing subcommand skeleton the `experiment` command extends
-- SEED-001: `/Users/tazarov/experiments/amikos/custom-gin/.planning/seeds/SEED-001-simdjson-test-datasets.md` — benchmark corpus plan
+- SEED-001: `.planning/seeds/SEED-001-simdjson-test-datasets.md` — benchmark corpus plan
 - DuckDB-as-jq perspective ([pgrs.net](https://www.pgrs.net/2024/03/21/duckdb-as-the-new-jq/), [stephan-rayner.github.io](https://stephan-rayner.github.io/posts/jq2duckdb/))
 - fx terminal viewer ([terminal.guide](https://www.terminal.guide/tools/dev-tool/fx/))
 - gron (JSON-to-grep) — referenced in the DuckDB and jq articles above
