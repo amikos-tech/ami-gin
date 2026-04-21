@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: defining_requirements
-stopped_at: Milestone v1.1 started — defining requirements
-last_updated: "2026-04-21T07:00:00Z"
-last_activity: 2026-04-21 — Milestone v1.1 started
+status: roadmap_ready
+stopped_at: v1.1 roadmap created — Phase 13 ready for planning
+last_updated: "2026-04-21T10:30:00Z"
+last_activity: 2026-04-21 — v1.1 roadmap created (phases 13-15, 17 requirements mapped)
 progress:
-  total_phases: 0
+  total_phases: 3
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -21,69 +21,78 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Milestone v1.0 complete — evidence reconciled
+**Current focus:** v1.1 Performance, Observability & Experimentation — parser seam, observability primitives, experimentation CLI
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: 13 (parser-seam-extraction) — Not started
 Plan: —
-Status: Defining requirements for v1.1
-Last activity: 2026-04-21 — Milestone v1.1 started
+Status: Roadmap approved; awaiting `/gsd-plan-phase 13`
+Last activity: 2026-04-21 — v1.1 roadmap created
 
-Progress: [          ] 0%
+Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
 ## Performance Metrics
 
-**Velocity:**
+**Velocity (v1.0, shipped):**
 
-- Total plans completed in this milestone: 19
-- Average duration: -
-- Total execution time: -
+- Total plans completed in v1.0: 19
+- Milestone duration: 2026-04-14 → 2026-04-21
 
-**By Phase:**
+**By Phase (v1.0):**
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 06 | 2 | - | - |
-| 07 | 2 | - | - |
-| 08 | 3 | - | - |
-| 09 | 3 | - | - |
-| 10 | 3 | - | - |
-| 11 | 3 | - | - |
-| 12 | 3 | - | - |
+| Phase | Plans | Milestone |
+|-------|-------|-----------|
+| 06 | 2 | v1.0 |
+| 07 | 2 | v1.0 |
+| 08 | 3 | v1.0 |
+| 09 | 3 | v1.0 |
+| 10 | 3 | v1.0 |
+| 11 | 3 | v1.0 |
+| 12 | 3 | v1.0 |
+
+**v1.1 projection:**
+
+| Phase | Plans | Status |
+|-------|-------|--------|
+| 13 | TBD | Not started |
+| 14 | TBD | Not started |
+| 15 | TBD | Not started |
 
 ## Accumulated Context
 
 ### Decisions
 
 Decisions are logged in `PROJECT.md`.
-Recent decisions affecting current work:
+Key decisions shaping v1.1:
 
-- Continue roadmap numbering from `06` after the completed `v0.1.0` milestone
-- Prioritize low-risk/high-signal wins before structural index changes
-- Make adaptive high-cardinality indexing frequency-driven and configurable
-- Treat derived representations as additive to raw indexing
-- Leave serialization compaction until after the functional layout changes land
+- Parser seam lands as a pure refactor in Phase 13 (zero behavior change, parity harness is the merge gate)
+- SIMD parser implementation deferred to v1.2 — upstream blockers: `pure-simdjson` has no LICENSE file, no version tag, shared-library distribution undecided
+- Observability adopts the `go-wand` `pkg/logging` + `pkg/telemetry` shape (PRs #114/#115) near-verbatim; `Signals` container carries OTel providers, library never mutates global OTel state
+- `adaptiveInvariantLogger *log.Logger` migrates to the new `Logger` interface in the same phase (Phase 14) — no dual-logger convention
+- Context-aware API surface is additive (`EvaluateContext`, `BuildFromParquetContext`); existing methods wrap with `context.Background()` — no breaking change per PROJECT.md "avoid gratuitous API churn" constraint
+- Experimentation CLI charter: JSONL-in, summary-out — no REPL, no TUI, no color auto-detection
 
 ### Roadmap Evolution
 
-- Phase 11 added: Real-Corpus Prefix Compression Benchmarking
-- Phase 11 planned into `11-01`, `11-02`, and `11-03`
-- Completed `11-01`: smoke corpus, provenance note, and env-gated benchmark structure
-- Completed `11-02`: pinned snapshot acquisition, benchmark metrics, and raw results artifact
-- Completed `11-03`: final recommendation report and README reproduction guidance
-- Phase 12 added: Milestone Evidence Reconciliation
-- Phase 12 planned into `12-01`, `12-02`, and `12-03`
+- v1.1 milestone opened with 17 requirements (PARSER-01, OBS-01..08, CLI-01..08)
+- Phase split derived from research/SUMMARY.md "Proposed Phase Split":
+  - Phase 13: Parser Seam Extraction (PARSER-01)
+  - Phase 14: Observability Seams (OBS-01..08)
+  - Phase 15: Experimentation CLI (CLI-01..08)
+- DAG: 13 → 14 → 15 (14 depends on 13 for `Parser.Name()` attribute; 15 depends on 13 and 14 for `--parser` and `--log-level` flags)
+- 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Run `$gsd-secure-phase 11` if security enforcement is still enabled for this milestone
+- `/gsd-plan-phase 13` — plan the parser seam phase
+- Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
 
-- No active blockers; the v1.0 milestone audit now passes on reconciled evidence
+- No blockers for v1.1 execution. The pure-simdjson blockers (LICENSE, tag, distribution mechanism) are deferred to v1.2 and do not gate Phases 13-15.
 
-### Quick Tasks Completed
+### Quick Tasks Completed (v1.0 era — retained for reference)
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
@@ -93,19 +102,30 @@ Recent decisions affecting current work:
 
 ## Deferred Items
 
-Items acknowledged and deferred at v1.0 milestone close on 2026-04-21:
+Items deferred to v1.2 or later:
 
 | Category | Item | Status | Note |
 |----------|------|--------|------|
-| quick_task | 260417-pvi-phase-10-review-follow-ups-t1-subsequent | missing | Shipped in commit 8eb78f5; audit tool flag is false positive |
-| quick_task | 260417-tnm-address-pr-23-feedback-unexport-readcomp | missing | Shipped in commit c28957f; audit tool flag is false positive |
-| quick_task | 260420-h1a-unexport-writecompressedterms-to-writeco | missing | Shipped in commit 1e8746d; audit tool flag is false positive |
-| seed | SEED-001-simdjson-test-datasets | dormant | Intentional backlog seed — simdjson test datasets for future benchmarking |
+| requirement | pure-simdjson parser implementation | v1.2 | Blocked on upstream LICENSE file, version tag, shared-library distribution decision |
+| requirement | SIMD parser benchmarks vs stdlib | v1.2 | Depends on SIMD implementation |
+| requirement | CI matrix for `-tags simdjson` builds | v1.2 | Depends on SIMD implementation |
+| seed | SEED-001-simdjson-test-datasets | v1.2 | Activate alongside SIMD parser implementation |
+| requirement | `zap` logger adapter | on-demand | Ship `slog`/`stdlib` only in v1.1; add `zap` on explicit user request |
+| feature | Two-file index diff (CLI) | on-demand | Low value vs. complexity; wait for user signal |
+| feature | Experimentation CLI REPL/TUI | out-of-scope | Charter excludes interactive modes |
+
+Items acknowledged and deferred at v1.0 milestone close (retained for audit):
+
+| Category | Item | Status | Note |
+|----------|------|--------|------|
+| quick_task | 260417-pvi-phase-10-review-follow-ups-t1-subsequent | resolved | Shipped in commit 8eb78f5; audit tool flag was false positive |
+| quick_task | 260417-tnm-address-pr-23-feedback-unexport-readcomp | resolved | Shipped in commit c28957f; audit tool flag was false positive |
+| quick_task | 260420-h1a-unexport-writecompressedterms-to-writeco | resolved | Shipped in commit 1e8746d; audit tool flag was false positive |
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 12 execution completed
-Resume file: --resume-file
+Last session: 2026-04-21 — v1.1 roadmap created
+Stopped at: Phase 13 ready for planning
+Resume file: —
 
-**Completed Phase:** 12 (Milestone Evidence Reconciliation) — 3/3 plans — 2026-04-21T05:17:21Z
+**Next step:** `/gsd-plan-phase 13` to decompose Phase 13 (Parser Seam Extraction) into executable plans.
