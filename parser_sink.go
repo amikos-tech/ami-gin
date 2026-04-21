@@ -12,6 +12,7 @@ package gin
 //     (matches today's stageMaterializedValue behavior).
 type parserSink interface {
 	BeginDocument(rgID int) *documentBuildState
+	MarkPresent(state *documentBuildState, canonicalPath string)
 	StageScalar(state *documentBuildState, canonicalPath string, token any) error
 	StageJSONNumber(state *documentBuildState, canonicalPath, raw string) error
 	StageNativeNumeric(state *documentBuildState, canonicalPath string, v any) error
@@ -24,6 +25,10 @@ func (b *GINBuilder) BeginDocument(rgID int) *documentBuildState {
 	b.currentDocState = s
 	b.beginDocumentCalls++
 	return s
+}
+
+func (b *GINBuilder) MarkPresent(state *documentBuildState, canonicalPath string) {
+	state.getOrCreatePath(canonicalPath).present = true
 }
 
 func (b *GINBuilder) StageScalar(state *documentBuildState, canonicalPath string, token any) error {

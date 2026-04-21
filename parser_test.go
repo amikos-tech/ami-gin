@@ -149,13 +149,45 @@ func TestAddDocumentRoundTripsThroughParser(t *testing.T) {
 	}
 }
 
+func TestAddDocumentResetsBeginDocumentCallCounter(t *testing.T) {
+	b, err := NewBuilder(DefaultConfig(), 2)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	if err := b.AddDocument(DocID(0), []byte(`{"a":1}`)); err != nil {
+		t.Fatalf("first AddDocument: %v", err)
+	}
+	if b.beginDocumentCalls != 0 {
+		t.Fatalf("beginDocumentCalls after first AddDocument = %d, want 0", b.beginDocumentCalls)
+	}
+	if b.currentDocState != nil {
+		t.Fatal("currentDocState should be cleared after first AddDocument")
+	}
+
+	if err := b.AddDocument(DocID(1), []byte(`{"a":2}`)); err != nil {
+		t.Fatalf("second AddDocument: %v", err)
+	}
+	if b.beginDocumentCalls != 0 {
+		t.Fatalf("beginDocumentCalls after second AddDocument = %d, want 0", b.beginDocumentCalls)
+	}
+	if b.currentDocState != nil {
+		t.Fatal("currentDocState should be cleared after second AddDocument")
+	}
+}
+
 type recordingSink struct {
-	events []string
+	events      []string
+	bufferPaths map[string]bool
 }
 
 func (s *recordingSink) BeginDocument(rgID int) *documentBuildState {
 	s.events = append(s.events, fmt.Sprintf("begin:%d", rgID))
 	return newDocumentBuildState(rgID)
+}
+
+func (s *recordingSink) MarkPresent(_ *documentBuildState, canonicalPath string) {
+	s.events = append(s.events, "present:"+canonicalPath)
 }
 
 func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string, _ any) error {
@@ -178,7 +210,9 @@ func (s *recordingSink) StageMaterialized(_ *documentBuildState, path string, _ 
 	return nil
 }
 
-func (s *recordingSink) ShouldBufferForTransform(string) bool { return false }
+func (s *recordingSink) ShouldBufferForTransform(canonicalPath string) bool {
+	return s.bufferPaths[canonicalPath]
+}
 
 func TestStdlibParserBeginsDocumentBeforeStaging(t *testing.T) {
 	sink := &recordingSink{}
@@ -187,9 +221,47 @@ func TestStdlibParserBeginsDocumentBeforeStaging(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	want := []string{"begin:3", "materialized:$.a"}
-	if len(sink.events) < len(want) {
-		t.Fatalf("events = %v, want prefix %v", sink.events, want)
+	want := []string{"begin:3", "present:$", "materialized:$.a"}
+	if len(sink.events) != len(want) {
+		t.Fatalf("events = %v, want %v", sink.events, want)
+	}
+	for i := range want {
+		if sink.events[i] != want[i] {
+			t.Fatalf("events[%d] = %q, want %q (full events %v)", i, sink.events[i], want[i], sink.events)
+		}
+	}
+}
+
+func TestStdlibParserBuffersTransformedRootOnGenericSink(t *testing.T) {
+	sink := &recordingSink{
+		bufferPaths: map[string]bool{"$": true},
+	}
+
+	if err := (stdlibParser{}).Parse([]byte(`{"a":1}`), 4, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	want := []string{"begin:4", "materialized:$"}
+	if len(sink.events) != len(want) {
+		t.Fatalf("events = %v, want %v", sink.events, want)
+	}
+	for i := range want {
+		if sink.events[i] != want[i] {
+			t.Fatalf("events[%d] = %q, want %q (full events %v)", i, sink.events[i], want[i], sink.events)
+		}
+	}
+}
+
+func TestStdlibParserStagesArrayIndexAndWildcardOnGenericSink(t *testing.T) {
+	sink := &recordingSink{}
+
+	if err := (stdlibParser{}).Parse([]byte(`[{"x":1}]`), 5, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	want := []string{"begin:5", "present:$", "materialized:$[0]", "materialized:$[*]"}
+	if len(sink.events) != len(want) {
+		t.Fatalf("events = %v, want %v", sink.events, want)
 	}
 	for i := range want {
 		if sink.events[i] != want[i] {

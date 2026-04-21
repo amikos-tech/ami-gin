@@ -49,7 +49,7 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 
 	switch tok := token.(type) {
 	case json.Delim:
-		state.getOrCreatePath(canonicalPath).present = true
+		sink.MarkPresent(state, canonicalPath)
 		switch tok {
 		case '{':
 			objectValues := make(map[string]any)
@@ -58,6 +58,9 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 				if err != nil {
 					return errors.Wrapf(err, "read object key at %s", canonicalPath)
 				}
+				// encoding/json only emits string object keys here. Keep the
+				// assertion defensive in case this walker is reused with a
+				// different token source.
 				key, ok := keyToken.(string)
 				if !ok {
 					return errors.Errorf("non-string object key at %s", canonicalPath)
@@ -77,6 +80,8 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 			if err != nil {
 				return errors.Wrapf(err, "close object at %s", canonicalPath)
 			}
+			// encoding/json should only yield the matching closing
+			// delimiter or an error here. Keep the check defensive.
 			if delim, ok := end.(json.Delim); !ok || delim != '}' {
 				return errors.Errorf("malformed object at %s", canonicalPath)
 			}
@@ -98,11 +103,15 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 			if err != nil {
 				return errors.Wrapf(err, "close array at %s", canonicalPath)
 			}
+			// encoding/json should only yield the matching closing
+			// delimiter or an error here. Keep the check defensive.
 			if delim, ok := end.(json.Delim); !ok || delim != ']' {
 				return errors.Errorf("malformed array at %s", canonicalPath)
 			}
 			return nil
 		default:
+			// At a value boundary, encoding/json should only surface '{'
+			// or '[' delimiters. Treat anything else as a parser bug.
 			return errors.Errorf("unsupported delimiter %q at %s", tok, canonicalPath)
 		}
 	default:
