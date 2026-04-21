@@ -2,12 +2,12 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: roadmap_ready
-stopped_at: v1.1 roadmap shipped via PR #27; Phase 13 ready for planning after merge
-last_updated: "2026-04-21T10:30:00Z"
-last_activity: 2026-04-21 — v1.1 roadmap created (phases 13-15, 17 requirements mapped)
+status: Roadmap approved; awaiting `/gsd-plan-phase 13`
+stopped_at: Phase 13 context gathered
+last_updated: "2026-04-21T08:33:15.222Z"
+last_activity: 2026-04-21 — v1.1 roadmap created
 progress:
-  total_phases: 3
+  total_phases: 8
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -124,8 +124,8 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 
 ## Session Continuity
 
-Last session: 2026-04-21 — v1.1 roadmap created
-Stopped at: Phase 13 ready for planning
-Resume file: —
+Last session: --stopped-at
+Stopped at: Phase 13 context gathered
+Resume file: --resume-file
 
 **Next step:** `/gsd-plan-phase 13` to decompose Phase 13 (Parser Seam Extraction) into executable plans.
