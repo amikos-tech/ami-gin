@@ -15,7 +15,7 @@ v1.1 introduces the **parser seam** (a pure refactor that extracts the JSON-pars
 
 ### Parser Seam
 
-- [ ] **PARSER-01**: Builder exposes a pluggable `Parser` interface with a narrow `ParserSink` write-side, defaulting to a `stdlibParser` that wraps the current `json.Decoder.UseNumber()` path with zero behavior change. Validated via a parity test harness on the existing test corpus.
+- [x] **PARSER-01**: Builder exposes a pluggable `Parser` interface with a narrow package-private `parserSink` write-side, defaulting to a `stdlibParser` path that preserves the current `json.Decoder.UseNumber()` behavior with zero correctness drift. Validated via the committed parity harness on the existing test corpus.
 
 ### Observability
 
@@ -57,7 +57,7 @@ v1.1 introduces the **parser seam** (a pure refactor that extracts the JSON-pars
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PARSER-01 | Phase 13 | Planned |
+| PARSER-01 | Phase 13 | Completed |
 | OBS-01 | Phase 14 | Planned |
 | OBS-02 | Phase 14 | Planned |
 | OBS-03 | Phase 14 | Planned |
@@ -77,7 +77,7 @@ v1.1 introduces the **parser seam** (a pure refactor that extracts the JSON-pars
 
 **Coverage:**
 - Requirements total: 17
-- Checked off: 0
+- Checked off: 1
 - Mapped to phases: 17
 - Unmapped: 0
 

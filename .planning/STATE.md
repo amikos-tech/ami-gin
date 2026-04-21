@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: roadmap_ready
-stopped_at: v1.1 roadmap shipped via PR #27; Phase 13 ready for planning after merge
-last_updated: "2026-04-21T10:30:00Z"
-last_activity: 2026-04-21 — v1.1 roadmap created (phases 13-15, 17 requirements mapped)
+status: "Phase 13 shipped - PR #28"
+stopped_at: Phase 14 ready to start
+last_updated: "2026-04-21T15:02:44.357Z"
+last_activity: 2026-04-21
 progress:
-  total_phases: 3
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 8
+  completed_phases: 1
+  total_plans: 3
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.1 Performance, Observability & Experimentation — parser seam, observability primitives, experimentation CLI
+**Current focus:** Phase 14 — observability-seams (planning pending)
 
 ## Current Position
 
-Phase: 13 (parser-seam-extraction) — Not started
-Plan: —
-Status: Roadmap approved; awaiting `/gsd-plan-phase 13`
-Last activity: 2026-04-21 — v1.1 roadmap created
+Phase: 14 (observability-seams) — NOT STARTED
+Plan: planning pending
+Status: Phase 13 shipped - PR #28
+Last activity: 2026-04-21
 
-Progress: [          ] 0% (0/3 phases, 0/17 requirements)
+Progress: [###.......] 33% (1/3 phases, 1/17 requirements)
 
 ## Performance Metrics
 
@@ -55,7 +55,7 @@ Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 13 | TBD | Not started |
+| 13 | 3 | Complete |
 | 14 | TBD | Not started |
 | 15 | TBD | Not started |
 
@@ -85,12 +85,13 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- `/gsd-plan-phase 13` — plan the parser seam phase
+- Start Phase 14 planning for observability seams (`OBS-01` through `OBS-08`)
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
 
-- No blockers for v1.1 execution. The pure-simdjson blockers (LICENSE, tag, distribution mechanism) are deferred to v1.2 and do not gate Phases 13-15.
+- Phase 13's benchmark noise was accepted as residual risk in `.planning/phases/13-parser-seam-extraction/13-SECURITY.md`; preserve that evidence if a future performance follow-up revisits the transformer-heavy explicit-number path.
+- The pure-simdjson blockers (LICENSE, tag, distribution mechanism) remain deferred to v1.2 and do not gate Phases 13-15.
 
 ### Quick Tasks Completed (v1.0 era — retained for reference)
 
@@ -124,8 +125,10 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 
 ## Session Continuity
 
-Last session: 2026-04-21 — v1.1 roadmap created
-Stopped at: Phase 13 ready for planning
-Resume file: —
+Last session: --stopped-at
+Stopped at: Phase 14 ready to start
+Resume file: --resume-file
 
-**Next step:** `/gsd-plan-phase 13` to decompose Phase 13 (Parser Seam Extraction) into executable plans.
+**Next step:** Start Phase 14 planning/execution. Phase 13 is complete and its residual benchmark noise is documented as an accepted risk.
+
+**Planned Phase:** 14 (observability-seams) — planning pending

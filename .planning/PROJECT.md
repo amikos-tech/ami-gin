@@ -10,7 +10,7 @@
 
 ## Current Milestone: v1.1 Performance, Observability & Experimentation
 
-**Goal:** Introduce a SIMD-accelerated JSON ingest path, add observability/logging primitives that surface index internals and hot-path costs, and ship a small CLI that builds an index from a JSONL file for experimentation and teaching.
+**Goal:** Prepare the codebase for a future SIMD-accelerated JSON ingest path, add observability/logging primitives that surface index internals and hot-path costs, and ship a small CLI that builds an index from a JSONL file for experimentation and teaching.
 
 **Target themes:**
 - **Parser seam (preparation for SIMD)** — extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default (wrapping today's `json.Decoder.UseNumber()`). Pure refactor with a parity-test harness. Keeps the door open for a SIMD parser in v1.2 without touching builder internals.
@@ -51,7 +51,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 
 ### Active
 
-- **v1.1 — 17 requirements in progress.** See `.planning/REQUIREMENTS.md` for the full list: PARSER-01 (parser seam), OBS-01..08 (observability), CLI-01..08 (experimentation CLI). All mapped to phases 13-15 in `.planning/ROADMAP.md`.
+- **v1.1 — PARSER-01 validated in Phase 13; OBS-01..08 and CLI-01..08 remain in progress.** See `.planning/REQUIREMENTS.md` for the full list and current status across phases 13-15.
 
 ### Out of Scope
 
@@ -71,6 +71,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 - Phase 10 completed serialization compaction for path and term dictionaries with explicit format-version coverage
 - Phase 11 completed real-corpus prefix-compression benchmarking and the final compaction recommendation
 - Phase 12 reconciled missing Phase 07/09 verification artifacts, aligned the requirements ledger, and refreshed the v1.0 milestone audit to a passed state
+- Phase 13 completed the parser seam and always-on parity harness; residual benchmark noise was accepted as documented in `.planning/phases/13-parser-seam-extraction/13-SECURITY.md`
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -108,4 +109,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-21 — v1.1 milestone started*
+*Last updated: 2026-04-21 — Phase 13 closed; Phase 14 pending*

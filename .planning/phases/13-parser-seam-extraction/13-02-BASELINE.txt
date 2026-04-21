@@ -1,0 +1,31 @@
+# v1.0 focused benchmark baseline
+# command: GOMAXPROCS=1 go test -bench ^'^BenchmarkAddDocument$' -benchmem -count=3 -run=^$ .
+goos: darwin
+goarch: arm64
+pkg: github.com/amikos-tech/ami-gin
+cpu: Apple M3 Max
+BenchmarkAddDocument 	   40966	     28251 ns/op	   82308 B/op	     734 allocs/op
+BenchmarkAddDocument 	   42526	     28473 ns/op	   82308 B/op	     734 allocs/op
+BenchmarkAddDocument 	   42782	     28087 ns/op	   82308 B/op	     734 allocs/op
+PASS
+ok  	github.com/amikos-tech/ami-gin	4.929s
+
+# command: GOMAXPROCS=1 go test -bench ^'^BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=(int-only|transformer-heavy)$' -benchmem -count=3 -run=^$ .
+goos: darwin
+goarch: arm64
+pkg: github.com/amikos-tech/ami-gin
+cpu: Apple M3 Max
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=int-only         	  122124	      9814 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=int-only         	  121855	      9829 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=int-only         	  122749	      9754 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=int-only        	  120788	      9965 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=int-only        	  120321	     10150 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=int-only        	  119187	     10089 ns/op	   37648 B/op	     207 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=transformer-heavy         	   35018	     33923 ns/op	   88108 B/op	     852 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=transformer-heavy         	   34911	     33981 ns/op	   88108 B/op	     852 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=1000/shape=transformer-heavy         	   35762	     35368 ns/op	   88108 B/op	     852 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=transformer-heavy        	   35266	     34020 ns/op	   88107 B/op	     852 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=transformer-heavy        	   34594	     34529 ns/op	   88107 B/op	     852 allocs/op
+BenchmarkAddDocumentPhase07/parser=explicit-number/docs=10000/shape=transformer-heavy        	   35412	     33788 ns/op	   88107 B/op	     852 allocs/op
+PASS
+ok  	github.com/amikos-tech/ami-gin	19.598s
