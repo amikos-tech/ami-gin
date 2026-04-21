@@ -797,22 +797,25 @@ func assertByteIdentical(t *testing.T, fixtureName string, encoded, golden []byt
 
 **Zero ASSUMED claims left undeferred:** A1 and A4 are low-risk perf/benchmark assumptions; A2 is a planner decision with CONTEXT.md cover; A3 is verified by `git tag` + Phase 10 format-stability evidence.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Sink method signature: `path` or `canonicalPath`?**
    - What we know: Today, `stageScalarToken` takes `canonicalPath` (already normalized); `stageMaterializedValue` takes raw `path` and normalizes inside. Mirroring exactly preserves behavior.
    - What's unclear: Whether the sink interface should normalize internally OR require parsers to pre-normalize. Locked D-01 sink set implies per-today semantics.
    - Recommendation: Match today's semantics exactly per-method. `StageScalar` accepts already-normalized `canonicalPath`; `StageMaterialized` accepts raw `path`. Document this in doc-comments on the interface.
+   - **RESOLVED:** Per-method semantics match today's code verbatim — `StageScalar` / `StageJSONNumber` / `StageNativeNumeric` / `ShouldBufferForTransform` accept already-normalized `canonicalPath`; `StageMaterialized` accepts raw `path` and the sink impl normalizes internally (mirrors `stageMaterializedValue` at builder.go:497). Encoded as doc-comments on the `parserSink` interface in parser_sink.go.
 
 2. **How to acquire `*documentBuildState` in `AddDocument` after `Parse` returns?**
    - What we know: D-01 locks `BeginDocument` on the sink; parser calls it first; `Parse` doesn't return state.
    - What's unclear: Stash on builder field (`b.currentDocState`)? Or another mechanism?
    - Recommendation: Stash on builder field. Single-threaded builder (architectural invariant) makes this trivially safe. Document in comment on the field: `// set by parserSink.BeginDocument; read by AddDocument; safe because builder is single-threaded`.
+   - **RESOLVED:** Stash on `b.currentDocState *documentBuildState` (new private field on `GINBuilder`). `BeginDocument` sets it, `AddDocument` reads it post-`Parse` and hands it to `mergeDocumentState`. Safe because the builder is single-threaded (architectural invariant). Field is added in Plan 01 Task 4 and consumed in Plan 02 Task 2.
 
 3. **Goldens count — how many authored fixtures?**
    - What we know: D-05 lists six categories (int64 boundaries, nulls vs missing, deep nesting, unicode keys, empty arrays, large strings) plus transformer paths.
    - What's unclear: One golden per category, or multiple?
    - Recommendation: One authored fixture per category (7 fixtures × ~1-5KB each = ~20KB committed). Minimal, covers the named risks, doesn't bloat the repo.
+   - **RESOLVED:** Exactly 7 authored fixtures — one per named D-05 category (int64-boundaries, nulls-and-missing, deep-nested, unicode-keys, empty-arrays, large-strings, transformers-iso-date-and-lower). Committed under `testdata/parity-golden/`. Matches `authoredParityFixtures()` in Plan 03 Task 1.
 
 ## Environment Availability
 
