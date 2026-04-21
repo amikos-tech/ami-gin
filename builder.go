@@ -1,7 +1,6 @@
 package gin
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -148,6 +147,14 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 			return nil, err
 		}
 	}
+	if b.parser == nil {
+		b.parser = stdlibParser{}
+	}
+	name := b.parser.Name()
+	if name == "" {
+		return nil, errors.New("parser name cannot be empty")
+	}
+	b.parserName = name
 	return b, nil
 }
 
@@ -307,12 +314,40 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		}
 	}
 
-	state, err := b.parseAndStageDocument(jsonDoc, pos)
-	if err != nil {
-		return err
+	// Phase 13 parser seam: dispatch through b.parser. D-07: return parser
+	// errors verbatim; do not wrap here. Runtime guards enforce the parser
+	// contract even if a parser forgets to call BeginDocument:
+	//   1. Pre-Parse reset: a stale state from a prior AddDocument call
+	//      cannot be inherited silently if the parser skips BeginDocument.
+	//   2. Post-Parse BeginDocument-presence check: nil state after a
+	//      nil-returning Parse signals a parser-contract violation.
+	//   3. Post-Parse rgID-match check: a parser that calls BeginDocument
+	//      with the wrong rgID is caught before the merge step corrupts
+	//      shared state.
+	if parser, ok := b.parser.(stdlibParser); ok {
+		state, err := parser.parseDocument(jsonDoc, pos, b)
+		if err != nil {
+			return err
+		}
+		return b.mergeDocumentState(docID, pos, exists, state)
+	} else {
+		b.currentDocState = nil
+		if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
+			return err
+		}
 	}
-
-	return b.mergeDocumentState(docID, pos, exists, state)
+	if b.currentDocState == nil {
+		return errors.Errorf("parser %q did not call BeginDocument", b.parserName)
+	}
+	if b.currentDocState.rgID != pos {
+		return errors.Errorf(
+			"parser %q BeginDocument rgID mismatch: got %d, want %d",
+			b.parserName,
+			b.currentDocState.rgID,
+			pos,
+		)
+	}
+	return b.mergeDocumentState(docID, pos, exists, b.currentDocState)
 }
 
 func normalizeWalkPath(path string) string {
@@ -330,20 +365,6 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
 	return b.mergeStagedPaths(state)
 }
 
-func (b *GINBuilder) parseAndStageDocument(jsonDoc []byte, rgID int) (*documentBuildState, error) {
-	decoder := json.NewDecoder(bytes.NewReader(jsonDoc))
-	decoder.UseNumber()
-
-	state := newDocumentBuildState(rgID)
-	if err := b.stageStreamValue(decoder, "$", state); err != nil {
-		return nil, err
-	}
-	if err := ensureDecoderEOF(decoder); err != nil {
-		return nil, errors.Wrap(err, "failed to parse JSON")
-	}
-	return state, nil
-}
-
 func ensureDecoderEOF(decoder *json.Decoder) error {
 	if _, err := decoder.Token(); err == io.EOF {
 		return nil
@@ -351,82 +372,6 @@ func ensureDecoderEOF(decoder *json.Decoder) error {
 		return err
 	}
 	return errors.New("unexpected trailing JSON content")
-}
-
-func (b *GINBuilder) stageStreamValue(decoder *json.Decoder, path string, state *documentBuildState) error {
-	canonicalPath := normalizeWalkPath(path)
-	if transformed, handled, err := b.decodeTransformedValue(decoder, canonicalPath); err != nil {
-		return errors.Wrapf(err, "parse transformed subtree at %s", canonicalPath)
-	} else if handled {
-		return b.stageMaterializedValue(path, transformed, state, true)
-	}
-
-	token, err := decoder.Token()
-	if err != nil {
-		return errors.Wrap(err, "read JSON token")
-	}
-
-	switch tok := token.(type) {
-	case json.Delim:
-		state.getOrCreatePath(canonicalPath).present = true
-		switch tok {
-		case '{':
-			objectValues := make(map[string]any)
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return errors.Wrapf(err, "read object key at %s", canonicalPath)
-				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return errors.Errorf("non-string object key at %s", canonicalPath)
-				}
-				value, err := decodeAny(decoder)
-				if err != nil {
-					return errors.Wrapf(err, "parse object value at %s.%s", canonicalPath, key)
-				}
-				objectValues[key] = value
-			}
-			for _, key := range sortedObjectKeys(objectValues) {
-				if err := b.stageMaterializedValue(path+"."+key, objectValues[key], state, true); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return errors.Wrapf(err, "close object at %s", canonicalPath)
-			}
-			if delim, ok := end.(json.Delim); !ok || delim != '}' {
-				return errors.Errorf("malformed object at %s", canonicalPath)
-			}
-			return nil
-		case '[':
-			for i := 0; decoder.More(); i++ {
-				item, err := decodeAny(decoder)
-				if err != nil {
-					return errors.Wrapf(err, "parse array element at %s[%d]", canonicalPath, i)
-				}
-				if err := b.stageMaterializedValue(fmt.Sprintf("%s[%d]", path, i), item, state, true); err != nil {
-					return err
-				}
-				if err := b.stageMaterializedValue(path+"[*]", item, state, true); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return errors.Wrapf(err, "close array at %s", canonicalPath)
-			}
-			if delim, ok := end.(json.Delim); !ok || delim != ']' {
-				return errors.Errorf("malformed array at %s", canonicalPath)
-			}
-			return nil
-		default:
-			return errors.Errorf("unsupported delimiter %q at %s", tok, canonicalPath)
-		}
-	default:
-		return b.stageScalarToken(canonicalPath, token, state)
-	}
 }
 
 func decodeAny(decoder *json.Decoder) (any, error) {
@@ -444,17 +389,6 @@ func sortedObjectKeys(values map[string]any) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-func (b *GINBuilder) decodeTransformedValue(decoder *json.Decoder, canonicalPath string) (any, bool, error) {
-	if len(b.config.representations(canonicalPath)) == 0 {
-		return nil, false, nil
-	}
-	value, err := decodeAny(decoder)
-	if err != nil {
-		return nil, false, err
-	}
-	return value, true, nil
 }
 
 func prepareTransformerValue(value any) any {

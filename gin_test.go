@@ -2913,20 +2913,28 @@ func TestStringLengthIndexSerialization(t *testing.T) {
 }
 
 func TestAddDocumentUsesExplicitParser(t *testing.T) {
-	src, err := os.ReadFile("builder.go")
+	builderSrc, err := os.ReadFile("builder.go")
 	if err != nil {
 		t.Fatalf("read builder.go: %v", err)
 	}
+	parserSrc, err := os.ReadFile("parser_stdlib.go")
+	if err != nil {
+		t.Fatalf("read parser_stdlib.go: %v", err)
+	}
 
-	text := string(src)
-	if strings.Contains(text, "json.Unmarshal(jsonDoc, &doc)") {
+	builderText := string(builderSrc)
+	parserText := string(parserSrc)
+	if strings.Contains(builderText, "json.Unmarshal(jsonDoc, &doc)") {
 		t.Fatal("AddDocument still uses eager generic unmarshal")
 	}
-	if !strings.Contains(text, "json.NewDecoder(") {
-		t.Fatal("AddDocument should use json.NewDecoder for streaming parse")
+	if !strings.Contains(builderText, "b.parser.Parse(jsonDoc, pos, b)") {
+		t.Fatal("AddDocument should dispatch through b.parser.Parse")
 	}
-	if !strings.Contains(text, ".UseNumber()") {
-		t.Fatal("AddDocument should enable UseNumber on the decoder")
+	if !strings.Contains(parserText, "json.NewDecoder(") {
+		t.Fatal("stdlibParser should use json.NewDecoder for streaming parse")
+	}
+	if !strings.Contains(parserText, ".UseNumber()") {
+		t.Fatal("stdlibParser should enable UseNumber on the decoder")
 	}
 }
 
