@@ -5,7 +5,7 @@ milestone_name: milestone
 status: milestone_complete
 stopped_at: Phase 12 execution completed
 last_updated: "2026-04-21T05:17:21Z"
-last_activity: "2026-04-21 - Completed Phase 12 and v1.0 milestone"
+last_activity: "2026-04-21 - Shipped Phase 12 — PR #26"
 progress:
   total_phases: 12
   completed_phases: 7
@@ -27,8 +27,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 Phase: 12 (milestone-evidence-reconciliation)
 Plan: 3/3 plans complete; verification passed
-Status: Milestone complete
-Last activity: 2026-04-21 - Completed Phase 12 and v1.0 milestone
+Status: Phase 12 shipped — PR #26
+Last activity: 2026-04-21 - Shipped Phase 12 — PR #26
 
 > Note: `completed_phases: 7` counts all phases in this milestone (06-12, including the Phase 12 reconciliation phase). The `v1.0-MILESTONE-AUDIT.md` `phases: 6/6` scopes to the six shipping feature phases (06-11); Phase 12 is a reconciliation phase and is intentionally out of the audit's feature scope.
 
