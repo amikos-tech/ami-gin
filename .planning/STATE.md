@@ -30,13 +30,15 @@ Plan: 3/3 plans complete; verification passed
 Status: Milestone complete
 Last activity: 2026-04-21 - Completed Phase 12 and v1.0 milestone
 
+> Note: `completed_phases: 7` counts all phases in this milestone (06-12, including the Phase 12 reconciliation phase). The `v1.0-MILESTONE-AUDIT.md` `phases: 6/6` scopes to the six shipping feature phases (06-11); Phase 12 is a reconciliation phase and is intentionally out of the audit's feature scope.
+
 Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed in this milestone: 13
+- Total plans completed in this milestone: 19
 - Average duration: -
 - Total execution time: -
 
