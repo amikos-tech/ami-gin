@@ -34,15 +34,14 @@ type GINBuilder struct {
 	poisonErr error
 
 	// Parser seam (Phase 13). parser defaults to stdlibParser{} at
-	// NewBuilder; parserName is the cached Parser.Name() result (Phase 14
-	// telemetry hook). currentDocState is set by parserSink.BeginDocument
-	// and read by AddDocument after Parse returns; AddDocument enforces
-	// runtime guards in Plan 02 by resetting the field before dispatch and
-	// then validating BeginDocument was called with the correct rgID.
-	// Single-threaded builder execution keeps this handoff sufficient.
-	parser          Parser
-	parserName      string
-	currentDocState *documentBuildState
+	// NewBuilder; parserName is the cached Parser.Name() result. During
+	// AddDocument, parserSink.BeginDocument hands the staged state back
+	// through currentDocState and increments beginDocumentCalls so
+	// AddDocument can enforce the sink contract after Parse returns.
+	parser             Parser
+	parserName         string
+	currentDocState    *documentBuildState
+	beginDocumentCalls int
 }
 
 type pathBuildData struct {
@@ -314,30 +313,29 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		}
 	}
 
-	// Phase 13 parser seam: dispatch through b.parser. D-07: return parser
-	// errors verbatim; do not wrap here. Runtime guards enforce the parser
-	// contract even if a parser forgets to call BeginDocument:
-	//   1. Pre-Parse reset: a stale state from a prior AddDocument call
-	//      cannot be inherited silently if the parser skips BeginDocument.
-	//   2. Post-Parse BeginDocument-presence check: nil state after a
-	//      nil-returning Parse signals a parser-contract violation.
-	//   3. Post-Parse rgID-match check: a parser that calls BeginDocument
-	//      with the wrong rgID is caught before the merge step corrupts
-	//      shared state.
-	if parser, ok := b.parser.(stdlibParser); ok {
-		state, err := parser.parseDocument(jsonDoc, pos, b)
-		if err != nil {
-			return err
-		}
-		return b.mergeDocumentState(docID, pos, exists, state)
-	} else {
+	// D-07: return parser errors verbatim; do not wrap here. Reset the
+	// handoff fields before dispatch so AddDocument can verify Parse called
+	// BeginDocument exactly once with the expected row-group id.
+	b.currentDocState = nil
+	b.beginDocumentCalls = 0
+	defer func() {
 		b.currentDocState = nil
-		if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
-			return err
-		}
+		b.beginDocumentCalls = 0
+	}()
+
+	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
+		return err
 	}
-	if b.currentDocState == nil {
+
+	if b.beginDocumentCalls == 0 {
 		return errors.Errorf("parser %q did not call BeginDocument", b.parserName)
+	}
+	if b.beginDocumentCalls != 1 {
+		return errors.Errorf(
+			"parser %q called BeginDocument %d times; want exactly 1",
+			b.parserName,
+			b.beginDocumentCalls,
+		)
 	}
 	if b.currentDocState.rgID != pos {
 		return errors.Errorf(

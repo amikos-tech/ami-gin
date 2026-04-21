@@ -21,7 +21,8 @@ type parserSink interface {
 
 func (b *GINBuilder) BeginDocument(rgID int) *documentBuildState {
 	s := newDocumentBuildState(rgID)
-	b.currentDocState = s // single-threaded builder; AddDocument adds the runtime guards in Plan 02.
+	b.currentDocState = s
+	b.beginDocumentCalls++
 	return s
 }
 

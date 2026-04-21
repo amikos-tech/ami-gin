@@ -2,6 +2,8 @@ package gin
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,10 +37,10 @@ func assertByteIdentical(t *testing.T, fixtureName string, encoded, golden []byt
 	}
 }
 
-func buildAndEncode(t *testing.T, fx parityFixture) []byte {
+func buildAndEncodeWithParser(t *testing.T, fx parityFixture, parser Parser) []byte {
 	t.Helper()
 	cfg := fx.Config()
-	builder, err := NewBuilder(cfg, fx.NumRGs)
+	builder, err := NewBuilder(cfg, fx.NumRGs, WithParser(parser))
 	if err != nil {
 		t.Fatalf("NewBuilder for %s: %v", fx.Name, err)
 	}
@@ -55,6 +57,11 @@ func buildAndEncode(t *testing.T, fx parityFixture) []byte {
 	return encoded
 }
 
+func buildAndEncode(t *testing.T, fx parityFixture) []byte {
+	t.Helper()
+	return buildAndEncodeWithParser(t, fx, stdlibParser{})
+}
+
 func TestParserParity_AuthoredFixtures(t *testing.T) {
 	for _, fx := range authoredParityFixtures() {
 		fx := fx
@@ -62,6 +69,93 @@ func TestParserParity_AuthoredFixtures(t *testing.T) {
 			encoded := buildAndEncode(t, fx)
 			golden := loadGolden(t, fx.Name)
 			assertByteIdentical(t, fx.Name, encoded, golden)
+		})
+	}
+}
+
+type materializingParser struct{}
+
+func (materializingParser) Name() string { return "materializing" }
+
+func (materializingParser) Parse(jsonDoc []byte, rgID int, sink parserSink) error {
+	decoder := json.NewDecoder(bytes.NewReader(jsonDoc))
+	decoder.UseNumber()
+
+	value, err := decodeAny(decoder)
+	if err != nil {
+		return err
+	}
+	if err := ensureDecoderEOF(decoder); err != nil {
+		return errors.Wrap(err, "failed to parse JSON")
+	}
+
+	state := sink.BeginDocument(rgID)
+	return stageMaterializedDocument(sink, state, "$", value)
+}
+
+func stageMaterializedDocument(sink parserSink, state *documentBuildState, path string, value any) error {
+	canonicalPath := normalizeWalkPath(path)
+	if sink.ShouldBufferForTransform(canonicalPath) {
+		return sink.StageMaterialized(state, path, value, true)
+	}
+
+	switch v := value.(type) {
+	case map[string]any:
+		state.getOrCreatePath(canonicalPath).present = true
+		for _, key := range sortedObjectKeys(v) {
+			if err := sink.StageMaterialized(state, path+"."+key, v[key], true); err != nil {
+				return err
+			}
+		}
+		return nil
+	case []any:
+		state.getOrCreatePath(canonicalPath).present = true
+		for i, item := range v {
+			if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
+				return err
+			}
+			if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return sink.StageScalar(state, canonicalPath, value)
+	}
+}
+
+func parserEquivalenceFixtures() []parityFixture {
+	fixtures := append([]parityFixture{}, authoredParityFixtures()...)
+	fixtures = append(fixtures,
+		parityFixture{
+			Name:   "mixed-float-int",
+			Config: DefaultConfig,
+			NumRGs: 3,
+			JSONDocs: [][]byte{
+				[]byte(`{"metrics":{"score":1,"ratio":1.25},"status":"warm"}`),
+				[]byte(`{"metrics":{"score":2.5,"ratio":2},"status":"cold"}`),
+				[]byte(`{"metrics":{"score":3,"ratio":3.75},"status":"hot"}`),
+			},
+		},
+		parityFixture{
+			Name:   "single-rg-array-siblings",
+			Config: DefaultConfig,
+			NumRGs: 1,
+			JSONDocs: [][]byte{
+				[]byte(`{"items":[{"label":"alpha","score":1.5},{"label":"beta","score":2}],"meta":{"flag":true}}`),
+			},
+		},
+	)
+	return fixtures
+}
+
+func TestParserParity_StdlibMatchesMaterializingParser(t *testing.T) {
+	for _, fx := range parserEquivalenceFixtures() {
+		fx := fx
+		t.Run(fx.Name, func(t *testing.T) {
+			stdlibEncoded := buildAndEncodeWithParser(t, fx, stdlibParser{})
+			materializedEncoded := buildAndEncodeWithParser(t, fx, materializingParser{})
+			assertByteIdentical(t, fx.Name, materializedEncoded, stdlibEncoded)
 		})
 	}
 }
@@ -128,11 +222,77 @@ func TestParserSeam_DeterministicAcrossRuns(t *testing.T) {
 	properties.TestingRun(t)
 }
 
+func TestParserSeam_EquivalentAcrossParsers(t *testing.T) {
+	params := gopter.DefaultTestParameters()
+	params.MinSuccessfulTests = 50
+	properties := gopter.NewProperties(params)
+
+	properties.Property("stdlib equals materializing across GenTestDocs", prop.ForAll(
+		func(docs []TestDoc) bool {
+			if len(docs) == 0 {
+				return true
+			}
+			stdlibEncoded, err := encodeDocsWithParser(docs, stdlibParser{})
+			if err != nil {
+				return false
+			}
+			materializedEncoded, err := encodeDocsWithParser(docs, materializingParser{})
+			if err != nil {
+				return false
+			}
+			return bytes.Equal(stdlibEncoded, materializedEncoded)
+		},
+		GenTestDocs(25),
+	))
+
+	properties.Property("stdlib equals materializing across GenTestDocsWithNulls", prop.ForAll(
+		func(docs []TestDoc) bool {
+			if len(docs) == 0 {
+				return true
+			}
+			stdlibEncoded, err := encodeDocsWithParser(docs, stdlibParser{})
+			if err != nil {
+				return false
+			}
+			materializedEncoded, err := encodeDocsWithParser(docs, materializingParser{})
+			if err != nil {
+				return false
+			}
+			return bytes.Equal(stdlibEncoded, materializedEncoded)
+		},
+		GenTestDocsWithNulls(25),
+	))
+
+	properties.Property("stdlib equals materializing across GenMixedTypeDocs", prop.ForAll(
+		func(docs []TestDoc) bool {
+			if len(docs) == 0 {
+				return true
+			}
+			stdlibEncoded, err := encodeDocsWithParser(docs, stdlibParser{})
+			if err != nil {
+				return false
+			}
+			materializedEncoded, err := encodeDocsWithParser(docs, materializingParser{})
+			if err != nil {
+				return false
+			}
+			return bytes.Equal(stdlibEncoded, materializedEncoded)
+		},
+		GenMixedTypeDocs(25),
+	))
+
+	properties.TestingRun(t)
+}
+
 func encodeDocs(docs []TestDoc) ([]byte, error) {
+	return encodeDocsWithParser(docs, stdlibParser{})
+}
+
+func encodeDocsWithParser(docs []TestDoc, parser Parser) ([]byte, error) {
 	if len(docs) == 0 {
 		return nil, errors.New("empty docs slice")
 	}
-	builder, err := NewBuilder(DefaultConfig(), len(docs))
+	builder, err := NewBuilder(DefaultConfig(), len(docs), WithParser(parser))
 	if err != nil {
 		return nil, errors.Wrap(err, "NewBuilder")
 	}

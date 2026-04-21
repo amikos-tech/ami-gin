@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -2912,29 +2911,42 @@ func TestStringLengthIndexSerialization(t *testing.T) {
 	}
 }
 
-func TestAddDocumentUsesExplicitParser(t *testing.T) {
-	builderSrc, err := os.ReadFile("builder.go")
-	if err != nil {
-		t.Fatalf("read builder.go: %v", err)
-	}
-	parserSrc, err := os.ReadFile("parser_stdlib.go")
-	if err != nil {
-		t.Fatalf("read parser_stdlib.go: %v", err)
+func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+
+	if err := builder.AddDocument(0, []byte(`{"items":[{"label":"x","score":1.5},{"label":"y","score":2}],"status":"only"}`)); err != nil {
+		t.Fatalf("AddDocument() failed: %v", err)
 	}
 
-	builderText := string(builderSrc)
-	parserText := string(parserSrc)
-	if strings.Contains(builderText, "json.Unmarshal(jsonDoc, &doc)") {
-		t.Fatal("AddDocument still uses eager generic unmarshal")
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 1 {
+		t.Fatalf("NumDocs = %d, want 1", idx.Header.NumDocs)
 	}
-	if !strings.Contains(builderText, "b.parser.Parse(jsonDoc, pos, b)") {
-		t.Fatal("AddDocument should dispatch through b.parser.Parse")
+
+	for _, path := range []string{
+		"$.items[*].label",
+		"$.items[0].label",
+		"$.items[1].label",
+		"$.items[*].score",
+		"$.items[0].score",
+		"$.items[1].score",
+	} {
+		if _, ok := idx.pathLookup[path]; !ok {
+			t.Fatalf("pathLookup[%q] missing", path)
+		}
 	}
-	if !strings.Contains(parserText, "json.NewDecoder(") {
-		t.Fatal("stdlibParser should use json.NewDecoder for streaming parse")
+
+	if got := idx.Evaluate([]Predicate{EQ("$.items[*].label", "x")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.items[*].label", "x") = %v, want [0]`, got)
 	}
-	if !strings.Contains(parserText, ".UseNumber()") {
-		t.Fatal("stdlibParser should enable UseNumber on the decoder")
+	if got := idx.Evaluate([]Predicate{EQ("$.items[*].score", 1.5)}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.items[*].score", 1.5) = %v, want [0]`, got)
+	}
+	if got := idx.Evaluate([]Predicate{EQ("$.items[*].score", int64(2))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.items[*].score", 2) = %v, want [0]`, got)
+	}
+	if got := idx.Evaluate([]Predicate{EQ("$.status", "only")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.status", "only") = %v, want [0]`, got)
 	}
 }
 

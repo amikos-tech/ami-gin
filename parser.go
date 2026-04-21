@@ -26,8 +26,9 @@ type Parser interface {
 	Name() string
 
 	// Parse walks jsonDoc and stages observations for rgID via sink.
-	// The parser's first sink call MUST be sink.BeginDocument(rgID).
-	// AddDocument enforces this via a post-Parse runtime guard.
+	// The parser's first sink call MUST be sink.BeginDocument(rgID), and
+	// Parse MUST call BeginDocument exactly once. AddDocument enforces
+	// this with a post-Parse runtime guard.
 	Parse(jsonDoc []byte, rgID int, sink parserSink) error
 }
 

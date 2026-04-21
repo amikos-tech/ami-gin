@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -148,6 +149,55 @@ func TestAddDocumentRoundTripsThroughParser(t *testing.T) {
 	}
 }
 
+type recordingSink struct {
+	events []string
+}
+
+func (s *recordingSink) BeginDocument(rgID int) *documentBuildState {
+	s.events = append(s.events, fmt.Sprintf("begin:%d", rgID))
+	return newDocumentBuildState(rgID)
+}
+
+func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string, _ any) error {
+	s.events = append(s.events, "scalar:"+canonicalPath)
+	return nil
+}
+
+func (s *recordingSink) StageJSONNumber(_ *documentBuildState, canonicalPath, raw string) error {
+	s.events = append(s.events, "json-number:"+canonicalPath+"="+raw)
+	return nil
+}
+
+func (s *recordingSink) StageNativeNumeric(_ *documentBuildState, canonicalPath string, _ any) error {
+	s.events = append(s.events, "native-number:"+canonicalPath)
+	return nil
+}
+
+func (s *recordingSink) StageMaterialized(_ *documentBuildState, path string, _ any, _ bool) error {
+	s.events = append(s.events, "materialized:"+path)
+	return nil
+}
+
+func (s *recordingSink) ShouldBufferForTransform(string) bool { return false }
+
+func TestStdlibParserBeginsDocumentBeforeStaging(t *testing.T) {
+	sink := &recordingSink{}
+
+	if err := (stdlibParser{}).Parse([]byte(`{"a":1}`), 3, sink); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	want := []string{"begin:3", "materialized:$.a"}
+	if len(sink.events) < len(want) {
+		t.Fatalf("events = %v, want prefix %v", sink.events, want)
+	}
+	for i := range want {
+		if sink.events[i] != want[i] {
+			t.Fatalf("events[%d] = %q, want %q (full events %v)", i, sink.events[i], want[i], sink.events)
+		}
+	}
+}
+
 type failingParser struct{ err error }
 
 func (p failingParser) Name() string { return "failing" }
@@ -173,16 +223,34 @@ func TestAddDocumentReturnsParserErrorVerbatim(t *testing.T) {
 }
 
 func TestAddDocumentDefaultParserErrorStringsPreserved(t *testing.T) {
-	b, err := NewBuilder(DefaultConfig(), 4)
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
+	cases := []struct {
+		name       string
+		jsonDoc    string
+		wantSubstr string
+	}{
+		{name: "garbage", jsonDoc: "garbage", wantSubstr: "read JSON token"},
+		{name: "bad-object-value", jsonDoc: `{"a":}`, wantSubstr: "parse object value at $.a"},
+		{name: "bad-object-key", jsonDoc: `{1:true}`, wantSubstr: "read object key at $"},
+		{name: "unterminated-object", jsonDoc: `{"a":1`, wantSubstr: "close object at $"},
+		{name: "unterminated-array", jsonDoc: `[1,`, wantSubstr: "parse array element at $[1]"},
+		{name: "trailing-json", jsonDoc: `{"a":1} []`, wantSubstr: "unexpected trailing JSON content"},
 	}
-	got := b.AddDocument(DocID(0), []byte("garbage"))
-	if got == nil {
-		t.Fatal("expected error from AddDocument on malformed JSON, got nil")
-	}
-	if msg := got.Error(); !strings.Contains(msg, "read JSON token") {
-		t.Errorf("AddDocument err = %q, want substring %q", msg, "read JSON token")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := NewBuilder(DefaultConfig(), 4)
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			got := b.AddDocument(DocID(0), []byte(tc.jsonDoc))
+			if got == nil {
+				t.Fatalf("expected error from AddDocument(%q), got nil", tc.jsonDoc)
+			}
+			if msg := got.Error(); !strings.Contains(msg, tc.wantSubstr) {
+				t.Fatalf("AddDocument err = %q, want substring %q", msg, tc.wantSubstr)
+			}
+		})
 	}
 }
 
@@ -208,6 +276,31 @@ func TestAddDocumentRejectsParserSkippingBeginDocument(t *testing.T) {
 	}
 }
 
+type doubleBeginDocumentParser struct{}
+
+func (doubleBeginDocumentParser) Name() string { return "double-begin" }
+
+func (doubleBeginDocumentParser) Parse(_ []byte, rgID int, sink parserSink) error {
+	_ = sink.BeginDocument(rgID)
+	_ = sink.BeginDocument(rgID)
+	return nil
+}
+
+func TestAddDocumentRejectsParserCallingBeginDocumentTwice(t *testing.T) {
+	b, err := NewBuilder(DefaultConfig(), 4, WithParser(doubleBeginDocumentParser{}))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	err = b.AddDocument(DocID(0), []byte(`{"a":1}`))
+	if err == nil {
+		t.Fatal("expected duplicate BeginDocument error, got nil")
+	}
+	if !strings.Contains(err.Error(), "called BeginDocument 2 times") {
+		t.Fatalf("want duplicate BeginDocument error, got %q", err.Error())
+	}
+}
+
 type wrongRGIDParser struct{}
 
 func (wrongRGIDParser) Name() string { return "wrong-rgid" }
@@ -228,5 +321,47 @@ func TestAddDocumentRejectsBeginDocumentRGIDMismatch(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "BeginDocument rgID mismatch") {
 		t.Fatalf("want error containing %q, got %q", "BeginDocument rgID mismatch", err.Error())
+	}
+}
+
+type fixedRGIDParser struct {
+	name string
+	rgID int
+}
+
+func (p fixedRGIDParser) Name() string { return p.name }
+
+func (p fixedRGIDParser) Parse(_ []byte, _ int, sink parserSink) error {
+	_ = sink.BeginDocument(p.rgID)
+	return nil
+}
+
+func TestAddDocumentRejectsOutOfRangeBeginDocumentRGID(t *testing.T) {
+	cases := []struct {
+		name string
+		rgID int
+	}{
+		{name: "negative", rgID: -1},
+		{name: "past-numrgs", rgID: 9},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b, err := NewBuilder(DefaultConfig(), 4, WithParser(fixedRGIDParser{name: tc.name, rgID: tc.rgID}))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			err = b.AddDocument(DocID(0), []byte(`{"a":1}`))
+			if err == nil {
+				t.Fatal("expected rgID-mismatch error, got nil")
+			}
+			if !strings.Contains(err.Error(), "BeginDocument rgID mismatch") {
+				t.Fatalf("want mismatch error, got %q", err.Error())
+			}
+			if !strings.Contains(err.Error(), fmt.Sprintf("got %d, want 0", tc.rgID)) {
+				t.Fatalf("want mismatch details for rgID %d, got %q", tc.rgID, err.Error())
+			}
+		})
 	}
 }
