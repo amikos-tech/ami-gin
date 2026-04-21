@@ -13,11 +13,13 @@
 **Goal:** Introduce a SIMD-accelerated JSON ingest path, add observability/logging primitives that surface index internals and hot-path costs, and ship a small CLI that builds an index from a JSONL file for experimentation and teaching.
 
 **Target themes:**
-- **SIMD JSON integration** — evaluate `github.com/amikos-tech/pure-simdjson` as an alternative/opt-in builder parser, preserve v1.0's exact-int semantics, benchmark against the explicit `json.Decoder.UseNumber()` baseline; pull in simdjson example datasets per SEED-001 for realistic benchmark corpus.
-- **Observability & logging** — examine the current builder/query telemetry seams, plan logger/tracer interfaces inspired by `github.com/amikos-tech/go-wand`'s patterns; add structured events for index build, query evaluation, and pruning decisions. Must stay zero-cost when disabled.
-- **Experimentation CLI** — a subcommand (likely `gin-index experiment` or similar) that accepts a JSONL file, builds an index, and emits a human-readable summary (per-path stats, mode, adaptive bucketing, pruning candidates).
+- **Parser seam (preparation for SIMD)** — extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default (wrapping today's `json.Decoder.UseNumber()`). Pure refactor with a parity-test harness. Keeps the door open for a SIMD parser in v1.2 without touching builder internals.
+- **Observability & logging** — add logger/tracer interfaces inspired by `github.com/amikos-tech/go-wand`'s `pkg/logging` (PR #114) and `pkg/telemetry` (PR #115) patterns. Structured events for index build, query evaluation, serialization; zero-cost when disabled; no global OTel mutation; migrate the existing `adaptiveInvariantLogger *log.Logger` to the new interface.
+- **Experimentation CLI** — new `experiment` subcommand accepts JSONL (file or stdin), builds an index, emits a per-path summary table (types, cardinality, mode, bloom occupancy, hot terms). Optional inline predicate tester, JSON output mode, streaming ingest with bounded memory.
 
-**Active seeds:** SEED-001 (simdjson test datasets) — included.
+**Deferred to v1.2:** SIMD parser implementation (`pure-simdjson` adapter, benchmarks, CI matrix). Blocked on upstream LICENSE, version tag, and shared-library distribution decision.
+
+**Active seeds:** SEED-001 (simdjson test datasets) — deferred to v1.2 alongside the SIMD parser impl.
 
 ## What This Is
 
