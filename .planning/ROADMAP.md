@@ -1,137 +1,90 @@
-# Roadmap: GIN Index v1.0 Query & Index Quality
+# Roadmap: GIN Index
 
-## Overview
+## Milestones
 
-`v0.1.0` proved the library can ship as a clean open-source package. The next milestone focuses on the index internals themselves: removing avoidable query-path overhead, reducing build-time JSON parsing cost, recovering pruning quality on high-cardinality string paths, supporting raw-plus-derived representations, and compacting the serialized layout once the functional shape stabilizes.
+- ✅ **v0.1.0 OSS Launch** — Phases 01-05 (shipped pre-v1.0)
+- ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
+- 🚧 **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (started 2026-04-21)
 
 ## Phases
 
-**Phase Numbering:**
-- Phase numbering continues from the completed `v0.1.0` milestone
-- Phases `01` through `05` are complete and archived
-- This milestone starts at `Phase 06`
+<details>
+<summary>✅ v1.0 Query & Index Quality (Phases 06-12) — SHIPPED 2026-04-21</summary>
 
-- [x] **Phase 06: Query Path Hot Path** - Remove linear path scans and canonicalize supported JSONPath lookup (completed 2026-04-14)
-- [x] **Phase 07: Builder Parsing & Numeric Fidelity** - Lower ingest overhead and make number handling explicit and safe (completed 2026-04-15)
-- [x] **Phase 08: Adaptive High-Cardinality Indexing** - Recover exact pruning for hot values without exploding index size (completed 2026-04-15)
-- [x] **Phase 09: Derived Representations** - Add raw-plus-derived indexing instead of replacement-only transformers (completed 2026-04-16)
-- [x] **Phase 10: Serialization Compaction** - Shrink encoded path and term dictionaries once functional layout stabilizes (completed 2026-04-17)
-- [x] **Phase 11: Real-Corpus Prefix Compression Benchmarking** - Measure compaction payoff on representative external log-style datasets before considering any broader format work (completed 2026-04-20)
-- [x] **Phase 12: Milestone Evidence Reconciliation** - Close the v1.0 audit blockers by reconstructing missing verification artifacts, reconciling requirement status, and clearing milestone-close evidence debt (completed 2026-04-21)
+- [x] Phase 06: Query Path Hot Path (2/2 plans) — completed 2026-04-14
+- [x] Phase 07: Builder Parsing & Numeric Fidelity (2/2 plans) — completed 2026-04-15
+- [x] Phase 08: Adaptive High-Cardinality Indexing (3/3 plans) — completed 2026-04-15
+- [x] Phase 09: Derived Representations (3/3 plans) — completed 2026-04-16
+- [x] Phase 10: Serialization Compaction (3/3 plans) — completed 2026-04-17
+- [x] Phase 11: Real-Corpus Prefix Compression Benchmarking (3/3 plans) — completed 2026-04-20
+- [x] Phase 12: Milestone Evidence Reconciliation (3/3 plans) — completed 2026-04-21
+
+Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
+
+</details>
+
+### 🚧 v1.1 Performance, Observability & Experimentation (Phases 13-15) — ACTIVE
+
+- [ ] **Phase 13: Parser Seam Extraction** — Pure refactor: extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default. Parity harness is the merge gate.
+- [ ] **Phase 14: Observability Seams** — `Logger` + `Telemetry` + `Signals` (OTel providers, never global), boundary-only spans, frozen attribute vocabulary, `slog`/`stdlib` adapters, context-aware API variants, `adaptiveInvariantLogger` migration.
+- [ ] **Phase 15: Experimentation CLI** — New `experiment` subcommand: JSONL in (file or stdin) → index → per-path summary + optional sidecar write, predicate tester, JSON mode, sample/error-tolerant modes.
 
 ## Phase Details
 
-### Phase 06: Query Path Hot Path
-**Goal**: Query evaluation resolves indexed paths in constant or logarithmic time and treats equivalent supported JSONPath spellings consistently
-**Depends on**: Previous milestone complete
-**Requirements**: PATH-01, PATH-02, PATH-03
+### Phase 13: Parser Seam Extraction
+**Goal**: Extract the JSON-parse boundary from the builder behind a pluggable `Parser` interface, with zero behavior change, so a SIMD parser can land in v1.2 without touching builder internals.
+**Depends on**: Nothing (first phase of v1.1)
+**Requirements**: PARSER-01
 **Success Criteria** (what must be TRUE):
-  1. `findPath()` no longer linearly scans `PathDirectory` for every predicate
-  2. Equivalent supported paths such as `$.foo` and `$['foo']` resolve through the same canonical lookup path
-  3. EQ, CONTAINS, and REGEX benchmarks include high path-count fixtures and show measurable lookup improvement or no regression
-  4. Existing query, JSONPath, and serialization tests continue to pass
-**Plans:** 2/2 plans complete
-Plans:
-- [x] `06-01-PLAN.md` — Canonical path storage, constant-time lookup, decode rebuild, and regression coverage
-- [x] `06-02-PLAN.md` — Wide-path log-style benchmark family for EQ, CONTAINS, REGEX, and equivalent spellings
+  1. Consumers can pass `WithParser(p)` to `NewBuilder`; omitting it yields the v1.0 `json.Decoder.UseNumber()` behavior via a `stdlibParser` default (Name() == "stdlib").
+  2. A `parser_parity_test.go` harness runs the existing builder corpus through the legacy direct-call path and through `stdlibParser`, asserting byte-identical encoded index output and identical `Evaluate` results for every representative predicate.
+  3. Public surface adds only the `Parser` interface, the narrow `ParserSink` write-side, `WithParser`, and `stdlibParser` — no existing method signature changes, no breaking rename, `go test ./...` and the v1.0 benchmark suite remain green.
+  4. `Parser.Name()` is reachable from telemetry attribute sites (consumed by Phase 14) — verified by a unit test that asserts the default builder reports `"stdlib"`.
+**Plans**: TBD
 
-### Phase 07: Builder Parsing & Numeric Fidelity
-**Goal**: Build-time ingest gets cheaper and numeric semantics stop depending on generic `float64` JSON decoding
-**Depends on**: Phase 06
-**Requirements**: BUILD-01, BUILD-02, BUILD-03, BUILD-04, BUILD-05
+### Phase 14: Observability Seams
+**Goal**: Make index build, query evaluation, and serialization observable through a backend-neutral logger and a `Signals`-style OTel container — zero-cost when disabled, no global OTel mutation, one logging convention across the codebase.
+**Depends on**: Phase 13 (consumes `Parser.Name()` as a telemetry attribute; `adaptiveInvariantLogger` migrates in the same phase)
+**Requirements**: OBS-01, OBS-02, OBS-03, OBS-04, OBS-05, OBS-06, OBS-07, OBS-08
 **Success Criteria** (what must be TRUE):
-  1. The primary ingest path no longer uses `json.Unmarshal(..., &any)` as its full-document representation step
-  2. Integer and float classification comes from explicit number parsing
-  3. Integers within the supported range are indexed without pre-index rounding loss
-  4. Unsupported numeric values return an explicit error instead of being silently mis-indexed
-  5. Benchmarks report ingest/build latency and allocation deltas for the new parser path
-**Plans:** 2/2 plans complete
+  1. Library is silent by default: `NoopLogger` is wired in `DefaultConfig`, and `BenchmarkEvaluateDisabledLogging` asserts **0 allocs/op** against the v1.0 baseline.
+  2. `BenchmarkEvaluateWithTracer` (tracer supplied but disabled) stays within **0.5% wall-clock** of the no-tracer baseline, enforced as a merge-gate assertion in the benchmark harness.
+  3. Public API never exposes `*slog.Logger` or any OTel SDK type directly — `slog` and `stdlib log` adapters ship as separate sub-packages (`telemetry/slogadapter`, `telemetry/stdadapter`) and the core `go.mod` does not pull OTel SDK/exporters.
+  4. A single grep for `log.Logger` field declarations in the library returns zero hits after migration: the `adaptiveInvariantLogger *log.Logger` at `query.go:17` is routed through the new `Logger` interface with no dual-logger state.
+  5. `EvaluateContext` and `BuildFromParquetContext` are exported as additive siblings; existing `Evaluate` / `BuildFromParquet` delegate with `context.Background()` and a compatibility test proves the old entry points are untouched.
+  6. Attribute vocabulary is frozen in a single source file (event names + `Attr` keys) and a test asserts emitted INFO-level attributes come only from the allowlist (`operation`, `predicate_op`, `path_mode`, `status`, `error.type`) — predicate values, path field names, doc/RG/term IDs are rejected.
+**Plans**: TBD
 
-### Phase 08: Adaptive High-Cardinality Indexing
-**Goal**: High-cardinality string paths keep exact pruning power for hot values while retaining compact fallback behavior for the long tail
-**Depends on**: Phase 07
-**Requirements**: HCARD-01, HCARD-02, HCARD-03, HCARD-04, HCARD-05
+### Phase 15: Experimentation CLI
+**Goal**: A new `gin-index experiment` subcommand that turns a JSONL file (or stdin stream) into a built index plus a human- or JSON-readable per-path summary, with an inline predicate tester — so a new evaluator can measure pruning quality on their own data in one command.
+**Depends on**: Phase 13 (`--parser` flag selects the parser seam) and Phase 14 (`--log-level` flag wires the telemetry adapter)
+**Requirements**: CLI-01, CLI-02, CLI-03, CLI-04, CLI-05, CLI-06, CLI-07, CLI-08
 **Success Criteria** (what must be TRUE):
-  1. Builder tracks enough per-path frequency information to promote frequent values to exact row-group bitmaps
-  2. Adaptive behavior is configurable with sensible defaults for hot-term thresholds and caps
-  3. Query evaluation uses exact bitmaps for promoted terms and conservative compact fallback for non-hot terms with no false negatives
-  4. Path metadata and CLI/info output distinguish exact, bloom-only, and adaptive-hybrid paths
-  5. Benchmarks and fixtures show improved pruning effectiveness on realistic high-cardinality datasets with bounded size growth
-**Plans:** 3/3 plans complete
-
-### Phase 09: Derived Representations
-**Goal**: Raw values remain queryable while derived representations become first-class indexed companions
-**Depends on**: Phase 07
-**Requirements**: DERIVE-01, DERIVE-02, DERIVE-03, DERIVE-04
-**Success Criteria** (what must be TRUE):
-  1. Configuration can declare derived representations without dropping the raw indexed value
-  2. Builder emits stable path/alias metadata for derived indexes that survives encode/decode
-  3. Queries can target derived representations explicitly without ambiguous lookup behavior
-  4. Tests and examples cover date/time, normalized text, and extracted-subfield derived patterns
-**Plans:** 3/3 plans complete
-
-### Phase 10: Serialization Compaction
-**Goal**: Encoded indexes become meaningfully smaller and stay explicitly versioned after the functional layout changes land
-**Depends on**: Phase 08, Phase 09
-**Requirements**: SIZE-01, SIZE-02, SIZE-03
-**Success Criteria** (what must be TRUE):
-  1. Path directory encoding no longer stores every path string as raw repeated bytes
-  2. String term encoding no longer stores every term as raw repeated bytes
-  3. Format-version handling is explicit and covered by round-trip tests for legacy and compact formats
-  4. Size benchmarks show a clear encoded-size reduction on representative fixtures without query regressions
-**Plans:** 3/3 plans complete
-
-### Phase 11: Real-Corpus Prefix Compression Benchmarking
-**Goal**: Validate Phase 10's real-world payoff on representative external corpora without expanding the serialization-change scope again
-**Depends on**: Phase 10
-**Requirements**: TBD
-**Success Criteria** (what must be TRUE):
-  1. Benchmark coverage includes at least one realistic external log-style corpus large enough to stress repeated paths and repeated string terms
-  2. The benchmark plan defines practical dataset scales such as smoke, meaningful subset, and larger corpus runs instead of relying only on tiny synthetic fixtures
-  3. Results report both raw serialized string-section deltas and final encoded artifact size on those corpora
-  4. The final write-up makes it explicit where prefix compaction helps, where it is flat, and whether further format work is justified
-**Plans:** 3/3 plans complete
-
-Plans:
-- [x] `11-01-PLAN.md` — Checked-in smoke fixture, deterministic external-tier loading, and env-gated benchmark structure
-- [x] `11-02-PLAN.md` — Real-corpus size metrics plus checked-in subset/large benchmark results artifact
-- [x] `11-03-PLAN.md` — Final interpretive report and README workflow for reproducing the opt-in corpus runs
-
-### Phase 12: Milestone Evidence Reconciliation
-**Goal**: The v1.0 milestone has complete verification artifacts and a reconciled requirements ledger, so milestone close reflects shipped reality instead of stale planning state
-**Depends on**: Phase 11
-**Requirements**: BUILD-01, BUILD-02, BUILD-03, BUILD-04, BUILD-05, DERIVE-01, DERIVE-02, DERIVE-03, DERIVE-04
-**Gap Closure**: Closes the `v1.0-MILESTONE-AUDIT.md` blockers for missing Phase 07/09 verification and stale requirements traceability
-**Success Criteria** (what must be TRUE):
-  1. `07-VERIFICATION.md` exists and covers BUILD-01 through BUILD-05 against the shipped Phase 07 implementation
-  2. `09-VERIFICATION.md` exists and covers DERIVE-01 through DERIVE-04 against the shipped Phase 09 implementation
-  3. `REQUIREMENTS.md` checkboxes and traceability rows match the verified status of PATH, BUILD, HCARD, DERIVE, and SIZE requirements
-  4. Phase 07 validation debt is closed or explicitly accepted with updated milestone audit evidence
-  5. Re-running the milestone audit no longer fails on missing verification artifacts or stale requirement status
-**Plans:** 3/3 plans complete
-
-Plans:
-- [x] `12-01-PLAN.md` — Reconstruct Phase 07 verification evidence and resolve Phase 07 validation debt
-- [x] `12-02-PLAN.md` — Reconstruct Phase 09 verification evidence from the current tree
-- [x] `12-03-PLAN.md` — Reconcile `REQUIREMENTS.md` and refresh `v1.0-MILESTONE-AUDIT.md`
+  1. `gin-index experiment path/to/docs.jsonl` and `cat docs.jsonl | gin-index experiment -` both produce a per-path summary table (types, cardinality estimate, mode, bloom occupancy, promoted hot terms) reusing `writeIndexInfo` / `formatPathInfo`.
+  2. Streaming JSONL ingest is verified on a fixture with lines longer than 64 KiB (exercises `bufio.Reader.ReadBytes` / sized `Scanner`) without truncation or OOM, with memory bounded independent of file size.
+  3. `--test '<predicate>'` reports `matched`, `pruned`, and `pruning_ratio` row-group counts using `parsePredicate`; `--json` emits the same summary in a stable schema that is `jq`-parseable and asserted by a golden test.
+  4. `-o out.gin` writes a loadable sidecar (round-trip test: load the sidecar with `gin.ReadSidecar` and verify the same pruning ratio for a canonical predicate).
+  5. `--sample N` caps ingested documents at N; `--on-error continue|abort` toggles line-level error tolerance (default `abort`); both flags are covered by CLI end-to-end tests.
+  6. The CLI ships with no new dependencies (stdlib `flag`, `text/tabwriter`, `bufio`, `encoding/json` only) and contains no REPL / TUI / color-auto-detection code — charter compliance asserted by a linter-or-grep check in CI.
+**Plans**: TBD
 
 ## Progress
 
-**Execution Order:**
-Phases execute in numeric order: `06 → 07 → 08 → 09 → 10 → 11 → 12`
-
-| Phase | Plans Complete | Status | Completed |
-|-------|----------------|--------|-----------|
-| 06. Query Path Hot Path | 2/2 | Complete    | 2026-04-14 |
-| 07. Builder Parsing & Numeric Fidelity | 2/2 | Complete    | 2026-04-15 |
-| 08. Adaptive High-Cardinality Indexing | 3/3 | Complete    | 2026-04-15 |
-| 09. Derived Representations | 3/3 | Complete   | 2026-04-16 |
-| 10. Serialization Compaction | 3/3 | Complete    | 2026-04-17 |
-| 11. Real-Corpus Prefix Compression Benchmarking | 3/3 | Complete | 2026-04-20 |
-| 12. Milestone Evidence Reconciliation | 3/3 | Complete    | 2026-04-21 |
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|----------------|--------|-----------|
+| 06. Query Path Hot Path | v1.0 | 2/2 | Complete | 2026-04-14 |
+| 07. Builder Parsing & Numeric Fidelity | v1.0 | 2/2 | Complete | 2026-04-15 |
+| 08. Adaptive High-Cardinality Indexing | v1.0 | 3/3 | Complete | 2026-04-15 |
+| 09. Derived Representations | v1.0 | 3/3 | Complete | 2026-04-16 |
+| 10. Serialization Compaction | v1.0 | 3/3 | Complete | 2026-04-17 |
+| 11. Real-Corpus Prefix Compression Benchmarking | v1.0 | 3/3 | Complete | 2026-04-20 |
+| 12. Milestone Evidence Reconciliation | v1.0 | 3/3 | Complete | 2026-04-21 |
+| 13. Parser Seam Extraction | v1.1 | 0/- | Not started | - |
+| 14. Observability Seams | v1.1 | 0/- | Not started | - |
+| 15. Experimentation CLI | v1.1 | 0/- | Not started | - |
 
 ---
-*Previous milestone note: phases `01` through `05` completed the OSS launch and `v0.1.0` release. This roadmap is the next milestone and intentionally continues numbering from `06`.*
+*v1.1 started 2026-04-21 with 17 requirements across 3 phases. v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
 
 ## Backlog
 

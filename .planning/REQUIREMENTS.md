@@ -1,86 +1,86 @@
-# Requirements: GIN Index v1.0 Query & Index Quality
+# Requirements: GIN Index v1.1 Performance, Observability & Experimentation
 
-**Defined:** 2026-04-14
-**Core Value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
+**Defined:** 2026-04-21
+**Core Value:** Make index internals observable, experimentation frictionless, and prepare the builder for a future SIMD JSON path — without forcing new dependencies on consumers who don't opt in.
+
+## Scope Note
+
+v1.1 introduces the **parser seam** (a pure refactor that extracts the JSON-parse boundary from the builder) but defers the SIMD parser implementation to v1.2. Rationale:
+
+- `github.com/amikos-tech/pure-simdjson` has no LICENSE file and no version tag as of 2026-04-21 — cannot be declared a stable dependency.
+- Shared-library distribution mechanism (vendored vs. cargo-build vs. user-provided path) needs a design decision before the SIMD phase can commit.
+- Landing the seam now means v1.2 can add the SIMD adapter as an isolated, build-tag-gated phase without touching any builder internals.
 
 ## Requirements
 
-### Query Hot Path
+### Parser Seam
 
-- [x] **PATH-01**: Predicate evaluation resolves indexed paths without linearly scanning `PathDirectory` — validated in Phase 06
-- [x] **PATH-02**: Equivalent supported JSONPath spellings resolve through a canonical path form — validated in Phase 06
-- [x] **PATH-03**: Benchmarks cover EQ, CONTAINS, and REGEX queries across wide path counts and guard against regression — validated in Phase 06
+- [ ] **PARSER-01**: Builder exposes a pluggable `Parser` interface with a narrow `ParserSink` write-side, defaulting to a `stdlibParser` that wraps the current `json.Decoder.UseNumber()` path with zero behavior change. Validated via a parity test harness on the existing test corpus.
 
-### Builder Parsing & Numeric Fidelity
+### Observability
 
-- [x] **BUILD-01**: The primary ingest path no longer relies on `json.Unmarshal(..., &any)` for full-document decoding — validated in Phase 07
-- [x] **BUILD-02**: Integer-vs-float classification is based on explicit number parsing rather than generic `float64` decoding — validated in Phase 07
-- [x] **BUILD-03**: Integers within the supported range are indexed without losing precision before stats or bitmap decisions are made — validated in Phase 07
-- [x] **BUILD-04**: Unsupported or unrepresentable numeric values fail safely with an explicit error instead of silent mis-indexing — validated in Phase 07
-- [x] **BUILD-05**: Benchmarks capture ingest/build latency and allocation changes before and after the parser redesign — validated in Phase 07
+- [ ] **OBS-01**: Library exposes a minimal local `Logger` interface (`Enabled(Level) bool`, `Log(Level, msg, ...Attr)`); noop default so the library stays silent by default.
+- [ ] **OBS-02**: Observability is zero-cost when disabled — `BenchmarkEvaluateDisabledLogging` asserts 0 allocs/op and `BenchmarkEvaluateWithTracer` stays within 0.5% of the no-tracer baseline.
+- [ ] **OBS-03**: `slog` and `stdlib log` adapters shipped as separate sub-packages; public API never exposes `*slog.Logger` directly.
+- [ ] **OBS-04**: Frozen structured-attribute vocabulary (`operation`, `predicate_op`, `path_mode`, `status`, `error.type`); PII allowlist bans predicate values, path field names, doc/RG/term IDs from INFO level.
+- [ ] **OBS-05**: `Telemetry`/`Signals` container carries OTel `TracerProvider` and `MeterProvider`; the library never mutates global OTel state (no `otel.SetTracerProvider`).
+- [ ] **OBS-06**: Boundary-only instrumentation — coarse spans on `Evaluate`, `Encode`, `Decode`, `BuildFromParquet`; per-predicate decisions emit span events on the parent span, not nested spans.
+- [ ] **OBS-07**: Context-aware API variants `EvaluateContext` and `BuildFromParquetContext` added as additive siblings; existing methods wrap with `context.Background()` — no breaking change.
+- [ ] **OBS-08**: Existing `adaptiveInvariantLogger *log.Logger` at `query.go:17` migrated to the new `Logger` interface in the same phase (single convention, no dual logger state).
 
-### Adaptive High-Cardinality Indexing
+### Experimentation CLI
 
-- [x] **HCARD-01**: High-cardinality string paths can retain exact row-group bitmaps for frequent terms instead of degrading entirely to bloom-only — validated in Phase 08
-- [x] **HCARD-02**: Hot-term selection is frequency-driven and configurable at build time — validated in Phase 08
-- [x] **HCARD-03**: Non-hot terms on adaptive paths still use a compact fallback with no false negatives — validated in Phase 08
-- [x] **HCARD-04**: Index metadata surfaces whether a path is exact, bloom-only, or adaptive-hybrid — validated in Phase 08
-- [x] **HCARD-05**: Benchmarks and fixtures quantify pruning improvement and size impact for realistic high-cardinality distributions — validated in Phase 08
+- [ ] **CLI-01**: New `experiment` subcommand in `cmd/gin-index/main.go` accepts JSONL from a file path or `-` (stdin).
+- [ ] **CLI-02**: Emits a per-path summary table (types, cardinality estimate, mode, bloom occupancy, promoted hot terms) reusing `writeIndexInfo` / `formatPathInfo`.
+- [ ] **CLI-03**: Streaming JSONL ingest with bounded memory — uses `bufio.Reader.ReadBytes` (or `Scanner` with an explicit buffer size) to avoid the 64KB default-line truncation.
+- [ ] **CLI-04**: Optional `-o out.gin` flag writes the built index sidecar.
+- [ ] **CLI-05**: `--json` output mode emits the summary in a stable schema for CI/piping into jq.
+- [ ] **CLI-06**: Inline predicate tester `--test '<predicate>'` shows matched/pruned row-group counts and pruning ratio.
+- [ ] **CLI-07**: Error-tolerant mode `--on-error continue|abort` configurable; default `abort`.
+- [ ] **CLI-08**: Sample mode `--sample N` limits ingested documents for quick inspection of large JSONL files.
 
-### Derived Representations
-
-- [x] **DERIVE-01**: Configuration can declare derived indexes that preserve raw indexing and add transformed/index-friendly representations alongside it — validated in Phase 09
-- [x] **DERIVE-02**: Derived representations are queryable through explicit, deterministic path names or aliases — validated in Phase 09
-- [x] **DERIVE-03**: Serialization persists derived-index metadata so encoded indexes round-trip without custom rebuild logic — validated in Phase 09
-- [x] **DERIVE-04**: Tests and examples cover at least date/time, normalized text, and extracted-subfield derived indexing patterns — validated in Phase 09
-
-### Serialization Compaction
-
-- [x] **SIZE-01**: Path directory serialization uses prefix compression or an equivalent compact representation — validated in Phase 10
-- [x] **SIZE-02**: String term serialization uses prefix compression or block compaction instead of raw repeated strings — validated in Phase 10
-- [x] **SIZE-03**: Compact encoding introduces explicit format-version handling with round-trip coverage for legacy and new index formats — validated in Phase 10
-
-## Out of Scope
+## Out of Scope (deferred to v1.2 or later)
 
 | Feature | Reason |
 |---------|--------|
-| Full binary JSON / document-store representation | This milestone is about pruning quality, not row-level retrieval |
-| BM25 or ranked text retrieval | Frequency is only used for pruning/index layout decisions |
-| A new boolean query language | Existing predicate composition is sufficient for this milestone |
-| Multi-file index merge | Valuable, but lower impact than single-index pruning quality |
-| Serving the index as a remote service | Operational infrastructure is not the current bottleneck |
+| `pure-simdjson` parser implementation | Upstream blockers: no LICENSE file, no version tag, shared-library distribution undecided |
+| SIMD parser benchmarks vs stdlib | Blocked on SIMD implementation |
+| CI matrix for `-tags simdjson` builds | Blocked on SIMD implementation |
+| Vendoring SEED-001 simdjson example datasets | Blocked on SIMD implementation |
+| Experimentation CLI REPL / TUI mode | Scope creep — v1.1 ships a CLI subcommand, not an interactive tool |
+| Two-file index diff | Low value vs complexity; wait for user demand |
+| `zap` adapter | Ship `slog`/`stdlib` only; add `zap` on explicit user request |
+| Auto-color output in the CLI | Explicit opt-out from colour libraries per research recommendation |
+| Distributed tracing integration examples | Ship the API; ship examples when a consumer has a concrete integration |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PATH-01 | Phase 06 | Complete |
-| PATH-02 | Phase 06 | Complete |
-| PATH-03 | Phase 06 | Complete |
-| BUILD-01 | Phase 07 | Complete |
-| BUILD-02 | Phase 07 | Complete |
-| BUILD-03 | Phase 07 | Complete |
-| BUILD-04 | Phase 07 | Complete |
-| BUILD-05 | Phase 07 | Complete |
-| HCARD-01 | Phase 08 | Complete |
-| HCARD-02 | Phase 08 | Complete |
-| HCARD-03 | Phase 08 | Complete |
-| HCARD-04 | Phase 08 | Complete |
-| HCARD-05 | Phase 08 | Complete |
-| DERIVE-01 | Phase 09 | Complete |
-| DERIVE-02 | Phase 09 | Complete |
-| DERIVE-03 | Phase 09 | Complete |
-| DERIVE-04 | Phase 09 | Complete |
-| SIZE-01 | Phase 10 | Complete |
-| SIZE-02 | Phase 10 | Complete |
-| SIZE-03 | Phase 10 | Complete |
+| PARSER-01 | Phase 13 | Planned |
+| OBS-01 | Phase 14 | Planned |
+| OBS-02 | Phase 14 | Planned |
+| OBS-03 | Phase 14 | Planned |
+| OBS-04 | Phase 14 | Planned |
+| OBS-05 | Phase 14 | Planned |
+| OBS-06 | Phase 14 | Planned |
+| OBS-07 | Phase 14 | Planned |
+| OBS-08 | Phase 14 | Planned |
+| CLI-01 | Phase 15 | Planned |
+| CLI-02 | Phase 15 | Planned |
+| CLI-03 | Phase 15 | Planned |
+| CLI-04 | Phase 15 | Planned |
+| CLI-05 | Phase 15 | Planned |
+| CLI-06 | Phase 15 | Planned |
+| CLI-07 | Phase 15 | Planned |
+| CLI-08 | Phase 15 | Planned |
 
 **Coverage:**
-- Requirements total: 20
-- Checked off: 20
-- Mapped to phases: 20
+- Requirements total: 17
+- Checked off: 0
+- Mapped to phases: 17
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-04-14*
-*Last updated: 2026-04-21 after milestone evidence reconciliation*
+*Requirements defined: 2026-04-21 for milestone v1.1 Performance, Observability & Experimentation*
+*SIMD impl (original PARSER-02..05) deferred to v1.2 pending upstream pure-simdjson resolution*

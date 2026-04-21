@@ -1,8 +1,31 @@
-# GIN Index — v1.0 Query & Index Quality
+# GIN Index
+
+## Current State
+
+- **Shipped:** `v1.0` Query & Index Quality (2026-04-21)
+- **Tag:** `v1.0` on `main`
+- **Scope delivered:** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
+- **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
+- **Next milestone:** v1.1 Performance, Observability & Experimentation — defined (see below)
+
+## Current Milestone: v1.1 Performance, Observability & Experimentation
+
+**Goal:** Introduce a SIMD-accelerated JSON ingest path, add observability/logging primitives that surface index internals and hot-path costs, and ship a small CLI that builds an index from a JSONL file for experimentation and teaching.
+
+**Target themes:**
+- **Parser seam (preparation for SIMD)** — extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default (wrapping today's `json.Decoder.UseNumber()`). Pure refactor with a parity-test harness. Keeps the door open for a SIMD parser in v1.2 without touching builder internals.
+- **Observability & logging** — add logger/tracer interfaces inspired by `github.com/amikos-tech/go-wand`'s `pkg/logging` (PR #114) and `pkg/telemetry` (PR #115) patterns. Structured events for index build, query evaluation, serialization; zero-cost when disabled; no global OTel mutation; migrate the existing `adaptiveInvariantLogger *log.Logger` to the new interface.
+- **Experimentation CLI** — new `experiment` subcommand accepts JSONL (file or stdin), builds an index, emits a per-path summary table (types, cardinality, mode, bloom occupancy, hot terms). Optional inline predicate tester, JSON output mode, streaming ingest with bounded memory.
+
+**Deferred to v1.2:** SIMD parser implementation (`pure-simdjson` adapter, benchmarks, CI matrix). Blocked on upstream LICENSE, version tag, and shared-library distribution decision.
+
+**Active seeds:** SEED-001 (simdjson test datasets) — deferred to v1.2 alongside the SIMD parser impl.
 
 ## What This Is
 
-GIN Index has shipped `v0.1.0` and proven the core pruning model: compact sidecar bytes, row-group candidate evaluation, and broad JSON predicate support. This milestone shifts the project from open-source readiness to product quality work on the index itself: better query hot-path performance, lower build-time overhead, stronger numeric fidelity, improved pruning on high-cardinality paths, and smaller serialized artifacts.
+GIN Index is a Generalized Inverted Index for JSON data, designed for row-group pruning in columnar storage (Parquet). It enables fast predicate evaluation to determine which row groups MAY contain matching documents — filling the gap between a full scan and standing up a database.
+
+As of `v1.0`, the library has a canonical hot-path lookup, exact-int numeric semantics, adaptive high-cardinality string pruning, queryable derived representations alongside raw indexing, and compact prefix-encoded serialized layout.
 
 ## Core Value
 
@@ -28,7 +51,7 @@ Material pruning quality and hot-path efficiency gains without turning the libra
 
 ### Active
 
-- None. The v1.0 milestone requirements are fully validated as of Phase 12 evidence reconciliation.
+- **v1.1 — 17 requirements in progress.** See `.planning/REQUIREMENTS.md` for the full list: PARSER-01 (parser seam), OBS-01..08 (observability), CLI-01..08 (experimentation CLI). All mapped to phases 13-15 in `.planning/ROADMAP.md`.
 
 ### Out of Scope
 
@@ -85,4 +108,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-21 after Phase 12 completion*
+*Last updated: 2026-04-21 — v1.1 milestone started*
