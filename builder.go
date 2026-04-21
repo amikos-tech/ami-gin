@@ -33,6 +33,17 @@ type GINBuilder struct {
 	// corruption; Finalize remains callable so callers can discard the
 	// builder gracefully.
 	poisonErr error
+
+	// Parser seam (Phase 13). parser defaults to stdlibParser{} at
+	// NewBuilder; parserName is the cached Parser.Name() result (Phase 14
+	// telemetry hook). currentDocState is set by parserSink.BeginDocument
+	// and read by AddDocument after Parse returns; AddDocument enforces
+	// runtime guards in Plan 02 by resetting the field before dispatch and
+	// then validating BeginDocument was called with the correct rgID.
+	// Single-threaded builder execution keeps this handoff sufficient.
+	parser          Parser
+	parserName      string
+	currentDocState *documentBuildState
 }
 
 type pathBuildData struct {
