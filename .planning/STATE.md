@@ -4,13 +4,13 @@ milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
 status: executing
 stopped_at: Phase 13 context gathered
-last_updated: "2026-04-21T10:49:11Z"
-last_activity: 2026-04-21 -- Phase 13 plan 13-01 completed
+last_updated: "2026-04-21T11:18:30Z"
+last_activity: 2026-04-21 -- Phase 13 plan 13-02 completed
 progress:
   total_phases: 8
   completed_phases: 0
   total_plans: 3
-  completed_plans: 1
+  completed_plans: 2
   percent: 0
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 13 — parser-seam-extraction (plan 13-02 next)
+**Current focus:** Phase 13 — parser-seam-extraction (plan 13-03 next)
 
 ## Current Position
 
 Phase: 13 (parser-seam-extraction) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Executing Phase 13
-Last activity: 2026-04-21 -- Plan 13-01 complete (`refactor(parser): add parser seam surface`)
+Last activity: 2026-04-21 -- Plan 13-02 complete (`refactor(parser): wire AddDocument through parser seam`)
 
 Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
@@ -55,7 +55,7 @@ Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 13 | TBD | Not started |
+| 13 | 3 | Executing |
 | 14 | TBD | Not started |
 | 15 | TBD | Not started |
 
@@ -85,7 +85,7 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- Continue `/gsd-execute-phase 13` — wire `AddDocument` through `b.parser.Parse`, cache `parserName`, and capture parity goldens
+- Continue `/gsd-execute-phase 13` — add the parity harness assertions against the committed authored goldens
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
@@ -128,6 +128,6 @@ Last session: --stopped-at
 Stopped at: Phase 13 context gathered
 Resume file: --resume-file
 
-**Next step:** Continue `/gsd-execute-phase 13` to execute `13-02-PLAN.md` and wire the parser seam onto `AddDocument`.
+**Next step:** Continue `/gsd-execute-phase 13` to execute `13-03-PLAN.md` and land the parity harness merge gate.
 
 **Planned Phase:** 13 (parser-seam-extraction) — 3 plans — 2026-04-21T10:36:01.518Z

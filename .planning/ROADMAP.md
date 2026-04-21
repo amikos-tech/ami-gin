@@ -44,7 +44,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 Plans:
 - [x] 13-01-PLAN.md — Parser interface + stdlibParser + sink adapters (additive; no AddDocument wiring yet)
-- [ ] 13-02-PLAN.md — Wire AddDocument through b.parser.Parse + NewBuilder default + delete dead walkers
+- [x] 13-02-PLAN.md — Wire AddDocument through b.parser.Parse + NewBuilder default + delete dead walkers
 - [ ] 13-03-PLAN.md — Parity harness (authored goldens + gopter determinism + 12-operator Evaluate matrix) — merge gate
 
 ### Phase 14: Observability Seams
