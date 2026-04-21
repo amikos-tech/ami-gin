@@ -20,8 +20,8 @@ func TestWithParserRejectsNil(t *testing.T) {
 }
 
 func TestStdlibParserName(t *testing.T) {
-	if got := (stdlibParser{}).Name(); got != "stdlib" {
-		t.Fatalf("stdlibParser.Name() = %q, want %q", got, "stdlib")
+	if got := (stdlibParser{}).Name(); got != stdlibParserName {
+		t.Fatalf("stdlibParser.Name() = %q, want %q", got, stdlibParserName)
 	}
 }
 
@@ -84,8 +84,8 @@ func TestNewBuilderDefaultsToStdlibParser(t *testing.T) {
 	if b.parser == nil {
 		t.Fatal("b.parser is nil; expected stdlibParser{}")
 	}
-	if b.parserName != "stdlib" {
-		t.Errorf("b.parserName = %q, want %q", b.parserName, "stdlib")
+	if b.parserName != stdlibParserName {
+		t.Errorf("b.parserName = %q, want %q", b.parserName, stdlibParserName)
 	}
 	if _, ok := b.parser.(stdlibParser); !ok {
 		t.Errorf("b.parser concrete type = %T, want stdlibParser", b.parser)
@@ -112,8 +112,8 @@ func TestBuilderParserNameReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
-	if b.parserName != "stdlib" {
-		t.Errorf("b.parserName = %q, want %q", b.parserName, "stdlib")
+	if b.parserName != stdlibParserName {
+		t.Errorf("b.parserName = %q, want %q", b.parserName, stdlibParserName)
 	}
 }
 

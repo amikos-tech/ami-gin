@@ -8,13 +8,15 @@ import (
 	"github.com/pkg/errors"
 )
 
+const stdlibParserName = "stdlib"
+
 // stdlibParser is the default Parser: wraps json.Decoder.UseNumber() and
 // produces byte-identical staging calls to the pre-Phase-13 direct path.
 // Zero-field struct + value receivers avoid heap allocation when boxed
 // into the Parser interface.
 type stdlibParser struct{}
 
-func (stdlibParser) Name() string { return "stdlib" }
+func (stdlibParser) Name() string { return stdlibParserName }
 
 func (s stdlibParser) parseDocument(jsonDoc []byte, rgID int, builder *GINBuilder) (*documentBuildState, error) {
 	decoder := json.NewDecoder(bytes.NewReader(jsonDoc))
