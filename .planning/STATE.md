@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
 status: executing
-stopped_at: Phase 13 benchmark review pending
-last_updated: "2026-04-21T11:33:25Z"
-last_activity: 2026-04-21 -- Phase 13 plan 13-03 parity harness landed; benchmark gate needs review
+stopped_at: Phase 14 ready to start
+last_updated: "2026-04-21T12:38:13Z"
+last_activity: 2026-04-21 -- Phase 13 closed after benchmark-risk acceptance; Phase 14 unblocked
 progress:
-  total_phases: 8
-  completed_phases: 0
+  total_phases: 3
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
-  percent: 0
+  completed_plans: 3
+  percent: 33
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 13 — parser-seam-extraction (plan 13-03 benchmark review)
+**Current focus:** Phase 14 — observability-seams (planning pending)
 
 ## Current Position
 
-Phase: 13 (parser-seam-extraction) — EXECUTING
-Plan: 3 of 3
-Status: Benchmark review pending for Phase 13
-Last activity: 2026-04-21 -- Plan 13-03 parity harness landed (`test(parser): add phase 13 parity harness`)
+Phase: 14 (observability-seams) — NOT STARTED
+Plan: planning pending
+Status: Phase 13 complete; benchmark risk accepted in `13-SECURITY.md`
+Last activity: 2026-04-21 -- Phase 13 closed after benchmark-risk acceptance
 
-Progress: [          ] 0% (0/3 phases, 0/17 requirements)
+Progress: [###.......] 33% (1/3 phases, 1/17 requirements)
 
 ## Performance Metrics
 
@@ -55,7 +55,7 @@ Progress: [          ] 0% (0/3 phases, 0/17 requirements)
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 13 | 3 | Executing |
+| 13 | 3 | Complete |
 | 14 | TBD | Not started |
 | 15 | TBD | Not started |
 
@@ -85,12 +85,12 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- Review [13-03-BENCH.md](./phases/13-parser-seam-extraction/13-03-BENCH.md) and decide whether to accept the benchmark noise or keep investigating the transformer-heavy explicit-number path before closing Phase 13
+- Start Phase 14 planning for observability seams (`OBS-01` through `OBS-08`)
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
 
-- Phase 13's benchmark artifact is not cleanly green on this machine. The transformer-heavy explicit-number probes fluctuate around and above the `+2%` wall-clock gate even though allocs/op stayed flat and the Plan 03 diff did not change the AddDocument hot path.
+- Phase 13's benchmark noise was accepted as residual risk in `.planning/phases/13-parser-seam-extraction/13-SECURITY.md`; preserve that evidence if a future performance follow-up revisits the transformer-heavy explicit-number path.
 - The pure-simdjson blockers (LICENSE, tag, distribution mechanism) remain deferred to v1.2 and do not gate Phases 13-15.
 
 ### Quick Tasks Completed (v1.0 era — retained for reference)
@@ -126,9 +126,9 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 ## Session Continuity
 
 Last session: --stopped-at
-Stopped at: Phase 13 benchmark review pending
+Stopped at: Phase 14 ready to start
 Resume file: --resume-file
 
-**Next step:** Review `13-03-BENCH.md` and decide whether Phase 13 can be accepted with the current noisy benchmark evidence or needs follow-up benchmark work.
+**Next step:** Start Phase 14 planning/execution. Phase 13 is complete and its residual benchmark noise is documented as an accepted risk.
 
-**Planned Phase:** 13 (parser-seam-extraction) — 3 plans — 2026-04-21T10:36:01.518Z
+**Planned Phase:** 14 (observability-seams) — planning pending

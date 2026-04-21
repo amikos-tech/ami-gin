@@ -1,7 +1,7 @@
 ---
 phase: 13-parser-seam-extraction
 plan: 03
-status: needs-review
+status: completed
 subsystem: test
 tags: [parser, parity, gopter, benchmark, merge-gate]
 requires:
@@ -9,7 +9,7 @@ requires:
     provides: parser seam wire-up and committed authored goldens
 provides:
   - always-on parser parity harness
-  - benchmark delta artifact with an explicit review hold
+  - benchmark delta artifact preserved with an accepted-risk disposition
 affects: [parser, tests, benchmarks, planning, phase-14]
 tech-stack:
   added: []
@@ -27,56 +27,58 @@ key-files:
 key-decisions:
   - "Kept parser parity assertions always-on with no skip-on-missing gate; the authored goldens remain the byte-level source of truth."
   - "Introduced a package-local stdlibParserName constant so parser-name tests stay lint-clean without widening the public API."
-  - "Recorded the benchmark evidence as Needs review instead of marking the phase complete because the transformer-heavy explicit-number probes did not clear the +2% wall-clock gate consistently."
+  - "Accepted the transformer-heavy benchmark noise as residual risk in 13-SECURITY.md instead of reopening implementation work that kept allocs flat and correctness/parity green."
 patterns-established:
   - "Merge-gate pattern: always-on golden parity + gopter determinism canary + Evaluate matrix."
-  - "Benchmark review-hold pattern: keep the plan implementation landed, but hold roadmap/state completion when the performance gate is noisy or not cleanly green."
-requirements-completed: []
-duration: pending-benchmark-review
-completed: pending-benchmark-review
+  - "Benchmark risk-acceptance pattern: preserve the failing artifact, document the residual risk, and reconcile roadmap/state after human review."
+requirements-completed: [PARSER-01]
+duration: completed-after-benchmark-risk-acceptance
+completed: 2026-04-21
 ---
 
 # Phase 13 Plan 03: Parity Harness Summary
 
-**The parity harness is landed and the repo test/lint gate is green, but Phase 13 remains open pending human review of the benchmark artifact**
+**The parity harness is landed, the repo test/lint gate is green, and Phase 13 is closed with the residual benchmark noise accepted in the phase security record**
 
 ## Performance
 
 - **Started:** 2026-04-21T11:18:30Z
-- **Last updated:** 2026-04-21T11:33:25Z
+- **Completed:** 2026-04-21
 - **Tasks:** 3
-- **Status:** Needs review
+- **Status:** Complete
 
 ## Accomplishments
 
 - Added `parser_parity_test.go` as an always-on merge gate with the 7 authored golden fixtures, three gopter determinism properties, and the 24-case Evaluate matrix.
 - Kept the parser-name assertions lint-clean by introducing the package-local `stdlibParserName` constant and reusing it in `stdlibParser.Name()` and the parser tests.
 - Verified the full repo gate with `make lint`, focused parity runs, `TestNumericIndexPreservesInt64Exactness`, and `make test` before capturing the benchmark artifact in [13-03-BENCH.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-03-BENCH.md).
+- Closed the phase after the benchmark drift was explicitly accepted as residual risk in [13-SECURITY.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-SECURITY.md).
 
 ## Task Commits
 
 1. **Tasks 1-2: parity harness, determinism canary, Evaluate matrix, and parser-name lint cleanup** - `88c3371` (test/refactor)
+2. **Phase security acceptance: benchmark noise accepted as residual risk** - `6e2abae` (docs)
 
 ## Files Created/Modified
 
 - `parser_parity_test.go` - Adds the always-on authored-golden assertions, determinism canary, and 12-operator Evaluate matrix.
 - `parser_stdlib.go`, `parser_test.go` - Share the package-local `stdlibParserName` constant so parser-name checks stay aligned and lint-clean.
-- [13-03-BENCH.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-03-BENCH.md) - Records the benchmark evidence and the explicit review hold.
-- `.planning/ROADMAP.md`, `.planning/STATE.md` - Keep phase tracking honest by leaving Phase 13 open while the benchmark artifact is under review.
+- [13-03-BENCH.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-03-BENCH.md) - Records the benchmark evidence that was later accepted as residual risk.
+- [13-SECURITY.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-SECURITY.md), `.planning/ROADMAP.md`, `.planning/STATE.md` - Record the accepted benchmark-risk disposition and close the phase in the planning trackers.
 
 ## Decisions Made
 
 - Kept the golden parity test non-skippable: missing goldens are a hard failure, not a bootstrap skip path.
-- Treated the benchmark evidence conservatively. The code/test diff is landed, but the milestone tracker is not being advanced past the performance gate without a clean result.
+- Accepted the residual transformer-heavy benchmark drift after review because allocs stayed flat and the parity/correctness gates remained green.
 - Preserved the narrower D-02 API interpretation from the earlier plans: `Parser` and `WithParser` are exported, while `parserSink` and `stdlibParser` remain package-private.
 
 ## Deviations from Plan
 
-### Benchmark Review Hold
+### Benchmark Risk Acceptance
 
 - **Original plan:** Finalize Phase 13 once the full suite, lint, and the exact-anchored benchmark gate all cleared.
-- **Actual outcome:** The code/test work for plan 13-03 is complete, but the isolated explicit-number transformer-heavy benchmark probes remained slightly above the `+2%` wall-clock threshold on this machine.
-- **Reason held open:** The benchmark artifact is not cleanly green, so Phase 13 is left executing rather than silently marked complete.
+- **Observed outcome:** The code/test work for plan 13-03 completed, but the isolated explicit-number transformer-heavy benchmark probes remained slightly above the `+2%` wall-clock threshold on this machine.
+- **Resolution:** The benchmark drift was accepted as residual risk and recorded in [13-SECURITY.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-SECURITY.md), so the phase is now closed without changing the benchmark artifact itself.
 
 ### ROADMAP deviation (D-02), narrower than originally drafted
 
@@ -88,26 +90,21 @@ Success-criterion #3 lists `Parser`, `ParserSink`, `WithParser`, and `stdlibPars
 
 ## User Setup Required
 
-None for the landed code/test work.
-
-Phase 13 still needs one of:
-- accept the benchmark noise and close the phase with the current evidence
-- adjust the benchmark methodology before closing the phase
-- investigate the transformer-heavy explicit-number benchmark path further
+None.
 
 ## Next Phase Readiness
 
-- Phase 14 should not start under the normal workflow until Phase 13's benchmark hold is resolved.
-- The parser seam itself is now guarded by an always-on parity harness, so any further benchmark investigation can focus strictly on performance evidence rather than behavioral correctness.
+- Phase 14 can start under the normal workflow; Phase 13 is complete and no longer blocks the milestone DAG.
+- The parser seam is now guarded by an always-on parity harness, so any future benchmark follow-up can focus strictly on performance evidence rather than behavioral correctness.
 
-## Self-Check: NEEDS REVIEW
+## Self-Check: PASSED
 
 - `make lint`
 - `go test -run "TestParserParity_AuthoredFixtures|TestParserSeam_DeterministicAcrossRuns|TestParserParity_EvaluateMatrix" -count=1 -v .`
 - `go test -run TestNumericIndexPreservesInt64Exactness -count=1 -v .`
 - `make test`
-- Focused benchmark evidence recorded in [13-03-BENCH.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-03-BENCH.md)
+- Focused benchmark evidence recorded in [13-03-BENCH.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-03-BENCH.md) and accepted as residual risk in [13-SECURITY.md](/Users/tazarov/experiments/amikos/custom-gin/.planning/phases/13-parser-seam-extraction/13-SECURITY.md)
 
 ---
 *Phase: 13-parser-seam-extraction*
-*Status: Needs review*
+*Status: Complete*
