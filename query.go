@@ -37,17 +37,22 @@ func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate
 	logger := configLogger(idx.Config)
 	signals := configSignals(idx.Config)
 
-	_, span := signals.Tracer(queryScope).Start(ctx, telemetry.OperationEvaluate)
-	defer span.End()
-
 	result := AllRGs(numRGs)
-	for _, p := range predicates {
-		rgSet := idx.evaluatePredicate(p)
-		result = result.Intersect(rgSet)
-		if result.IsEmpty() {
-			break
+	_ = telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
+		Scope:     queryScope,
+		Operation: telemetry.OperationEvaluate,
+	}, func(_ context.Context) error {
+		r := AllRGs(numRGs)
+		for _, p := range predicates {
+			rgSet := idx.evaluatePredicate(p)
+			r = r.Intersect(rgSet)
+			if r.IsEmpty() {
+				break
+			}
 		}
-	}
+		result = r
+		return nil
+	})
 
 	logging.Info(logger, "evaluate completed",
 		logging.AttrOperation(telemetry.OperationEvaluate),

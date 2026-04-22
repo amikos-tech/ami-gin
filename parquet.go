@@ -140,7 +140,7 @@ func BuildFromParquetReaderContext(ctx context.Context, parquetFile string, json
 	var idx *GINIndex
 	err := telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
 		Scope:     "github.com/amikos-tech/ami-gin/parquet",
-		Operation: "build_from_parquet",
+		Operation: telemetry.OperationBuildFromParquet,
 		ClassifyError: func(e error) string {
 			return classifyParquetError(e)
 		},

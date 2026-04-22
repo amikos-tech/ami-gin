@@ -218,7 +218,7 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 	var result []byte
 	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
 		Scope:     "github.com/amikos-tech/ami-gin/serialize",
-		Operation: "encode",
+		Operation: telemetry.OperationEncode,
 		ClassifyError: func(e error) string {
 			return classifySerializeError(e)
 		},
@@ -337,7 +337,7 @@ func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GIN
 	var idx *GINIndex
 	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
 		Scope:     "github.com/amikos-tech/ami-gin/serialize",
-		Operation: "decode",
+		Operation: telemetry.OperationDecode,
 		ClassifyError: func(e error) string {
 			return classifySerializeError(e)
 		},
