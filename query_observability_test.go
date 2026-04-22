@@ -167,36 +167,40 @@ func buildQueryObsIndex() (*gin.GINIndex, error) {
 // buildAdaptiveInvariantIndex creates an index that triggers adaptive invariant
 // violations when evaluated: the path is flagged AdaptiveHybrid but has no
 // AdaptiveStringIndexes entry, so lookupAdaptiveStringMatch returns ok=false.
+//
+// We index the query term "hot" itself so the bloom and StringLengthIndex both
+// pass. Then we force the path mode to AdaptiveHybrid and delete the adaptive
+// index, leaving the path with no adaptive data — the invariant condition.
 func buildAdaptiveInvariantIndex(t *testing.T, numRGs int) *gin.GINIndex {
 	t.Helper()
-	idx := gin.NewGINIndex()
-	idx.Header.NumRowGroups = uint32(numRGs)
-	idx.PathDirectory = []gin.PathEntry{{
-		PathID:   0,
-		PathName: "$.field",
-		Mode:     gin.PathModeAdaptiveHybrid,
-	}}
-	// pathLookup is unexported; use the exported SetPathLookup if available,
-	// or use a builder + Finalize roundtrip that seeds the lookup table.
-	// Since pathLookup is unexported we set it through the only available
-	// public path: build via the builder and then patch the path directory.
-	// For now, construct it via builder so pathLookup is seeded correctly.
-	_ = idx
 	b, err := gin.NewBuilder(gin.DefaultConfig(), numRGs)
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
+	// Index "hot" so bloom and StringLengthIndex both pass when we query it.
 	for i := 0; i < numRGs; i++ {
-		if err := b.AddDocument(gin.DocID(i), []byte(`{"field":"cold"}`)); err != nil {
+		if err := b.AddDocument(gin.DocID(i), []byte(`{"field":"hot"}`)); err != nil {
 			t.Fatalf("AddDocument: %v", err)
 		}
 	}
 	built := b.Finalize()
-	// Force the path to adaptive-hybrid mode so evaluateEQ triggers adaptiveInvariantAllRGs.
-	built.PathDirectory[0].Mode = gin.PathModeAdaptiveHybrid
-	// Remove the adaptive index so lookupAdaptiveStringMatch returns ok=false.
-	delete(built.AdaptiveStringIndexes, 0)
-	// The bloom filter must pass so we reach the adaptive lookup.
-	built.GlobalBloom.AddString("$.field=hot")
+
+	// Locate the $.field path entry.
+	fieldPathID := -1
+	for i, pe := range built.PathDirectory {
+		if pe.PathName == "$.field" {
+			fieldPathID = i
+			break
+		}
+	}
+	if fieldPathID < 0 {
+		t.Fatal("$.field path entry not found in built index")
+	}
+
+	// Force adaptive-hybrid mode so evaluateEQ takes the adaptive branch.
+	built.PathDirectory[fieldPathID].Mode = gin.PathModeAdaptiveHybrid
+	// Remove the adaptive index so lookupAdaptiveStringMatch returns ok=false,
+	// which triggers adaptiveInvariantAllRGs (the invariant violation path).
+	delete(built.AdaptiveStringIndexes, uint16(fieldPathID))
 	return built
 }
