@@ -22,19 +22,20 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	fs := flag.NewFlagSet("experiment", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	rgSize := fs.Int("rg-size", 1, "Synthetic row-group size")
+	jsonOutput := fs.Bool("json", false, "Emit experiment output as JSON")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 
 	if *rgSize <= 0 {
 		fmt.Fprintln(stderr, "Error: --rg-size must be greater than 0")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] <input-path|->")
 		return 1
 	}
 
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "Error: exactly one input path is required")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] <input-path|->")
 		return 1
 	}
 
@@ -51,52 +52,87 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		estimatedRGs = ceilDiv(source.candidateRecords, *rgSize)
 	}
 
-	idx, ingestedDocs, err := buildExperimentIndex(source.open, *rgSize, estimatedRGs)
+	result, err := buildExperimentIndex(source.open, gin.DefaultConfig(), *rgSize, estimatedRGs)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
 
 	usedRowGroups := 0
-	if ingestedDocs > 0 {
-		usedRowGroups = ceilDiv(ingestedDocs, *rgSize)
+	if result.ingestedDocs > 0 {
+		usedRowGroups = ceilDiv(result.ingestedDocs, *rgSize)
 	}
 
-	writeExperimentSummary(stdout, source.displayName, ingestedDocs, usedRowGroups, *rgSize)
-	writeExperimentIndexInfo(stdout, idx, usedRowGroups)
+	report := experimentReport{
+		Source: experimentSource{
+			Input: source.displayName,
+			Stdin: source.stdin,
+		},
+		Summary: experimentSummary{
+			Documents:      result.ingestedDocs,
+			RowGroups:      usedRowGroups,
+			RGSize:         *rgSize,
+			SampleLimit:    0,
+			ProcessedLines: result.processedLines,
+			SkippedLines:   0,
+			ErrorCount:     0,
+			SidecarPath:    "",
+		},
+		Paths: collectExperimentPathRows(result.idx),
+	}
+
+	if *jsonOutput {
+		if err := writeExperimentJSON(stdout, report); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	writeExperimentText(stdout, report, result.idx)
 	return 0
 }
 
-type experimentSource struct {
+type experimentInputSource struct {
+	inputPath        string
 	displayName      string
+	stdin            bool
 	candidateRecords int
 	open             func() (io.ReadCloser, error)
 	cleanup          func()
 }
 
-func prepareExperimentSource(inputArg string, stdin io.Reader) (experimentSource, error) {
+type experimentBuildResult struct {
+	idx            *gin.GINIndex
+	processedLines int
+	ingestedDocs   int
+}
+
+func prepareExperimentSource(inputArg string, stdin io.Reader) (experimentInputSource, error) {
 	if inputArg == "-" {
 		return prepareExperimentStdin(stdin)
 	}
 	return prepareExperimentFile(inputArg)
 }
 
-func prepareExperimentFile(path string) (experimentSource, error) {
+func prepareExperimentFile(path string) (experimentInputSource, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return experimentSource{}, errors.Wrap(err, "stat input")
+		return experimentInputSource{}, errors.Wrap(err, "stat input")
 	}
 	if info.IsDir() {
-		return experimentSource{}, errors.Errorf("input %q is a directory", path)
+		return experimentInputSource{}, errors.Errorf("input %q is a directory", path)
 	}
 
 	count, err := countExperimentFile(path)
 	if err != nil {
-		return experimentSource{}, err
+		return experimentInputSource{}, err
 	}
 
-	return experimentSource{
+	return experimentInputSource{
+		inputPath:        path,
 		displayName:      path,
+		stdin:            false,
 		candidateRecords: count,
 		open: func() (io.ReadCloser, error) {
 			f, err := os.Open(path)
@@ -109,26 +145,28 @@ func prepareExperimentFile(path string) (experimentSource, error) {
 	}, nil
 }
 
-func prepareExperimentStdin(stdin io.Reader) (experimentSource, error) {
+func prepareExperimentStdin(stdin io.Reader) (experimentInputSource, error) {
 	tmpFile, err := os.CreateTemp("", "gin-index-experiment-*.jsonl")
 	if err != nil {
-		return experimentSource{}, errors.Wrap(err, "create temp file for stdin")
+		return experimentInputSource{}, errors.Wrap(err, "create temp file for stdin")
 	}
 
 	count, countErr := countExperimentRecords(stdin, tmpFile)
 	closeErr := tmpFile.Close()
 	if countErr != nil {
 		_ = os.Remove(tmpFile.Name())
-		return experimentSource{}, countErr
+		return experimentInputSource{}, countErr
 	}
 	if closeErr != nil {
 		_ = os.Remove(tmpFile.Name())
-		return experimentSource{}, errors.Wrap(closeErr, "close temp file for stdin")
+		return experimentInputSource{}, errors.Wrap(closeErr, "close temp file for stdin")
 	}
 
 	tempPath := tmpFile.Name()
-	return experimentSource{
+	return experimentInputSource{
+		inputPath:        "",
 		displayName:      "-",
+		stdin:            true,
 		candidateRecords: count,
 		open: func() (io.ReadCloser, error) {
 			f, err := os.Open(tempPath)
@@ -178,20 +216,20 @@ func countExperimentRecords(r io.Reader, spool io.Writer) (int, error) {
 	}
 }
 
-func buildExperimentIndex(open func() (io.ReadCloser, error), rgSize, estimatedRGs int) (*gin.GINIndex, int, error) {
-	builder, err := gin.NewBuilder(gin.DefaultConfig(), estimatedRGs)
+func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConfig, rgSize, estimatedRGs int) (experimentBuildResult, error) {
+	builder, err := gin.NewBuilder(config, estimatedRGs)
 	if err != nil {
-		return nil, 0, errors.Wrap(err, "create builder")
+		return experimentBuildResult{}, errors.Wrap(err, "create builder")
 	}
 
 	r, err := open()
 	if err != nil {
-		return nil, 0, err
+		return experimentBuildResult{}, err
 	}
 	defer r.Close()
 
 	reader := bufio.NewReader(r)
-	ingestedDocs := 0
+	result := experimentBuildResult{}
 	lineNumber := 0
 
 	for {
@@ -200,27 +238,30 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), rgSize, estimatedR
 			break
 		}
 		if readErr != nil && readErr != io.EOF {
-			return nil, 0, errors.Wrap(readErr, "read input for ingest")
+			return experimentBuildResult{}, errors.Wrap(readErr, "read input for ingest")
 		}
 
 		lineNumber++
+		result.processedLines++
+
 		record := trimExperimentLineEnding(line)
 		if len(record) == 0 {
-			return nil, 0, errors.Errorf("line %d: blank JSONL line", lineNumber)
+			return experimentBuildResult{}, errors.Errorf("line %d: blank JSONL line", lineNumber)
 		}
 
-		rgID := ingestedDocs / rgSize
+		rgID := result.ingestedDocs / rgSize
 		if err := builder.AddDocument(gin.DocID(rgID), record); err != nil {
-			return nil, 0, errors.Wrapf(err, "line %d", lineNumber)
+			return experimentBuildResult{}, errors.Wrapf(err, "line %d", lineNumber)
 		}
-		ingestedDocs++
+		result.ingestedDocs++
 
 		if readErr == io.EOF {
 			break
 		}
 	}
 
-	return builder.Finalize(), ingestedDocs, nil
+	result.idx = builder.Finalize()
+	return result, nil
 }
 
 func trimExperimentLineEnding(line []byte) []byte {
@@ -231,21 +272,6 @@ func trimExperimentLineEnding(line []byte) []byte {
 		line = line[:n-1]
 	}
 	return line
-}
-
-func writeExperimentSummary(w io.Writer, input string, documents, rowGroups, rgSize int) {
-	fmt.Fprintln(w, "Experiment Summary:")
-	fmt.Fprintf(w, "  Input: %s\n", input)
-	fmt.Fprintf(w, "  Documents: %d\n", documents)
-	fmt.Fprintf(w, "  Row Groups: %d\n", rowGroups)
-	fmt.Fprintf(w, "  RG Size: %d\n", rgSize)
-	fmt.Fprintln(w)
-}
-
-func writeExperimentIndexInfo(w io.Writer, idx *gin.GINIndex, usedRowGroups int) {
-	idxCopy := *idx
-	idxCopy.Header.NumRowGroups = uint32(usedRowGroups)
-	writeIndexInfo(w, &idxCopy)
 }
 
 func ceilDiv(value, divisor int) int {
