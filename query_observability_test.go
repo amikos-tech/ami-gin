@@ -162,6 +162,11 @@ func TestEvaluateDisabledLoggingAllocsZero(t *testing.T) {
 // TestEvaluateWithTracerWithinBudget asserts that running EvaluateContext with
 // a disabled/noop tracer stays within the 0.5% overhead budget compared to the
 // no-tracer baseline. Only enforced when GIN_STRICT_PERF=1.
+//
+// Both the baseline and noop-tracer path use telemetry.Disabled(), so the
+// comparison is between two semantically identical code paths. The median-of-N
+// approach with GOMAXPROCS(1) suppresses scheduler jitter enough for the 0.5%
+// budget to be meaningful on a quiet, dedicated machine.
 func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping perf budget test in short mode")
@@ -173,22 +178,27 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	}
 	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
 
-	// Baseline: no signals (disabled).
+	// Baseline: DefaultConfig produces disabled signals (telemetry.Disabled()).
 	baselineCfg := gin.DefaultConfig()
 	idx.Config = &baselineCfg
 
-	const samples = 7
-	baselineTimes := collectEvalSamples(idx, preds, samples)
+	// Use more samples and drop the first few as warmup to reduce cold-start noise.
+	const totalSamples = 51
+	const warmup = 5
 
-	// Noop-tracer path: explicitly disabled signals (same as baseline semantics,
-	// but exercises the Signals.Tracer() + span.End() code path).
+	baselineAll := collectEvalSamples(idx, preds, totalSamples)
+	baselineTimes := baselineAll[warmup:]
+
+	// Noop-tracer path: explicitly disabled signals. Semantically identical to
+	// DefaultConfig; exercises the WithSignals option code path.
 	noopCfg, err := gin.NewConfig(gin.WithSignals(telemetry.Disabled()))
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
 	idx.Config = &noopCfg
 
-	noopTimes := collectEvalSamples(idx, preds, samples)
+	noopAll := collectEvalSamples(idx, preds, totalSamples)
+	noopTimes := noopAll[warmup:]
 
 	baseMedian := medianInt64(baselineTimes)
 	noopMedian := medianInt64(noopTimes)
