@@ -243,7 +243,8 @@ func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, te
 func (idx *GINIndex) adaptiveInvariantAllRGs(op string) *RGSet {
 	logger := configLogger(idx.Config)
 	logging.Warn(logger, "adaptive path invariant violation; returning all row groups",
-		logging.AttrOperation(op),
+		logging.AttrOperation(telemetry.OperationEvaluate),
+		logging.AttrPredicateOp(op),
 		logging.AttrPathMode(logging.PathModeAdaptiveHybrid),
 	)
 	return AllRGs(int(idx.Header.NumRowGroups))
