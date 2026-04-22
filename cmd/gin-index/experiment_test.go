@@ -42,6 +42,29 @@ func decodeJSONMap(t *testing.T, raw []byte) map[string]json.RawMessage {
 	return out
 }
 
+func requireJSONKeys(t *testing.T, raw map[string]json.RawMessage, required, forbidden []string) {
+	t.Helper()
+
+	for _, key := range required {
+		if _, ok := raw[key]; !ok {
+			t.Fatalf("missing JSON key %q in %v", key, mapsKeys(raw))
+		}
+	}
+	for _, key := range forbidden {
+		if _, ok := raw[key]; ok {
+			t.Fatalf("unexpected JSON key %q in %v", key, mapsKeys(raw))
+		}
+	}
+}
+
+func mapsKeys(raw map[string]json.RawMessage) []string {
+	keys := make([]string, 0, len(raw))
+	for key := range raw {
+		keys = append(keys, key)
+	}
+	return keys
+}
+
 type failingReader struct {
 	err error
 }
@@ -113,17 +136,7 @@ func TestRunExperimentJSONGolden(t *testing.T) {
 	}
 
 	root := decodeJSONMap(t, stdout.Bytes())
-	if len(root) != 3 {
-		t.Fatalf("top-level key count = %d, want 3", len(root))
-	}
-	for _, key := range []string{"source", "summary", "paths"} {
-		if _, ok := root[key]; !ok {
-			t.Fatalf("top-level key %q missing from %s", key, stdout.String())
-		}
-	}
-	if _, ok := root["predicate_test"]; ok {
-		t.Fatalf("predicate_test unexpectedly present in %s", stdout.String())
-	}
+	requireJSONKeys(t, root, []string{"source", "summary", "paths"}, []string{"predicate_test"})
 
 	source := decodeJSONMap(t, root["source"])
 	if got := decodeJSONString(t, source["input"]); got != "-" {
@@ -142,6 +155,9 @@ func TestRunExperimentJSONGolden(t *testing.T) {
 	}
 	if got := decodeJSONInt(t, summary["rg_size"]); got != 1 {
 		t.Fatalf("summary.rg_size = %d, want 1", got)
+	}
+	if got := decodeJSONString(t, summary["status"]); got != "complete" {
+		t.Fatalf("summary.status = %q, want complete", got)
 	}
 
 	paths := decodeJSONArray(t, root["paths"])
@@ -220,18 +236,11 @@ func TestRunExperimentPredicateReportJSON(t *testing.T) {
 	}
 
 	root := decodeJSONMap(t, stdout.Bytes())
-	predicate, ok := root["predicate_test"]
-	if !ok {
-		t.Fatalf("predicate_test missing from %s", stdout.String())
-	}
-	if len(root) != 4 {
-		t.Fatalf("top-level key count = %d, want 4", len(root))
-	}
+	requireJSONKeys(t, root, []string{"source", "summary", "paths", "predicate_test"}, nil)
+	predicate := root["predicate_test"]
 
 	predicateMap := decodeJSONMap(t, predicate)
-	if len(predicateMap) != 4 {
-		t.Fatalf("predicate_test key count = %d, want 4", len(predicateMap))
-	}
+	requireJSONKeys(t, predicateMap, []string{"predicate", "matched", "pruned", "pruning_ratio"}, nil)
 	if got := decodeJSONString(t, predicateMap["predicate"]); got != `$.status = "error"` {
 		t.Fatalf("predicate_test.predicate = %q, want canonical predicate", got)
 	}
@@ -243,6 +252,11 @@ func TestRunExperimentPredicateReportJSON(t *testing.T) {
 	}
 	if got := decodeJSONFloat(t, predicateMap["pruning_ratio"]); math.Abs(got-0.5) > 1e-9 {
 		t.Fatalf("predicate_test.pruning_ratio = %f, want 0.5", got)
+	}
+
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONString(t, summary["status"]); got != "complete" {
+		t.Fatalf("summary.status = %q, want complete", got)
 	}
 }
 
@@ -369,32 +383,38 @@ func TestRunExperimentLogLevelWritesOnlyToStderr(t *testing.T) {
 	}, true)
 	predicate := `$.status = "error"`
 
-	t.Run("info", func(t *testing.T) {
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		code := runExperiment([]string{"--log-level", "info", "--test", predicate, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
-		if code != 0 {
-			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
-		}
-		if strings.Contains(stdout.String(), "evaluate completed") {
-			t.Fatalf("stdout leaked log output:\n%s", stdout.String())
-		}
-		if !strings.Contains(stderr.String(), "evaluate completed") {
-			t.Fatalf("stderr = %q, want evaluate log line", stderr.String())
-		}
-	})
-
-	t.Run("off", func(t *testing.T) {
-		var stdout bytes.Buffer
-		var stderr bytes.Buffer
-		code := runExperiment([]string{"--log-level", "off", "--test", predicate, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
-		if code != 0 {
-			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
-		}
-		if strings.Contains(stderr.String(), "evaluate completed") {
-			t.Fatalf("stderr = %q, want no library log output when off", stderr.String())
-		}
-	})
+	for _, tc := range []struct {
+		name    string
+		level   string
+		wantLog bool
+	}{
+		{name: "info", level: "info", wantLog: true},
+		{name: "debug", level: "debug", wantLog: true},
+		{name: "off", level: "off", wantLog: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := runExperiment([]string{"--log-level", tc.level, "--test", predicate, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+			if code != 0 {
+				t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+			}
+			if strings.Contains(stdout.String(), "operation=query.evaluate") {
+				t.Fatalf("stdout leaked query log output:\n%s", stdout.String())
+			}
+			if tc.wantLog {
+				for _, want := range []string{"operation=query.evaluate", "status=ok"} {
+					if !strings.Contains(stderr.String(), want) {
+						t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+					}
+				}
+				return
+			}
+			if strings.Contains(stderr.String(), "operation=query.evaluate") {
+				t.Fatalf("stderr = %q, want no query log output when off", stderr.String())
+			}
+		})
+	}
 }
 
 func TestRunExperimentOnErrorAbort(t *testing.T) {
@@ -460,6 +480,7 @@ func TestRunExperimentOnErrorContinue(t *testing.T) {
 		out := stdout.String()
 		for _, want := range []string{
 			"Documents: 2",
+			"Status: partial",
 			"Processed Lines: 3",
 			"Skipped Lines: 1",
 			"Error Count: 1",
@@ -495,6 +516,74 @@ func TestRunExperimentOnErrorContinue(t *testing.T) {
 		if got := decodeJSONInt(t, summary["error_count"]); got != 1 {
 			t.Fatalf("summary.error_count = %d, want 1", got)
 		}
+		if got := decodeJSONString(t, summary["status"]); got != "partial" {
+			t.Fatalf("summary.status = %q, want partial", got)
+		}
+	})
+}
+
+func TestRunExperimentOnErrorContinueMalformedJSONFromFile(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "malformed.jsonl", []string{
+		`{"status":"ok"}`,
+		`not-json`,
+		`{"status":"error"}`,
+	}, true)
+
+	t.Run("text", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runExperiment([]string{"--on-error", "continue", inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "line 2:") {
+			t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+		}
+
+		for _, want := range []string{
+			"Documents: 2",
+			"Status: partial",
+			"Processed Lines: 3",
+			"Skipped Lines: 1",
+			"Error Count: 1",
+		} {
+			if !strings.Contains(stdout.String(), want) {
+				t.Fatalf("stdout missing %q:\n%s", want, stdout.String())
+			}
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runExperiment([]string{"--json", "--on-error", "continue", inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "line 2:") {
+			t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+		}
+
+		root := decodeJSONMap(t, stdout.Bytes())
+		summary := decodeJSONMap(t, root["summary"])
+		if got := decodeJSONInt(t, summary["documents"]); got != 2 {
+			t.Fatalf("summary.documents = %d, want 2", got)
+		}
+		if got := decodeJSONInt(t, summary["processed_lines"]); got != 3 {
+			t.Fatalf("summary.processed_lines = %d, want 3", got)
+		}
+		if got := decodeJSONInt(t, summary["skipped_lines"]); got != 1 {
+			t.Fatalf("summary.skipped_lines = %d, want 1", got)
+		}
+		if got := decodeJSONInt(t, summary["error_count"]); got != 1 {
+			t.Fatalf("summary.error_count = %d, want 1", got)
+		}
+		if got := decodeJSONString(t, summary["status"]); got != "partial" {
+			t.Fatalf("summary.status = %q, want partial", got)
+		}
 	})
 }
 
@@ -518,12 +607,57 @@ func TestRunExperimentSampleLimit(t *testing.T) {
 		"Documents: 2",
 		"Row Groups: 1",
 		"Sample Limit: 2",
+		"Status: truncated",
 		"Processed Lines: 2",
 		"Skipped Lines: 0",
 		"Error Count: 0",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunExperimentSampleLimitUsesHeadTake(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "sample.jsonl", []string{
+		`{"id":"first"}`,
+		`{"id":"second"}`,
+		`{"id":"third"}`,
+	}, true)
+	outputPath := filepath.Join(tmpDir, "sample.gin")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--sample", "2", "--rg-size", "1", "-o", outputPath, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONString(t, summary["status"]); got != "truncated" {
+		t.Fatalf("summary.status = %q, want truncated", got)
+	}
+
+	idx, err := gin.ReadSidecar(strings.TrimSuffix(outputPath, ".gin"))
+	if err != nil {
+		t.Fatalf("ReadSidecar(%q): %v", outputPath, err)
+	}
+
+	for _, tc := range []struct {
+		value string
+		want  int
+	}{
+		{value: "first", want: 1},
+		{value: "second", want: 1},
+		{value: "third", want: 0},
+	} {
+		got := len(idx.EvaluateContext(context.Background(), []gin.Predicate{gin.EQ("$.id", tc.value)}).ToSlice())
+		if got != tc.want {
+			t.Fatalf("sampled index match count for %q = %d, want %d", tc.value, got, tc.want)
 		}
 	}
 }
@@ -539,6 +673,20 @@ func TestRunExperimentRejectsInvalidOnErrorValue(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--on-error") {
 		t.Fatalf("stderr = %q, want on-error validation error", stderr.String())
+	}
+}
+
+func TestRunExperimentRejectsInvalidLogLevel(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--log-level", "trace", "-"}, bytes.NewReader(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for invalid log level")
+	}
+	if !strings.Contains(stderr.String(), "--log-level") {
+		t.Fatalf("stderr = %q, want log-level validation error", stderr.String())
 	}
 }
 
@@ -761,5 +909,23 @@ func TestRunExperimentEmptyInputSidecarHasZeroRowGroups(t *testing.T) {
 	}
 	if got := len(idx.EvaluateContext(context.Background(), []gin.Predicate{pred}).ToSlice()); got != 0 {
 		t.Fatalf("sidecar predicate matched = %d, want 0", got)
+	}
+}
+
+func TestEvaluateExperimentPredicateCanceled(t *testing.T) {
+	t.Parallel()
+
+	idx := gin.NewGINIndex()
+	idx.Header.NumRowGroups = 3
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := evaluateExperimentPredicate(ctx, 3, idx, `$.status = "ok"`, gin.EQ("$.status", "ok"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("evaluateExperimentPredicate() error = %v, want context.Canceled", err)
+	}
+	if result != nil {
+		t.Fatalf("evaluateExperimentPredicate() result = %#v, want nil on cancellation", result)
 	}
 }

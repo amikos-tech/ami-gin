@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ type experimentSummary struct {
 	ProcessedLines int    `json:"processed_lines"`
 	SkippedLines   int    `json:"skipped_lines"`
 	ErrorCount     int    `json:"error_count"`
+	Status         string `json:"status"`
 	SidecarPath    string `json:"sidecar_path"`
 }
 
@@ -126,6 +128,7 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 	if report.Summary.SampleLimit > 0 {
 		fmt.Fprintf(stdout, "  Sample Limit: %d\n", report.Summary.SampleLimit)
 	}
+	fmt.Fprintf(stdout, "  Status: %s\n", report.Summary.Status)
 	if report.Summary.ProcessedLines != report.Summary.Documents || report.Summary.SkippedLines > 0 || report.Summary.ErrorCount > 0 || report.Summary.SampleLimit > 0 {
 		fmt.Fprintf(stdout, "  Processed Lines: %d\n", report.Summary.ProcessedLines)
 		fmt.Fprintf(stdout, "  Skipped Lines: %d\n", report.Summary.SkippedLines)
@@ -136,9 +139,7 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 	}
 	fmt.Fprintln(stdout)
 
-	idxCopy := *idx
-	idxCopy.Header.NumRowGroups = uint32(report.Summary.RowGroups)
-	writeIndexInfo(stdout, &idxCopy)
+	writeIndexInfo(stdout, idx)
 
 	if report.PredicateTest == nil {
 		return
@@ -153,8 +154,13 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 }
 
 func writeExperimentJSON(stdout io.Writer, report experimentReport) error {
-	encoder := json.NewEncoder(stdout)
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(report)
+	if err := encoder.Encode(report); err != nil {
+		return err
+	}
+	_, err := stdout.Write(buf.Bytes())
+	return err
 }
