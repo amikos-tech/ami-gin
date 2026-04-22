@@ -5,6 +5,7 @@
 - ✅ **v0.1.0 OSS Launch** — Phases 01-05 (shipped pre-v1.0)
 - ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 - 🚧 **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (started 2026-04-21)
+- ⏸️ **v1.2 SIMD JSON Path** — Phases 16-17 (preview only; deferred 2026-04-21 pending `pure-simdjson` license/tag/distribution resolution)
 
 ## Phases
 
@@ -26,8 +27,13 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 ### 🚧 v1.1 Performance, Observability & Experimentation (Phases 13-15) — ACTIVE
 
 - [x] **Phase 13: Parser Seam Extraction** — Pure refactor: extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default. Completed 2026-04-21; residual benchmark noise accepted in `13-SECURITY.md`.
-- [ ] **Phase 14: Observability Seams** — `Logger` + `Telemetry` + `Signals` (OTel providers, never global), boundary-only spans, frozen attribute vocabulary, `slog`/`stdlib` adapters, context-aware API variants, `adaptiveInvariantLogger` migration.
+- [x] **Phase 14: Observability Seams** — `Logger` + `Telemetry` + `Signals` (OTel providers, never global), boundary-only spans, frozen attribute vocabulary, `slog`/`stdlib` adapters, context-aware API variants, `adaptiveInvariantLogger` migration. Completed 2026-04-22.
 - [ ] **Phase 15: Experimentation CLI** — New `experiment` subcommand: JSONL in (file or stdin) → index → per-path summary + optional sidecar write, predicate tester, JSON mode, sample/error-tolerant modes.
+
+### ⏸️ v1.2 SIMD JSON Path (Phases 16-17) — PREVIEW / DEFERRED
+
+- [ ] **Phase 16: SIMD Parser Adapter** — Same-package `simdjson` parser behind `//go:build simdjson`, explicit opt-in via `WithParser(...)`, preserve exact-int semantics, keep `stdlib` as the default path.
+- [ ] **Phase 17: SIMD Validation, Datasets & CI** — Benchmark stdlib vs SIMD on SEED-001-backed fixtures, vendor the required simdjson example corpus + NOTICE metadata, add `-tags simdjson` CI coverage, and lock the shared-library distribution/loading contract.
 
 ## Phase Details
 
@@ -73,6 +79,30 @@ Plans:
   6. The CLI ships with no new dependencies (stdlib `flag`, `text/tabwriter`, `bufio`, `encoding/json` only) and contains no REPL / TUI / color-auto-detection code — charter compliance asserted by a linter-or-grep check in CI.
 **Plans**: TBD
 
+### Phase 16: SIMD Parser Adapter
+**Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
+**Depends on**: Phase 13
+**Blocked on**: upstream `pure-simdjson` LICENSE file, version tag, and a settled shared-library distribution/loading decision
+**Requirements**: Deferred SIMD scope from original PARSER-02..05 (to be restated when v1.2 formally opens)
+**Success Criteria** (what must be TRUE):
+  1. `parser_simd.go` behind `//go:build simdjson` adds a same-package SIMD parser constructor and `WithParser(...)` can select it without any builder-internal changes beyond the already-landed Phase 13 seam.
+  2. The SIMD path preserves exact-int semantics for the Phase 07 numeric corpus, routing overflow-sensitive numbers through the existing builder classifier rather than silently coercing them to `float64`.
+  3. Default builds remain stdlib-only: no simd dependency or runtime shared-library requirement unless the build tag is enabled and the parser is explicitly selected.
+  4. Parity tests prove `Evaluate` results match the stdlib parser across the authored Phase 13 fixtures and targeted numeric edge cases.
+**Plans**: TBD
+
+### Phase 17: SIMD Validation, Datasets & CI
+**Goal**: Validate and operationalize the SIMD path with reproducible corpora, distribution guidance, and CI coverage so the opt-in parser is shippable rather than experimental.
+**Depends on**: Phase 16
+**Blocked on**: final parser dependency choice and shared-library distribution contract
+**Requirements**: Deferred SIMD scope from original PARSER-02..05 (to be restated when v1.2 formally opens)
+**Success Criteria** (what must be TRUE):
+  1. A benchmark suite compares stdlib vs SIMD ingest on SEED-001-backed fixtures and reports reproducible CPU and allocation deltas.
+  2. Required simdjson example fixtures are vendored under `testdata/` with preserved license/NOTICE metadata and documented size limits.
+  3. CI runs both the default and `-tags simdjson` test paths on the supported platform set, with explicit skip/fail behavior when the shared library is unavailable.
+  4. Runtime loading and release/distribution guidance for the shared library is documented and tested so consumers can enable the SIMD path without guesswork.
+**Plans**: TBD
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -87,9 +117,12 @@ Plans:
 | 13. Parser Seam Extraction | v1.1 | 3/3 | Complete | 2026-04-21 |
 | 14. Observability Seams | v1.1 | 0/- | Not started | - |
 | 15. Experimentation CLI | v1.1 | 0/- | Not started | - |
+| 16. SIMD Parser Adapter | v1.2 preview | 0/- | Deferred | - |
+| 17. SIMD Validation, Datasets & CI | v1.2 preview | 0/- | Deferred | - |
 
 ---
 *v1.1 started 2026-04-21 with 17 requirements across 3 phases. v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
+*v1.2 preview carries forward the deferred SIMD scope from original PARSER-02..05; exact requirement IDs will be restated when that milestone formally opens.*
 
 ## Backlog
 

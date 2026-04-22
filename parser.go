@@ -9,17 +9,16 @@ import (
 // exact-int64 semantics: integers outside the float64-exact range
 // [-2^53, 2^53] must be reported via sink.StageJSONNumber (raw source
 // text) so the builder's classifier stays the single source of truth
-// for numeric type (see BUILD-03 / Phase 07).
+// for numeric type.
 //
 // Parse MUST NOT wrap errors on behalf of the builder. The caller
-// (AddDocument) returns Parse errors verbatim (D-07).
+// (AddDocument) returns Parse errors verbatim.
 //
-// External implementability: as of Phase 13 the sink type referenced by
-// Parse (parserSink) is package-private; third-party Parser
-// implementations outside package gin cannot satisfy this interface.
-// The Parser name is exported today so WithParser remains a stable
-// entry point; exporting the sink and enabling external parsers is
-// deferred (see 13-CONTEXT.md deferred ideas "Export ParserSink").
+// External implementability: the sink type referenced by Parse (parserSink)
+// is package-private; third-party Parser implementations outside package gin
+// cannot satisfy this interface. The Parser name is exported today so
+// WithParser remains a stable entry point; exporting the sink and enabling
+// external parsers is deferred.
 type Parser interface {
 	// Name returns a stable identifier for telemetry (e.g. "stdlib").
 	// MUST NOT return the empty string; NewBuilder rejects an empty name.
@@ -46,8 +45,8 @@ type Parser interface {
 //
 // NOTE: external (out-of-package) implementations of Parser are not
 // currently possible because parserSink is package-private. WithParser
-// exists today as a forward-compat entry point and a seam for
-// testing/telemetry (Phase 14 reads Parser.Name()).
+// exists today as a forward-compat entry point and a seam for testing and
+// internal telemetry.
 func WithParser(p Parser) BuilderOption {
 	return func(b *GINBuilder) error {
 		if p == nil {

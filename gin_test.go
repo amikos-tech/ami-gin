@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	stderrors "errors"
 	"fmt"
-	"log"
 	"math"
 	"reflect"
 	"strings"
@@ -1062,54 +1061,6 @@ func TestAdaptiveContainsUsesTrigramIndex(t *testing.T) {
 		t.Fatalf("Decode() error = %v", err)
 	}
 	assertContains(t, decoded)
-}
-
-func TestAdaptiveInvariantViolationLogs(t *testing.T) {
-	var logBuf bytes.Buffer
-	prev := currentAdaptiveInvariantLogger()
-	SetAdaptiveInvariantLogger(log.New(&logBuf, "", 0))
-	defer SetAdaptiveInvariantLogger(prev)
-
-	idx := NewGINIndex()
-	idx.Header.NumRowGroups = 3
-	idx.PathDirectory = []PathEntry{{
-		PathID:   0,
-		PathName: "$.field",
-		Mode:     PathModeAdaptiveHybrid,
-	}}
-	idx.pathLookup["$.field"] = 0
-	idx.GlobalBloom = MustNewBloomFilter(64, 3)
-	idx.GlobalBloom.AddString("$.field=hot")
-
-	if got := idx.Evaluate([]Predicate{EQ("$.field", "hot")}).ToSlice(); fmt.Sprint(got) != fmt.Sprint([]int{0, 1, 2}) {
-		t.Fatalf("Evaluate(EQ) = %v, want all row groups", got)
-	}
-	if !strings.Contains(logBuf.String(), "adaptive path invariant violation") {
-		t.Fatalf("log output = %q, want invariant violation message", logBuf.String())
-	}
-}
-
-func TestSetAdaptiveInvariantLoggerNilSilences(t *testing.T) {
-	prev := currentAdaptiveInvariantLogger()
-	SetAdaptiveInvariantLogger(nil)
-	defer SetAdaptiveInvariantLogger(prev)
-
-	idx := NewGINIndex()
-	idx.Header.NumRowGroups = 2
-	idx.PathDirectory = []PathEntry{{
-		PathID:   0,
-		PathName: "$.field",
-		Mode:     PathModeAdaptiveHybrid,
-	}}
-	idx.pathLookup["$.field"] = 0
-	idx.GlobalBloom = MustNewBloomFilter(64, 3)
-	idx.GlobalBloom.AddString("$.field=hot")
-
-	// Must not panic or race when logger is nil.
-	got := idx.Evaluate([]Predicate{EQ("$.field", "hot")}).ToSlice()
-	if fmt.Sprint(got) != fmt.Sprint([]int{0, 1}) {
-		t.Fatalf("Evaluate(EQ) = %v, want all row groups (safe fallback)", got)
-	}
 }
 
 func TestQueryNIN(t *testing.T) {

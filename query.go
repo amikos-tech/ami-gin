@@ -1,50 +1,75 @@
 package gin
 
 import (
+	"context"
 	"fmt"
-	"log"
 	"math"
 	"sort"
 	"strconv"
-	"sync"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
-var (
-	adaptiveInvariantLoggerMu sync.RWMutex
-	// adaptiveInvariantLogger is nil by default to follow the Go library
-	// convention of not writing to stderr unless the consumer opts in. Set
-	// it via SetAdaptiveInvariantLogger to surface invariant violations.
-	adaptiveInvariantLogger *log.Logger
-)
+const queryScope = "github.com/amikos-tech/ami-gin/query"
 
-// SetAdaptiveInvariantLogger installs a logger that surfaces adaptive index
-// invariant violations (e.g. a path flagged PathModeAdaptiveHybrid with no
-// matching AdaptiveStringIndexes section). The default is nil (silent); pass
-// log.Default() or your own *log.Logger to opt in. Safe for concurrent use.
-func SetAdaptiveInvariantLogger(l *log.Logger) {
-	adaptiveInvariantLoggerMu.Lock()
-	adaptiveInvariantLogger = l
-	adaptiveInvariantLoggerMu.Unlock()
-}
-
-func currentAdaptiveInvariantLogger() *log.Logger {
-	adaptiveInvariantLoggerMu.RLock()
-	defer adaptiveInvariantLoggerMu.RUnlock()
-	return adaptiveInvariantLogger
-}
-
+// Evaluate evaluates a set of predicates against the index and returns
+// the set of row groups that may contain matching documents.
+// It delegates to EvaluateContext with context.Background().
 func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
+	return idx.EvaluateContext(context.Background(), predicates)
+}
+
+// EvaluateContext evaluates predicates against the index and returns the set
+// of row groups that may contain matching documents. The context is propagated
+// into the coarse query boundary span and checked before each predicate.
+// If evaluation cannot complete, the method conservatively returns all row
+// groups because this API does not return an error. If ctx is nil,
+// context.Background() is used. Observability is read from idx.Config; a nil
+// config falls back to silent/noop behavior without panicking.
+func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate) *RGSet {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	numRGs := int(idx.Header.NumRowGroups)
 	if len(predicates) == 0 {
-		return AllRGs(int(idx.Header.NumRowGroups))
+		return AllRGs(numRGs)
 	}
 
-	result := AllRGs(int(idx.Header.NumRowGroups))
-	for _, p := range predicates {
-		rgSet := idx.evaluatePredicate(p)
-		result = result.Intersect(rgSet)
-		if result.IsEmpty() {
-			break
+	logger := configLogger(idx.Config)
+	signals := configSignals(idx.Config)
+
+	result := AllRGs(numRGs)
+	err := telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
+		Scope:     queryScope,
+		Operation: telemetry.OperationEvaluate,
+	}, func(bctx context.Context) error {
+		r := AllRGs(numRGs)
+		for _, p := range predicates {
+			if err := bctx.Err(); err != nil {
+				return err
+			}
+			rgSet := idx.evaluatePredicate(p)
+			r = r.Intersect(rgSet)
+			if r.IsEmpty() {
+				break
+			}
 		}
+		result = r
+		return nil
+	})
+
+	if err != nil {
+		logging.Info(logger, "evaluate completed",
+			logging.AttrOperation(telemetry.OperationEvaluate),
+			logging.AttrStatus("error"),
+			logging.AttrErrorType("other"),
+		)
+	} else {
+		logging.Info(logger, "evaluate completed",
+			logging.AttrOperation(telemetry.OperationEvaluate),
+			logging.AttrStatus("ok"),
+		)
 	}
 	return result
 }
@@ -215,15 +240,13 @@ func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, te
 	return idx.lookupAdaptiveStringMatch(uint16(pathID), term)
 }
 
-func (idx *GINIndex) adaptiveInvariantAllRGs(entry *PathEntry, op string) *RGSet {
-	if logger := currentAdaptiveInvariantLogger(); logger != nil {
-		logger.Printf(
-			"gin: adaptive path invariant violation for %q (id=%d) during %s; returning all row groups",
-			entry.PathName,
-			entry.PathID,
-			op,
-		)
-	}
+func (idx *GINIndex) adaptiveInvariantAllRGs(op string) *RGSet {
+	logger := configLogger(idx.Config)
+	logging.Warn(logger, "adaptive path invariant violation; returning all row groups",
+		logging.AttrOperation(telemetry.OperationEvaluate),
+		logging.AttrPredicateOp(op),
+		logging.AttrPathMode(logging.PathModeAdaptiveHybrid),
+	)
 	return AllRGs(int(idx.Header.NumRowGroups))
 }
 
@@ -247,7 +270,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 			if match, _, ok := idx.evaluateAdaptiveStringTerm(pathID, entry, v); ok {
 				return match
 			}
-			return idx.adaptiveInvariantAllRGs(entry, "EQ")
+			return idx.adaptiveInvariantAllRGs("EQ")
 		}
 
 		bloomKey := entry.PathName + "=" + v
@@ -316,7 +339,7 @@ func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet 
 			presentRGs := idx.evaluateIsNotNull(pathID)
 			eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
-				return idx.adaptiveInvariantAllRGs(entry, "NE")
+				return idx.adaptiveInvariantAllRGs("NE")
 			}
 			if !exact {
 				return presentRGs
@@ -531,7 +554,7 @@ func (idx *GINIndex) evaluateAdaptiveIN(pathID int, entry *PathEntry, values []a
 		}
 		rgSet, _, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 		if !handled {
-			return idx.adaptiveInvariantAllRGs(entry, "IN")
+			return idx.adaptiveInvariantAllRGs("IN")
 		}
 		result = result.Union(rgSet)
 	}
@@ -557,7 +580,7 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 			}
 			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
-				return idx.adaptiveInvariantAllRGs(entry, "NIN")
+				return idx.adaptiveInvariantAllRGs("NIN")
 			}
 			if !exact {
 				allExact = false

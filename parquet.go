@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	stderrors "errors"
 	"io"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 const DefaultMetadataKey = "gin.index"
@@ -105,11 +108,54 @@ func openParquetFile(path string) (*parquet.File, *os.File, error) {
 	return pf, f, nil
 }
 
+// BuildFromParquet builds a GIN index from a local Parquet file.
+// It delegates to BuildFromParquetContext with context.Background().
 func BuildFromParquet(parquetFile string, jsonColumn string, config GINConfig) (*GINIndex, error) {
-	return BuildFromParquetReader(parquetFile, jsonColumn, config, nil, 0)
+	return BuildFromParquetContext(context.Background(), parquetFile, jsonColumn, config)
 }
 
+// BuildFromParquetContext is the context-aware sibling of BuildFromParquet.
+// It starts a coarse build boundary span, then delegates to
+// BuildFromParquetReaderContext for the actual index construction.
+func BuildFromParquetContext(ctx context.Context, parquetFile string, jsonColumn string, config GINConfig) (*GINIndex, error) {
+	return BuildFromParquetReaderContext(ctx, parquetFile, jsonColumn, config, nil, 0)
+}
+
+// BuildFromParquetReader builds a GIN index from a Parquet file using an
+// explicit reader. It delegates to BuildFromParquetReaderContext with
+// context.Background().
 func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
+	return BuildFromParquetReaderContext(context.Background(), parquetFile, jsonColumn, config, reader, size)
+}
+
+// BuildFromParquetReaderContext is the context-aware sibling of
+// BuildFromParquetReader. Observability comes from config. One coarse boundary
+// span wraps the entire build; no spans appear inside page/value/document
+// loops.
+func BuildFromParquetReaderContext(ctx context.Context, parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	signals := configSignals(&config)
+
+	var idx *GINIndex
+	err := telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
+		Scope:         "github.com/amikos-tech/ami-gin/parquet",
+		Operation:     telemetry.OperationBuildFromParquet,
+		ClassifyError: classifyParquetError,
+	}, func(bctx context.Context) error {
+		var buildErr error
+		idx, buildErr = buildFromParquetReaderCore(bctx, parquetFile, jsonColumn, config, reader, size)
+		return buildErr
+	})
+	return idx, err
+}
+
+func buildFromParquetReaderCore(ctx context.Context, parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var pf *parquet.File
 	var fileToClose *os.File
 	var err error
@@ -146,6 +192,9 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 	}
 
 	for rgID, rg := range pf.RowGroups() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		chunk := rg.ColumnChunks()[colIdx]
 		pages := chunk.Pages()
 
@@ -470,4 +519,31 @@ func ListGINFiles(dir string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// classifyParquetError maps a parquet build error to the frozen error.type vocabulary.
+// Used by boundary telemetry only; not part of the public API.
+func classifyParquetError(err error) string {
+	if err == nil {
+		return ""
+	}
+	// Check sentinel errors first; fall back to message heuristics for
+	// dependency paths that do not expose stable typed sentinels.
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return telemetry.ErrorTypeOther
+	}
+	if stderrors.Is(err, os.ErrNotExist) {
+		return "io"
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "column") && strings.Contains(msg, "not found"):
+		return "config"
+	case strings.Contains(msg, "open") || strings.Contains(msg, "stat") || strings.Contains(msg, "read"):
+		return "io"
+	case strings.Contains(msg, "create builder"):
+		return "config"
+	default:
+		return telemetry.ErrorTypeOther
+	}
 }

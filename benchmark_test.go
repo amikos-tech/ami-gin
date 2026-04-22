@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,9 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 // =============================================================================
@@ -3483,4 +3487,69 @@ func BenchmarkCompressionLevelsThroughput(b *testing.B) {
 			}
 		})
 	}
+}
+
+// =============================================================================
+// Observability Performance Gates (OBS-02)
+// =============================================================================
+
+// benchQueryFixture returns a representative index and predicate set for the
+// disabled-logging and noop-tracer benchmarks. The same fixture is used in
+// both benchmarks so results are directly comparable.
+func benchQueryFixture() (*GINIndex, []Predicate) {
+	idx := setupWorstCaseIndex(500)
+	preds := []Predicate{
+		EQ("$.status", "active"),
+		GTE("$.age", 25),
+		LTE("$.age", 45),
+	}
+	return idx, preds
+}
+
+// BenchmarkEvaluateDisabledLogging measures EvaluateContext with the default
+// noop logger and disabled signals. This is the near-zero-cost disabled-path
+// gate for OBS-02 (at most one alloc over baseline; verified by
+// TestEvaluateDisabledLoggingAllocsAtMostOne).
+func BenchmarkEvaluateDisabledLogging(b *testing.B) {
+	idx, preds := benchQueryFixture()
+	cfg := DefaultConfig() // noop logger + disabled signals
+	idx.Config = &cfg
+
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = idx.EvaluateContext(ctx, preds)
+	}
+}
+
+// BenchmarkEvaluateWithTracer compares the no-tracer baseline against a
+// noop-tracer path on the same fixture. The strict 0.5% overhead budget is
+// enforced by TestEvaluateWithTracerWithinBudget when GIN_STRICT_PERF=1.
+func BenchmarkEvaluateWithTracer(b *testing.B) {
+	idx, preds := benchQueryFixture()
+	ctx := context.Background()
+
+	b.Run("NoTracer", func(b *testing.B) {
+		cfg := DefaultConfig()
+		idx.Config = &cfg
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = idx.EvaluateContext(ctx, preds)
+		}
+	})
+
+	b.Run("NoopTracer", func(b *testing.B) {
+		cfg, _ := NewConfig(
+			WithLogger(logging.NewNoop()),
+			WithSignals(telemetry.Disabled()),
+		)
+		idx.Config = &cfg
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_ = idx.EvaluateContext(ctx, preds)
+		}
+	})
 }
