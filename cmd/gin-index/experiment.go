@@ -2,14 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"strings"
 
 	"github.com/pkg/errors"
 
 	gin "github.com/amikos-tech/ami-gin"
+	"github.com/amikos-tech/ami-gin/logging/slogadapter"
 )
 
 func cmdExperiment(args []string) {
@@ -23,23 +27,32 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	fs.SetOutput(stderr)
 	rgSize := fs.Int("rg-size", 1, "Synthetic row-group size")
 	jsonOutput := fs.Bool("json", false, "Emit experiment output as JSON")
+	testPredicate := fs.String("test", "", "Evaluate a predicate against the built index")
+	outputPath := fs.String("o", "", "Write readable sidecar output to path")
+	logLevel := fs.String("log-level", "off", "Log level: off|info|debug")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
 
 	if *rgSize <= 0 {
 		fmt.Fprintln(stderr, "Error: --rg-size must be greater than 0")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "Error: exactly one input path is required")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 
 	inputArg := fs.Arg(0)
+	config, err := experimentConfigForLogLevel(*logLevel, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+
 	source, err := prepareExperimentSource(inputArg, stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -52,7 +65,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		estimatedRGs = ceilDiv(source.candidateRecords, *rgSize)
 	}
 
-	result, err := buildExperimentIndex(source.open, gin.DefaultConfig(), *rgSize, estimatedRGs)
+	result, err := buildExperimentIndex(source.open, config, *rgSize, estimatedRGs)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
@@ -79,6 +92,39 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			SidecarPath:    "",
 		},
 		Paths: collectExperimentPathRows(result.idx),
+	}
+
+	if *outputPath != "" {
+		if err := writeExperimentSidecar(*outputPath, source, result.idx); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 1
+		}
+		report.Summary.SidecarPath = *outputPath
+	}
+
+	if *testPredicate != "" {
+		pred, err := parsePredicate(*testPredicate)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error: failed to parse predicate: %v\n", err)
+			return 1
+		}
+
+		matched := len(result.idx.EvaluateContext(context.Background(), []gin.Predicate{pred}).ToSlice())
+		pruned := 0
+		if matched < report.Summary.RowGroups {
+			pruned = report.Summary.RowGroups - matched
+		}
+		pruningRatio := 0.0
+		if report.Summary.RowGroups > 0 {
+			pruningRatio = float64(pruned) / float64(report.Summary.RowGroups)
+		}
+
+		report.PredicateTest = &experimentPredicateResult{
+			Predicate:    *testPredicate,
+			Matched:      matched,
+			Pruned:       pruned,
+			PruningRatio: pruningRatio,
+		}
 	}
 
 	if *jsonOutput {
@@ -272,6 +318,49 @@ func trimExperimentLineEnding(line []byte) []byte {
 		line = line[:n-1]
 	}
 	return line
+}
+
+func experimentConfigForLogLevel(level string, stderr io.Writer) (gin.GINConfig, error) {
+	config := gin.DefaultConfig()
+
+	switch level {
+	case "off":
+		return config, nil
+	case "info", "debug":
+		slogLevel := slog.LevelInfo
+		if level == "debug" {
+			slogLevel = slog.LevelDebug
+		}
+		logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slogLevel}))
+		config.Logger = slogadapter.New(logger)
+		return config, nil
+	default:
+		return gin.GINConfig{}, errors.Errorf("invalid --log-level %q: want off, info, or debug", level)
+	}
+}
+
+func writeExperimentSidecar(outputPath string, source experimentInputSource, idx *gin.GINIndex) error {
+	if !strings.HasSuffix(outputPath, ".gin") {
+		return errors.Errorf("output path %q must end with .gin", outputPath)
+	}
+
+	data, err := gin.Encode(idx)
+	if err != nil {
+		return errors.Wrap(err, "encode experiment index")
+	}
+
+	fileMode := defaultLocalArtifactMode
+	if !source.stdin {
+		fileMode, err = localOutputMode(source.inputPath)
+		if err != nil {
+			return errors.Wrap(err, "determine source file permissions")
+		}
+	}
+
+	if err := writeLocalIndexFile(outputPath, data, fileMode); err != nil {
+		return errors.Wrap(err, "write experiment sidecar")
+	}
+	return nil
 }
 
 func ceilDiv(value, divisor int) int {
