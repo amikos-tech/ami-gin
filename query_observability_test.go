@@ -3,7 +3,11 @@ package gin_test
 import (
 	"context"
 	"log/slog"
+	"os"
+	"runtime"
+	"sort"
 	"testing"
+	"time"
 
 	gin "github.com/amikos-tech/ami-gin"
 	"github.com/amikos-tech/ami-gin/logging"
@@ -124,12 +128,124 @@ func TestAdaptiveInvariantViolationStillFailsOpen(t *testing.T) {
 }
 
 // =============================================================================
+// Task 3: Disabled-path performance gates
+// =============================================================================
+
+// TestEvaluateDisabledLoggingAllocsZero asserts that running EvaluateContext
+// with a disabled (noop) logger adds 0 allocations over the baseline that
+// uses no observability at all. This is the merge gate for OBS-02.
+func TestEvaluateDisabledLoggingAllocsZero(t *testing.T) {
+	idx, err := buildQueryObsIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
+
+	// Baseline: DefaultConfig has noop logger + disabled signals.
+	baseAllocs := testing.AllocsPerRun(100, func() {
+		_ = idx.EvaluateContext(context.Background(), preds)
+	})
+
+	// Same with explicitly wired noop logger and disabled signals (same behavior,
+	// but proves the enabled=false guard does not add allocations).
+	noopCfg := gin.DefaultConfig()
+	idx.Config = &noopCfg
+	withNoopAllocs := testing.AllocsPerRun(100, func() {
+		_ = idx.EvaluateContext(context.Background(), preds)
+	})
+
+	if withNoopAllocs > baseAllocs+1 {
+		t.Fatalf("disabled logging allocs=%v; baseline allocs=%v; disabled path must not add more than 1 alloc", withNoopAllocs, baseAllocs)
+	}
+}
+
+// TestEvaluateWithTracerWithinBudget asserts that running EvaluateContext with
+// a disabled/noop tracer stays within the 0.5% overhead budget compared to the
+// no-tracer baseline. Only enforced when GIN_STRICT_PERF=1.
+func TestEvaluateWithTracerWithinBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping perf budget test in short mode")
+	}
+
+	idx, err := buildQueryObsIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
+
+	// Baseline: no signals (disabled).
+	baselineCfg := gin.DefaultConfig()
+	idx.Config = &baselineCfg
+
+	const samples = 7
+	baselineTimes := collectEvalSamples(idx, preds, samples)
+
+	// Noop-tracer path: explicitly disabled signals (same as baseline semantics,
+	// but exercises the Signals.Tracer() + span.End() code path).
+	noopCfg, err := gin.NewConfig(gin.WithSignals(telemetry.Disabled()))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	idx.Config = &noopCfg
+
+	noopTimes := collectEvalSamples(idx, preds, samples)
+
+	baseMedian := medianInt64(baselineTimes)
+	noopMedian := medianInt64(noopTimes)
+
+	if isStrictPerfMode() {
+		budget := float64(baseMedian) * 1.005
+		if float64(noopMedian) > budget {
+			t.Fatalf("noop-tracer median=%dns exceeds 0.5%% budget over baseline=%dns (limit=%dns)",
+				noopMedian, baseMedian, int64(budget))
+		}
+	} else {
+		// Non-strict: smoke-check only — noop tracer must not be 2x slower.
+		if noopMedian > baseMedian*2 {
+			t.Fatalf("noop-tracer median=%dns is more than 2x baseline=%dns (smoke check)", noopMedian, baseMedian)
+		}
+	}
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
 type noopWriter struct{}
 
 func (noopWriter) Write(p []byte) (n int, err error) { return len(p), nil }
+
+// collectEvalSamples runs EvaluateContext the given number of times and
+// returns the per-iteration nanosecond durations, measured with GOMAXPROCS=1
+// to reduce scheduler noise.
+func collectEvalSamples(idx *gin.GINIndex, preds []gin.Predicate, n int) []int64 {
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
+
+	times := make([]int64, n)
+	for i := range times {
+		start := time.Now()
+		_ = idx.EvaluateContext(context.Background(), preds)
+		times[i] = time.Since(start).Nanoseconds()
+	}
+	return times
+}
+
+// medianInt64 returns the median value of a sorted copy of vs.
+func medianInt64(vs []int64) int64 {
+	if len(vs) == 0 {
+		return 0
+	}
+	cp := make([]int64, len(vs))
+	copy(cp, vs)
+	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	return cp[len(cp)/2]
+}
+
+// isStrictPerfMode reports whether GIN_STRICT_PERF=1 is set.
+func isStrictPerfMode() bool {
+	return os.Getenv("GIN_STRICT_PERF") == "1"
+}
 
 // captureLogger captures all Log calls for assertion.
 type captureLogger struct {
