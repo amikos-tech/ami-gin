@@ -2,16 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: "Phase 13 shipped - PR #28"
-stopped_at: Phase 14 ready to start
-last_updated: "2026-04-21T15:02:44.357Z"
-last_activity: 2026-04-21
+status: "Phase 14 complete - Phase 15 next"
+stopped_at: Phase 14 complete
+last_updated: "2026-04-22T11:20:00Z"
+last_activity: 2026-04-22
+last_learnings_extraction:
+  phase: 11
+  on: 2026-04-22
+
 progress:
   total_phases: 8
-  completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  completed_phases: 2
+  total_plans: 11
+  completed_plans: 7
+  percent: 56
 ---
 
 # Project State
@@ -21,16 +25,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 14 — observability-seams (planning pending)
+**Current focus:** Phase 15 — experimentation-cli (next)
 
 ## Current Position
 
-Phase: 14 (observability-seams) — NOT STARTED
-Plan: planning pending
-Status: Phase 13 shipped - PR #28
-Last activity: 2026-04-21
+Phase: 14 (observability-seams) — COMPLETE
+Plan: 4/4 plans complete (waves: 1 -> 2 -> 3)
+Status: Phase 14 complete - Phase 15 next
+Last activity: 2026-04-22
 
-Progress: [###.......] 33% (1/3 phases, 1/17 requirements)
+Progress: [######....] 56% (2/3 phases, 9/17 requirements)
 
 ## Performance Metrics
 
@@ -56,7 +60,7 @@ Progress: [###.......] 33% (1/3 phases, 1/17 requirements)
 | Phase | Plans | Status |
 |-------|-------|--------|
 | 13 | 3 | Complete |
-| 14 | TBD | Not started |
+| 14 | 4 | Planned |
 | 15 | TBD | Not started |
 
 ## Accumulated Context
@@ -81,11 +85,16 @@ Key decisions shaping v1.1:
   - Phase 14: Observability Seams (OBS-01..08)
   - Phase 15: Experimentation CLI (CLI-01..08)
 - DAG: 13 → {14} → 15. Phase 14 can run in parallel with the tail of Phase 13 once the `Parser` interface merges (per SUMMARY.md). Phase 15 still requires both landed (consumes `--parser` and `--log-level` flags).
+- Phase 14 is now planned as 4 executable plans:
+  - 14-01 core logging/signals/config surface
+  - 14-02 query boundary migration + perf gates
+  - 14-03 parquet/build + raw serialization context siblings
+  - 14-04 policy and phase-level verification gates
 - 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Start Phase 14 planning for observability seams (`OBS-01` through `OBS-08`)
+- Plan and execute Phase 15 (Experimentation CLI, CLI-01..08)
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
@@ -125,10 +134,15 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 
 ## Session Continuity
 
-Last session: --stopped-at
-Stopped at: Phase 14 ready to start
-Resume file: --resume-file
+Last session: Phase 14 complete
+Stopped at: Phase 14 verified and merged
 
-**Next step:** Start Phase 14 planning/execution. Phase 13 is complete and its residual benchmark noise is documented as an accepted risk.
+**Next step:** Plan Phase 15 (Experimentation CLI). `/gsd-discuss-phase 15` to discuss, then `/gsd-plan-phase 15`.
 
-**Planned Phase:** 14 (observability-seams) — planning pending
+**v1.1 projection update:**
+
+| Phase | Plans | Status |
+|-------|-------|--------|
+| 13 | 3 | Complete |
+| 14 | 4 | Complete 2026-04-22 |
+| 15 | TBD | Not started |
