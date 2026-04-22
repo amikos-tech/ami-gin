@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -38,6 +40,14 @@ func decodeJSONMap(t *testing.T, raw []byte) map[string]json.RawMessage {
 		t.Fatalf("json.Unmarshal(map): %v\n%s", err, string(raw))
 	}
 	return out
+}
+
+type failingReader struct {
+	err error
+}
+
+func (r failingReader) Read(_ []byte) (int, error) {
+	return 0, r.err
 }
 
 func decodeJSONArray(t *testing.T, raw json.RawMessage) []json.RawMessage {
@@ -335,6 +345,126 @@ func TestRunExperimentLogLevelWritesOnlyToStderr(t *testing.T) {
 			t.Fatalf("stderr = %q, want no library log output when off", stderr.String())
 		}
 	})
+}
+
+func TestRunExperimentOnErrorAbort(t *testing.T) {
+	t.Parallel()
+
+	stdin := strings.NewReader("{\"status\":\"ok\"}\n\n{\"status\":\"error\"}\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", "abort", "-"}, stdin, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for abort mode")
+	}
+	if !strings.Contains(stderr.String(), "line 2:") {
+		t.Fatalf("stderr = %q, want line-numbered abort error", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no summary after abort", stdout.String())
+	}
+}
+
+func TestRunExperimentOnErrorContinue(t *testing.T) {
+	t.Parallel()
+
+	input := "{\"status\":\"ok\"}\n\n{\"status\":\"error\"}\n"
+
+	t.Run("text", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runExperiment([]string{"--on-error", "continue", "-"}, strings.NewReader(input), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "line 2:") {
+			t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+		}
+
+		out := stdout.String()
+		for _, want := range []string{
+			"Documents: 2",
+			"Processed Lines: 3",
+			"Skipped Lines: 1",
+			"Error Count: 1",
+		} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("stdout missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("json", func(t *testing.T) {
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		code := runExperiment([]string{"--json", "--on-error", "continue", "-"}, strings.NewReader(input), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "line 2:") {
+			t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+		}
+
+		root := decodeJSONMap(t, stdout.Bytes())
+		summary := decodeJSONMap(t, root["summary"])
+		if got := decodeJSONInt(t, summary["documents"]); got != 2 {
+			t.Fatalf("summary.documents = %d, want 2", got)
+		}
+		if got := decodeJSONInt(t, summary["processed_lines"]); got != 3 {
+			t.Fatalf("summary.processed_lines = %d, want 3", got)
+		}
+		if got := decodeJSONInt(t, summary["skipped_lines"]); got != 1 {
+			t.Fatalf("summary.skipped_lines = %d, want 1", got)
+		}
+		if got := decodeJSONInt(t, summary["error_count"]); got != 1 {
+			t.Fatalf("summary.error_count = %d, want 1", got)
+		}
+	})
+}
+
+func TestRunExperimentSampleLimit(t *testing.T) {
+	t.Parallel()
+
+	stdin := io.MultiReader(
+		strings.NewReader("{\"status\":\"ok\"}\n{\"status\":\"error\"}\n"),
+		failingReader{err: errors.New("sample over-read")},
+	)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--sample", "2", "--rg-size", "2", "-"}, stdin, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"Documents: 2",
+		"Row Groups: 1",
+		"Sample Limit: 2",
+		"Processed Lines: 2",
+		"Skipped Lines: 0",
+		"Error Count: 0",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunExperimentRejectsInvalidOnErrorValue(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", "skip", "-"}, bytes.NewReader(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for invalid on-error")
+	}
+	if !strings.Contains(stderr.String(), "--on-error") {
+		t.Fatalf("stderr = %q, want on-error validation error", stderr.String())
+	}
 }
 
 func TestRunExperimentFromFile(t *testing.T) {
