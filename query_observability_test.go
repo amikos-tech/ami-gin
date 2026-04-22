@@ -241,11 +241,12 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 			t.Fatalf("noop-tracer median=%dns exceeds 0.5%% budget over baseline=%dns (limit=%dns)",
 				noopMedian, baseMedian, int64(budget))
 		}
-	} else {
-		// Non-strict: smoke-check only — noop tracer must not be 2x slower.
-		if noopMedian > baseMedian*2 {
-			t.Fatalf("noop-tracer median=%dns is more than 2x baseline=%dns (smoke check)", noopMedian, baseMedian)
-		}
+		return
+	}
+
+	// Non-strict: smoke-check only — noop tracer must not be 2x slower.
+	if noopMedian > baseMedian*2 {
+		t.Fatalf("noop-tracer median=%dns is more than 2x baseline=%dns (smoke check)", noopMedian, baseMedian)
 	}
 }
 

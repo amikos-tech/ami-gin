@@ -152,8 +152,9 @@ func TestSignalsEnabledSemantics(t *testing.T) {
 
 func TestSignalsShutdownNilContextNoop(t *testing.T) {
 	s := telemetry.Disabled()
+	nilCtx := nilContext()
 	// Must not panic with nil context.
-	if err := s.Shutdown(nil); err != nil {
+	if err := s.Shutdown(nilCtx); err != nil {
 		t.Fatalf("Disabled().Shutdown(nil) returned error: %v", err)
 	}
 }
@@ -161,7 +162,8 @@ func TestSignalsShutdownNilContextNoop(t *testing.T) {
 func TestRunBoundaryOperationNoop(t *testing.T) {
 	s := telemetry.Disabled()
 	called := false
-	err := telemetry.RunBoundaryOperation(nil, s, telemetry.BoundaryConfig{
+	nilCtx := nilContext()
+	err := telemetry.RunBoundaryOperation(nilCtx, s, telemetry.BoundaryConfig{
 		Scope:     "test-scope",
 		Operation: "test.op",
 	}, func(_ context.Context) error {
@@ -174,6 +176,10 @@ func TestRunBoundaryOperationNoop(t *testing.T) {
 	if !called {
 		t.Fatal("RunBoundaryOperation must call the provided fn")
 	}
+}
+
+func nilContext() context.Context {
+	return nil
 }
 
 // --------------------------------------------------------------------------

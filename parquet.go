@@ -16,6 +16,7 @@ import (
 )
 
 const DefaultMetadataKey = "gin.index"
+const normalizedErrorTypeOther = "other"
 
 type ParquetConfig struct {
 	MetadataKey string
@@ -140,11 +141,9 @@ func BuildFromParquetReaderContext(ctx context.Context, parquetFile string, json
 
 	var idx *GINIndex
 	err := telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
-		Scope:     "github.com/amikos-tech/ami-gin/parquet",
-		Operation: telemetry.OperationBuildFromParquet,
-		ClassifyError: func(e error) string {
-			return classifyParquetError(e)
-		},
+		Scope:         "github.com/amikos-tech/ami-gin/parquet",
+		Operation:     telemetry.OperationBuildFromParquet,
+		ClassifyError: classifyParquetError,
 	}, func(bctx context.Context) error {
 		var buildErr error
 		idx, buildErr = buildFromParquetReaderCore(bctx, parquetFile, jsonColumn, config, reader, size)
@@ -532,7 +531,7 @@ func classifyParquetError(err error) string {
 	// Check sentinel errors first; fall back to message heuristics for
 	// dependency paths that do not expose stable typed sentinels.
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
-		return "other"
+		return normalizedErrorTypeOther
 	}
 	if stderrors.Is(err, os.ErrNotExist) {
 		return "io"
@@ -546,6 +545,6 @@ func classifyParquetError(err error) string {
 	case strings.Contains(msg, "create builder"):
 		return "config"
 	default:
-		return "other"
+		return normalizedErrorTypeOther
 	}
 }

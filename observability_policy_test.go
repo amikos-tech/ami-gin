@@ -181,19 +181,24 @@ func TestNoLegacyQueryLoggerSurface(t *testing.T) {
 			return nil
 		}
 
-		f, parseErr := parser.ParseFile(fset, path, nil, 0)
-		if parseErr != nil {
-			return nil // skip unparseable files
+		rel, relErr := filepath.Rel(moduleRoot, path)
+		if relErr != nil {
+			return relErr
 		}
 
-		rel, _ := filepath.Rel(moduleRoot, path)
+		f, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			return parseErr
+		}
+
 		ast.Inspect(f, func(n ast.Node) bool {
-			switch v := n.(type) {
-			case *ast.Ident:
-				for _, name := range forbidden {
-					if v.Name == name {
-						t.Errorf("found forbidden identifier %q in non-test file %s", name, rel)
-					}
+			ident, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			for _, name := range forbidden {
+				if ident.Name == name {
+					t.Errorf("found forbidden identifier %q in non-test file %s", name, rel)
 				}
 			}
 			return true
@@ -226,19 +231,28 @@ func TestNoBackendTypeLeakage(t *testing.T) {
 	}
 
 	fset := token.NewFileSet()
-	pkgs, parseErr := parser.ParseDir(fset, moduleRoot, func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
-	if parseErr != nil {
-		t.Fatalf("parse root package: %v", parseErr)
+	entries, err := os.ReadDir(moduleRoot)
+	if err != nil {
+		t.Fatalf("read module root: %v", err)
 	}
 
-	for _, pkg := range pkgs {
-		for fileName, f := range pkg.Files {
-			rel, _ := filepath.Rel(moduleRoot, fileName)
-			for _, decl := range f.Decls {
-				checkDeclForLeakage(t, fset, decl, rel, forbiddenTypePatterns)
-			}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+
+		path := filepath.Join(moduleRoot, name)
+		f, parseErr := parser.ParseFile(fset, path, nil, 0)
+		if parseErr != nil {
+			t.Fatalf("parse root package file %s: %v", name, parseErr)
+		}
+
+		for _, decl := range f.Decls {
+			checkDeclForLeakage(t, fset, decl, name, forbiddenTypePatterns)
 		}
 	}
 }

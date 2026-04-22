@@ -242,11 +242,9 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 
 	var result []byte
 	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
-		Scope:     "github.com/amikos-tech/ami-gin/serialize",
-		Operation: telemetry.OperationEncode,
-		ClassifyError: func(e error) string {
-			return classifySerializeError(e)
-		},
+		Scope:         "github.com/amikos-tech/ami-gin/serialize",
+		Operation:     telemetry.OperationEncode,
+		ClassifyError: classifySerializeError,
 	}, func(bctx context.Context) error {
 		if err := bctx.Err(); err != nil {
 			return err
@@ -366,11 +364,9 @@ func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GIN
 
 	var idx *GINIndex
 	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
-		Scope:     "github.com/amikos-tech/ami-gin/serialize",
-		Operation: telemetry.OperationDecode,
-		ClassifyError: func(e error) string {
-			return classifySerializeError(e)
-		},
+		Scope:         "github.com/amikos-tech/ami-gin/serialize",
+		Operation:     telemetry.OperationDecode,
+		ClassifyError: classifySerializeError,
 	}, func(bctx context.Context) error {
 		if err := bctx.Err(); err != nil {
 			return err
@@ -496,7 +492,7 @@ func classifySerializeError(err error) string {
 		return ""
 	}
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
-		return "other"
+		return normalizedErrorTypeOther
 	}
 	if stderrors.Is(err, ErrInvalidFormat) {
 		return "invalid_format"
@@ -507,7 +503,7 @@ func classifySerializeError(err error) string {
 	if stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
 		return "integrity"
 	}
-	return "other"
+	return normalizedErrorTypeOther
 }
 
 func writeHeader(w io.Writer, idx *GINIndex) error {

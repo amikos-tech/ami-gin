@@ -240,7 +240,7 @@ func (idx *GINIndex) evaluateAdaptiveStringTerm(pathID int, entry *PathEntry, te
 	return idx.lookupAdaptiveStringMatch(uint16(pathID), term)
 }
 
-func (idx *GINIndex) adaptiveInvariantAllRGs(entry *PathEntry, op string) *RGSet {
+func (idx *GINIndex) adaptiveInvariantAllRGs(op string) *RGSet {
 	logger := configLogger(idx.Config)
 	logging.Warn(logger, "adaptive path invariant violation; returning all row groups",
 		logging.AttrOperation(op),
@@ -269,7 +269,7 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 			if match, _, ok := idx.evaluateAdaptiveStringTerm(pathID, entry, v); ok {
 				return match
 			}
-			return idx.adaptiveInvariantAllRGs(entry, "EQ")
+			return idx.adaptiveInvariantAllRGs("EQ")
 		}
 
 		bloomKey := entry.PathName + "=" + v
@@ -338,7 +338,7 @@ func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet 
 			presentRGs := idx.evaluateIsNotNull(pathID)
 			eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
-				return idx.adaptiveInvariantAllRGs(entry, "NE")
+				return idx.adaptiveInvariantAllRGs("NE")
 			}
 			if !exact {
 				return presentRGs
@@ -553,7 +553,7 @@ func (idx *GINIndex) evaluateAdaptiveIN(pathID int, entry *PathEntry, values []a
 		}
 		rgSet, _, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 		if !handled {
-			return idx.adaptiveInvariantAllRGs(entry, "IN")
+			return idx.adaptiveInvariantAllRGs("IN")
 		}
 		result = result.Union(rgSet)
 	}
@@ -579,7 +579,7 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 			}
 			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
-				return idx.adaptiveInvariantAllRGs(entry, "NIN")
+				return idx.adaptiveInvariantAllRGs("NIN")
 			}
 			if !exact {
 				allExact = false

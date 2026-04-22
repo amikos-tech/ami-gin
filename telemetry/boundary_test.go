@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 )
 
 type recordedSpan struct {
@@ -153,7 +154,8 @@ func TestRunBoundaryOperationFinalizesBeforeRepanic(t *testing.T) {
 
 	defer func() {
 		recovered := recover()
-		if recovered != wantPanic {
+		recoveredErr, ok := recovered.(error)
+		if !ok || !stderrors.Is(recoveredErr, wantPanic) {
 			t.Fatalf("recover() = %v; want %v", recovered, wantPanic)
 		}
 		if len(rec.spans) != 1 {
@@ -198,7 +200,7 @@ func newRecordingSignals() (Signals, *boundaryRecorder) {
 	rec := &boundaryRecorder{}
 	return NewSignals(
 		&recordingTracerProvider{
-			TracerProvider: trace.NewNoopTracerProvider(),
+			TracerProvider: tracenoop.NewTracerProvider(),
 			recorder:       rec,
 		},
 		&recordingMeterProvider{
