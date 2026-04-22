@@ -16,7 +16,15 @@ import (
 	gin "github.com/amikos-tech/ami-gin"
 )
 
-const defaultLocalArtifactMode os.FileMode = 0o600
+const (
+	defaultLocalArtifactMode os.FileMode = 0o600
+
+	commandBuild      = "build"
+	commandQuery      = "query"
+	commandInfo       = "info"
+	commandExtract    = "extract"
+	commandExperiment = "experiment"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,15 +36,15 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
-	case "build":
+	case commandBuild:
 		cmdBuild(args)
-	case "query":
+	case commandQuery:
 		cmdQuery(args)
-	case "info":
+	case commandInfo:
 		cmdInfo(args)
-	case "extract":
+	case commandExtract:
 		cmdExtract(args)
-	case "experiment":
+	case commandExperiment:
 		cmdExperiment(args)
 	case "help", "-h", "--help":
 		printUsage()

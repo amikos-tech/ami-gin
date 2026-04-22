@@ -9,12 +9,26 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 
 	"github.com/pkg/errors"
 
 	gin "github.com/amikos-tech/ami-gin"
 	"github.com/amikos-tech/ami-gin/logging/slogadapter"
+)
+
+const (
+	experimentLogLevelOff   = "off"
+	experimentLogLevelInfo  = "info"
+	experimentLogLevelDebug = "debug"
+
+	experimentOnErrorAbort    = "abort"
+	experimentOnErrorContinue = "continue"
+
+	experimentStatusComplete  = "complete"
+	experimentStatusPartial   = "partial"
+	experimentStatusTruncated = "truncated"
 )
 
 func cmdExperiment(args []string) {
@@ -30,9 +44,9 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	jsonOutput := fs.Bool("json", false, "Emit experiment output as JSON")
 	testPredicate := fs.String("test", "", "Evaluate a predicate against the built index")
 	outputPath := fs.String("o", "", "Write readable sidecar output to path")
-	logLevel := fs.String("log-level", "off", "Log level: off|info|debug")
+	logLevel := fs.String("log-level", experimentLogLevelOff, "Log level: off|info|debug")
 	sampleLimit := fs.Int("sample", 0, "Cap successful ingests at N documents")
-	onError := fs.String("on-error", "abort", "Malformed-line handling: abort|continue")
+	onError := fs.String("on-error", experimentOnErrorAbort, "Malformed-line handling: abort|continue")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -46,7 +60,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		fmt.Fprintln(stderr, "Error: --sample must be greater than or equal to 0")
 		return 1
 	}
-	if *onError != "abort" && *onError != "continue" {
+	if *onError != experimentOnErrorAbort && *onError != experimentOnErrorContinue {
 		fmt.Fprintf(stderr, "Error: invalid --on-error %q: want abort or continue\n", *onError)
 		return 1
 	}
@@ -218,7 +232,8 @@ func prepareExperimentSource(inputArg string, stdin io.Reader, sampleLimit int, 
 }
 
 func prepareExperimentFile(path string) (experimentInputSource, error) {
-	info, err := os.Stat(path)
+	cleanedPath := filepath.Clean(path)
+	info, err := os.Stat(cleanedPath)
 	if err != nil {
 		return experimentInputSource{}, errors.Wrap(err, "stat input")
 	}
@@ -226,17 +241,13 @@ func prepareExperimentFile(path string) (experimentInputSource, error) {
 		return experimentInputSource{}, errors.Errorf("input %q is a directory", path)
 	}
 
-	count, err := countExperimentFile(path)
+	count, err := countExperimentFile(cleanedPath)
 	if err != nil {
 		return experimentInputSource{}, err
 	}
 
-	return newExperimentInputSource(path, path, count, func() (io.ReadCloser, error) {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, errors.Wrap(err, "open input")
-		}
-		return f, nil
+	return newExperimentInputSource(path, cleanedPath, count, func() (io.ReadCloser, error) {
+		return openExperimentInputFile(cleanedPath, "open input")
 	}, nil), nil
 }
 
@@ -249,7 +260,7 @@ func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError strin
 	}
 
 	var validator experimentRecordValidator
-	if onError == "abort" {
+	if onError == experimentOnErrorAbort {
 		validator, err = newExperimentAbortValidator(config)
 		if err != nil {
 			_ = tmpFile.Close()
@@ -271,24 +282,30 @@ func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError strin
 
 	tempPath := tmpFile.Name()
 	return newExperimentInputSource("-", "", count, func() (io.ReadCloser, error) {
-		f, err := os.Open(tempPath)
-		if err != nil {
-			return nil, errors.Wrap(err, "reopen temp file for stdin")
-		}
-		return f, nil
+		return openExperimentInputFile(tempPath, "reopen temp file for stdin")
 	}, func() error {
 		return removeExperimentTempFile(tempPath)
 	}), nil
 }
 
 func countExperimentFile(path string) (int, error) {
-	f, err := os.Open(path)
+	f, err := openExperimentInputFile(path, "open input for counting")
 	if err != nil {
-		return 0, errors.Wrap(err, "open input for counting")
+		return 0, err
 	}
 	defer f.Close()
 
 	return countExperimentRecords(f, nil, nil, nil)
+}
+
+func openExperimentInputFile(path, operation string) (*os.File, error) {
+	cleanedPath := filepath.Clean(path)
+	// #nosec G304 -- experiment inputs are explicit CLI paths or temp files created by this process and then cleaned before opening.
+	f, err := os.Open(cleanedPath)
+	if err != nil {
+		return nil, errors.Wrap(err, operation)
+	}
+	return f, nil
 }
 
 func removeExperimentTempFile(path string) error {
@@ -386,7 +403,7 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 		lineErr := validateExperimentRecord(builder, record, result.ingestedDocs/rgSize)
 		if lineErr != nil {
 			fmt.Fprintf(stderr, "line %d: %v\n", lineNumber, lineErr)
-			if onError == "abort" {
+			if onError == experimentOnErrorAbort {
 				return experimentBuildResult{}, errExperimentAbort
 			}
 			result.skippedLines++
@@ -426,12 +443,12 @@ func experimentSummaryStatus(source experimentInputSource, result experimentBuil
 	// no way to know whether more input was queued past the cap, so sample-capped
 	// runs are always reported as truncated there.
 	if result.sampleCapped && (source.candidateRecords == 0 || result.processedLines < source.candidateRecords) {
-		return "truncated"
+		return experimentStatusTruncated
 	}
 	if result.skippedLines > 0 || result.errorCount > 0 {
-		return "partial"
+		return experimentStatusPartial
 	}
-	return "complete"
+	return experimentStatusComplete
 }
 
 func evaluateExperimentPredicate(ctx context.Context, rowGroups int, idx *gin.GINIndex, predicateText string, pred gin.Predicate) (*experimentPredicateResult, error) {
@@ -555,11 +572,11 @@ func experimentConfigForLogLevel(level string, stderr io.Writer) (gin.GINConfig,
 	config := gin.DefaultConfig()
 
 	switch level {
-	case "off":
+	case experimentLogLevelOff:
 		return config, nil
-	case "info", "debug":
+	case experimentLogLevelInfo, experimentLogLevelDebug:
 		slogLevel := slog.LevelInfo
-		if level == "debug" {
+		if level == experimentLogLevelDebug {
 			slogLevel = slog.LevelDebug
 		}
 		logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: slogLevel}))
