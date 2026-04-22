@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -261,12 +262,7 @@ func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError strin
 
 	var validator experimentRecordValidator
 	if onError == experimentOnErrorAbort {
-		validator, err = newExperimentAbortValidator(config)
-		if err != nil {
-			_ = tmpFile.Close()
-			warnOnTempRemoveFailure(tmpFile.Name(), stderr)
-			return experimentInputSource{}, err
-		}
+		validator = newExperimentAbortValidator()
 	}
 
 	count, countErr := countExperimentRecords(stdin, tmpFile, validator, stderr)
@@ -323,15 +319,16 @@ func warnOnTempRemoveFailure(path string, stderr io.Writer) {
 
 type experimentRecordValidator func(record []byte) error
 
-func newExperimentAbortValidator(config gin.GINConfig) (experimentRecordValidator, error) {
-	builder, err := gin.NewBuilder(config, 1)
-	if err != nil {
-		return nil, errors.Wrap(err, "create stdin validator")
-	}
-
+func newExperimentAbortValidator() experimentRecordValidator {
 	return func(record []byte) error {
-		return validateExperimentRecord(builder, record, 0)
-	}, nil
+		if len(record) == 0 {
+			return errors.New("blank JSONL line")
+		}
+		if !json.Valid(record) {
+			return errors.New("invalid JSON record")
+		}
+		return nil
+	}
 }
 
 func countExperimentRecords(r io.Reader, spool io.Writer, validator experimentRecordValidator, stderr io.Writer) (int, error) {
