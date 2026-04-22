@@ -1591,6 +1591,10 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		return nil, errors.Wrap(err, "validate config")
 	}
 
+	// Restore silent observability defaults so decoded configs are always safe
+	// before any boundary code consumes them (D-08a).
+	normalizeObservability(cfg)
+
 	return cfg, nil
 }
 

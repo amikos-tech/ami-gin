@@ -7,6 +7,9 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 const (
@@ -362,6 +365,11 @@ type GINConfig struct {
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
 	representationTransformers map[string][]registeredRepresentation // canonical source path -> runtime companion transformers
+
+	// Runtime-only observability fields. These are never serialized into the
+	// on-wire config payload (see SerializedConfig and writeConfig/readConfig).
+	Logger  logging.Logger    // noop by default; set via WithLogger
+	Signals telemetry.Signals // disabled by default; set via WithSignals
 }
 
 type ConfigOption func(*GINConfig) error
@@ -646,7 +654,7 @@ func NewConfig(opts ...ConfigOption) (GINConfig, error) {
 }
 
 func DefaultConfig() GINConfig {
-	return GINConfig{
+	cfg := GINConfig{
 		CardinalityThreshold:    10000,
 		BloomFilterSize:         65536,
 		BloomFilterHashes:       5,
@@ -659,6 +667,60 @@ func DefaultConfig() GINConfig {
 		AdaptiveCoverageCeiling: 0.80,
 		AdaptiveBucketCount:     128,
 	}
+	normalizeObservability(&cfg)
+	return cfg
+}
+
+// normalizeObservability installs noop/disabled observability defaults into cfg.
+// It is called by DefaultConfig and by readConfig so decoded indexes are always
+// safe before any boundary code consumes them.
+func normalizeObservability(cfg *GINConfig) {
+	if cfg.Logger == nil {
+		cfg.Logger = logging.NewNoop()
+	}
+	if !cfg.Signals.Enabled() {
+		cfg.Signals = telemetry.Disabled()
+	}
+}
+
+// WithLogger sets a custom logger on the config. Nil is rejected; omitting
+// the option leaves the noop default in place.
+func WithLogger(logger logging.Logger) ConfigOption {
+	return func(c *GINConfig) error {
+		if logger == nil {
+			return errors.New("logger cannot be nil")
+		}
+		c.Logger = logger
+		return nil
+	}
+}
+
+// WithSignals sets a Signals container on the config. Passing telemetry.Disabled()
+// is valid and keeps the silent default behavior.
+func WithSignals(signals telemetry.Signals) ConfigOption {
+	return func(c *GINConfig) error {
+		c.Signals = signals
+		return nil
+	}
+}
+
+// configLogger returns a safe logger from cfg, collapsing nil configs to noop.
+func configLogger(cfg *GINConfig) logging.Logger {
+	if cfg == nil {
+		return logging.NewNoop()
+	}
+	return logging.Default(cfg.Logger)
+}
+
+// configSignals returns a safe Signals from cfg, collapsing nil configs to disabled.
+func configSignals(cfg *GINConfig) telemetry.Signals {
+	if cfg == nil {
+		return telemetry.Disabled()
+	}
+	if !cfg.Signals.Enabled() {
+		return telemetry.Disabled()
+	}
+	return cfg.Signals
 }
 
 // AdaptiveEnabled reports whether adaptive high-cardinality indexing is enabled.
