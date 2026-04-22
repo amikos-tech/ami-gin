@@ -89,23 +89,7 @@ func collectExperimentPathRows(idx *gin.GINIndex) []experimentPathRow {
 }
 
 func collectExperimentTypes(types uint8) []string {
-	out := make([]string, 0, 5)
-	if types&gin.TypeString != 0 {
-		out = append(out, "string")
-	}
-	if types&gin.TypeInt != 0 {
-		out = append(out, "int")
-	}
-	if types&gin.TypeFloat != 0 {
-		out = append(out, "float")
-	}
-	if types&gin.TypeBool != 0 {
-		out = append(out, "bool")
-	}
-	if types&gin.TypeNull != 0 {
-		out = append(out, "null")
-	}
-	return out
+	return typeNames(types)
 }
 
 func estimateBloomOccupancy(cardinality uint32, bf *gin.BloomFilter) float64 {

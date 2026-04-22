@@ -883,23 +883,28 @@ func parseValueList(s string) []any {
 	return values
 }
 
-func describeTypes(types uint8) string {
-	var parts []string
+func typeNames(types uint8) []string {
+	out := make([]string, 0, 5)
 	if types&gin.TypeString != 0 {
-		parts = append(parts, "string")
+		out = append(out, "string")
 	}
 	if types&gin.TypeInt != 0 {
-		parts = append(parts, "int")
+		out = append(out, "int")
 	}
 	if types&gin.TypeFloat != 0 {
-		parts = append(parts, "float")
+		out = append(out, "float")
 	}
 	if types&gin.TypeBool != 0 {
-		parts = append(parts, "bool")
+		out = append(out, "bool")
 	}
 	if types&gin.TypeNull != 0 {
-		parts = append(parts, "null")
+		out = append(out, "null")
 	}
+	return out
+}
+
+func describeTypes(types uint8) string {
+	parts := typeNames(types)
 	if len(parts) == 0 {
 		return "none"
 	}
