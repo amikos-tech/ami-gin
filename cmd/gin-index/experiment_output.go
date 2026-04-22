@@ -126,7 +126,7 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 	if report.Summary.SampleLimit > 0 {
 		fmt.Fprintf(stdout, "  Sample Limit: %d\n", report.Summary.SampleLimit)
 	}
-	if report.Summary.ProcessedLines > 0 || report.Summary.SkippedLines > 0 || report.Summary.ErrorCount > 0 {
+	if report.Summary.ProcessedLines != report.Summary.Documents || report.Summary.SkippedLines > 0 || report.Summary.ErrorCount > 0 || report.Summary.SampleLimit > 0 {
 		fmt.Fprintf(stdout, "  Processed Lines: %d\n", report.Summary.ProcessedLines)
 		fmt.Fprintf(stdout, "  Skipped Lines: %d\n", report.Summary.SkippedLines)
 		fmt.Fprintf(stdout, "  Error Count: %d\n", report.Summary.ErrorCount)
