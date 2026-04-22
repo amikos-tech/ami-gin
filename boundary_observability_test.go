@@ -2,9 +2,11 @@ package gin_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	gin "github.com/amikos-tech/ami-gin"
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 // --------------------------------------------------------------------------
@@ -63,14 +65,58 @@ func TestBuildFromParquetContextNilDisabledObservabilityNoChanges(t *testing.T) 
 
 func TestBuildFromParquetContextEmitsParserNameWithoutInfoLeak(t *testing.T) {
 	// Parser identity must be observable only via traces or debug-level signals.
-	// INFO-level log attributes must not include any parser name fields.
-	// This test verifies the function exists and returns without panicking when
-	// called with a context-carrying observability seam.
-	cfg := gin.DefaultConfig()
+	// INFO-level log attributes must not include any parser name fields and
+	// must stay within the frozen allowlist vocabulary.
+	capLogger := &infoAttrRecorder{}
+	cfg, err := gin.NewConfig(gin.WithLogger(capLogger))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
 
-	_, err := gin.BuildFromParquetContext(context.Background(), "nonexistent.parquet", "json", cfg)
-	// Either an error (no file) or success; both are fine for this test.
-	_ = err
+	// Exercise the boundary. The parquet boundary currently emits observability
+	// via OTel spans/metrics rather than INFO-level log lines, so an empty
+	// capture is an acceptable outcome. The constraint this test guards is
+	// negative: IF any INFO-level attrs are captured (now or after a future
+	// instrumentation change), none of them may leak parser identity or step
+	// outside the frozen allowlist.
+	_, _ = gin.BuildFromParquetContext(context.Background(), "nonexistent.parquet", "json", cfg)
+
+	frozenAllowlist := map[string]bool{
+		"operation":    true,
+		"predicate_op": true,
+		"path_mode":    true,
+		"status":       true,
+		"error.type":   true,
+	}
+	for _, a := range capLogger.attrs {
+		if strings.Contains(strings.ToLower(a.Key), "parser") {
+			t.Errorf("INFO-level attr leaked parser identity: key=%q value=%q", a.Key, a.Value)
+		}
+		if strings.Contains(strings.ToLower(a.Value), "stdlib") ||
+			strings.Contains(strings.ToLower(a.Value), "parser") {
+			t.Errorf("INFO-level attr value leaked parser identity: key=%q value=%q", a.Key, a.Value)
+		}
+		if !frozenAllowlist[a.Key] {
+			t.Errorf("INFO-level attr key %q is outside the frozen allowlist", a.Key)
+		}
+	}
+}
+
+// infoAttrRecorder captures attrs emitted at INFO level only. Debug-level
+// parser identifiers are ignored so the assertion targets the INFO vocabulary
+// exclusively. It lives here rather than in the policy test file because the
+// boundary tests need a level-aware recorder and the policy helper captures
+// every level.
+type infoAttrRecorder struct {
+	attrs []logging.Attr
+}
+
+func (r *infoAttrRecorder) Enabled(_ logging.Level) bool { return true }
+func (r *infoAttrRecorder) Log(level logging.Level, _ string, attrs ...logging.Attr) {
+	if level != logging.LevelInfo {
+		return
+	}
+	r.attrs = append(r.attrs, attrs...)
 }
 
 // --------------------------------------------------------------------------
