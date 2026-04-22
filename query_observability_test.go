@@ -163,10 +163,13 @@ func TestAdaptiveInvariantViolationStillFailsOpen(t *testing.T) {
 // Task 3: Disabled-path performance gates
 // =============================================================================
 
-// TestEvaluateDisabledLoggingAllocsZero asserts that running EvaluateContext
-// with a disabled (noop) logger adds 0 allocations over the baseline that
-// uses no observability at all. This is the merge gate for OBS-02.
-func TestEvaluateDisabledLoggingAllocsZero(t *testing.T) {
+// TestEvaluateDisabledLoggingAllocsAtMostOne asserts that running
+// EvaluateContext with a disabled (noop) logger adds at most one allocation
+// over the baseline that uses no observability at all. The +1 tolerance
+// accommodates scheduler/jitter noise on some Go runtimes while still
+// catching regressions that leak a heap allocation per call. This is the
+// merge gate for OBS-02.
+func TestEvaluateDisabledLoggingAllocsAtMostOne(t *testing.T) {
 	idx, err := buildQueryObsIndex()
 	if err != nil {
 		t.Fatalf("build: %v", err)
@@ -187,7 +190,7 @@ func TestEvaluateDisabledLoggingAllocsZero(t *testing.T) {
 	})
 
 	if withNoopAllocs > baseAllocs+1 {
-		t.Fatalf("disabled logging allocs=%v; baseline allocs=%v; disabled path must not add more than 1 alloc", withNoopAllocs, baseAllocs)
+		t.Fatalf("disabled logging allocs=%v; baseline allocs=%v; disabled path must add at most 1 alloc over baseline", withNoopAllocs, baseAllocs)
 	}
 }
 

@@ -3507,8 +3507,9 @@ func benchQueryFixture() (*GINIndex, []Predicate) {
 }
 
 // BenchmarkEvaluateDisabledLogging measures EvaluateContext with the default
-// noop logger and disabled signals. This is the zero-cost disabled-path gate
-// for OBS-02: allocs/op must be zero (verified by TestEvaluateDisabledLoggingAllocsZero).
+// noop logger and disabled signals. This is the near-zero-cost disabled-path
+// gate for OBS-02 (at most one alloc over baseline; verified by
+// TestEvaluateDisabledLoggingAllocsAtMostOne).
 func BenchmarkEvaluateDisabledLogging(b *testing.B) {
 	idx, preds := benchQueryFixture()
 	cfg := DefaultConfig() // noop logger + disabled signals
