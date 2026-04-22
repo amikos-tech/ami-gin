@@ -36,6 +36,8 @@ func main() {
 		cmdInfo(args)
 	case "extract":
 		cmdExtract(args)
+	case "experiment":
+		cmdExperiment(args)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -56,6 +58,7 @@ Commands:
   query     Query index with a predicate
   info      Show information about index(es)
   extract   Extract embedded index to sidecar file
+  experiment Build a GIN index from JSONL for experimentation
 
 Single File Examples:
   gin-index build -c attributes data.parquet
@@ -63,6 +66,8 @@ Single File Examples:
   gin-index query data.parquet.gin '$.status = "error"'
   gin-index info data.parquet.gin
   gin-index extract -o data.parquet.gin data.parquet
+  gin-index experiment path/to/docs.jsonl
+  cat docs.jsonl | gin-index experiment -
 
 Batch Processing (Directory/S3 Prefix):
   # Build index for all .parquet files in directory
