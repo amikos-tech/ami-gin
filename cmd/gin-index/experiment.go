@@ -481,8 +481,11 @@ func evaluateExperimentPredicate(ctx context.Context, rowGroups int, idx *gin.GI
 	}, nil
 }
 
-// Builder sizing uses candidate line counts or sample limits as an upper bound,
-// so trim unused row-group slots before reporting or writing sidecars.
+// trimExperimentIndexRowGroups mutates a finalized GINIndex in place to shrink
+// NumRowGroups and all per-RG structures down to the actual row-group count.
+// GINIndex is contractually immutable after Finalize() (see gin.go), so this
+// is a deliberate exception: call it only inside buildExperimentIndex before
+// the index escapes scope, never on an index handed to other code.
 func trimExperimentIndexRowGroups(idx *gin.GINIndex, rowGroups int) {
 	if idx == nil {
 		return
