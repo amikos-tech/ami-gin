@@ -28,7 +28,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 - [x] **Phase 13: Parser Seam Extraction** — Pure refactor: extract the JSON-parse boundary from the builder into a pluggable `Parser` interface with a `stdlibParser` default. Completed 2026-04-21; residual benchmark noise accepted in `13-SECURITY.md`.
 - [x] **Phase 14: Observability Seams** — `Logger` + `Telemetry` + `Signals` (OTel providers, never global), boundary-only spans, frozen attribute vocabulary, `slog`/`stdlib` adapters, context-aware API variants, `adaptiveInvariantLogger` migration. Completed 2026-04-22.
-- [ ] **Phase 15: Experimentation CLI** — New `experiment` subcommand: JSONL in (file or stdin) → index → per-path summary + optional sidecar write, predicate tester, JSON mode, sample/error-tolerant modes.
+- [x] **Phase 15: Experimentation CLI** — New `experiment` subcommand: JSONL in (file or stdin) → index → per-path summary + optional sidecar write, predicate tester, JSON mode, sample/error-tolerant modes. Completed 2026-04-22.
 
 ### ⏸️ v1.2 SIMD JSON Path (Phases 16-17) — PREVIEW / DEFERRED
 
@@ -64,7 +64,13 @@ Plans:
   4. A single grep for `log.Logger` field declarations in the library returns zero hits after migration: the `adaptiveInvariantLogger *log.Logger` at `query.go:17` is routed through the new `Logger` interface with no dual-logger state.
   5. `EvaluateContext` and `BuildFromParquetContext` are exported as additive siblings; existing `Evaluate` / `BuildFromParquet` delegate with `context.Background()` and a compatibility test proves the old entry points are untouched.
   6. Attribute vocabulary is frozen in a single source file (event names + `Attr` keys) and a test asserts emitted INFO-level attributes come only from the allowlist (`operation`, `predicate_op`, `path_mode`, `status`, `error.type`) — predicate values, path field names, doc/RG/term IDs are rejected.
-**Plans**: TBD
+**Plans**: 4 plans
+
+Plans:
+- [x] 14-01-PLAN.md — core logging/telemetry packages, GINConfig wiring, and default observability behavior
+- [x] 14-02-PLAN.md — query boundary instrumentation, EvaluateContext, invariant logger migration, and perf gates
+- [x] 14-03-PLAN.md — parquet/build + encode/decode context siblings and boundary coverage
+- [x] 14-04-PLAN.md — policy and phase-level verification gates
 
 ### Phase 15: Experimentation CLI
 **Goal**: A new `gin-index experiment` subcommand that turns a JSONL file (or stdin stream) into a built index plus a human- or JSON-readable per-path summary, with an inline predicate tester — so a new evaluator can measure pruning quality on their own data in one command.
@@ -77,7 +83,12 @@ Plans:
   4. `-o out.gin` writes a loadable sidecar (round-trip test: load the sidecar with `gin.ReadSidecar` and verify the same pruning ratio for a canonical predicate).
   5. `--sample N` caps ingested documents at N; `--on-error continue|abort` toggles line-level error tolerance (default `abort`); both flags are covered by CLI end-to-end tests.
   6. The CLI ships with no new dependencies (stdlib `flag`, `text/tabwriter`, `bufio`, `encoding/json` only) and contains no REPL / TUI / color-auto-detection code — charter compliance asserted by a linter-or-grep check in CI.
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [x] 15-01-PLAN.md — experiment subcommand foundation: dispatcher wiring, stdin-aware runner, two-pass streaming ingest, base text summary, foundation tests
+- [x] 15-02-PLAN.md — shared report model, JSON mode, predicate test, sidecar write, and log-level wiring
+- [x] 15-03-PLAN.md — sample/on-error semantics, counter reporting, and executable policy guards
 
 ### Phase 16: SIMD Parser Adapter
 **Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
@@ -115,8 +126,8 @@ Plans:
 | 11. Real-Corpus Prefix Compression Benchmarking | v1.0 | 3/3 | Complete | 2026-04-20 |
 | 12. Milestone Evidence Reconciliation | v1.0 | 3/3 | Complete | 2026-04-21 |
 | 13. Parser Seam Extraction | v1.1 | 3/3 | Complete | 2026-04-21 |
-| 14. Observability Seams | v1.1 | 0/- | Not started | - |
-| 15. Experimentation CLI | v1.1 | 0/- | Not started | - |
+| 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
+| 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. SIMD Parser Adapter | v1.2 preview | 0/- | Deferred | - |
 | 17. SIMD Validation, Datasets & CI | v1.2 preview | 0/- | Deferred | - |
 
@@ -130,6 +141,15 @@ Plans:
 
 **Goal:** Add `lefthook`-based pre-push quality gates, modeled on `/Users/tazarov/experiments/telia/tclr/tclr-v2/lefthook.yml`, to block pushes when required local validation fails or required tools are missing. Scope the future implementation around this repo's native checks such as `make lint` and `make test`, with room for selective changed-package execution if that keeps hook latency reasonable.
 **Requirements:** TBD
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (promote with /gsd-review-backlog when ready)
+
+### Phase 999.6: Row-Level Pruning Messaging And Positioning (BACKLOG)
+
+**Goal:** Clarify across the README, CLI/docs, and experimentation guidance that GIN Index is not limited to Parquet-style row-group pruning. The library should be presented as supporting both grouped pruning and row-level pruning when callers choose `rg=1`, without changing the existing pruning-first model or forcing an API rename. Deliverable: messaging, examples, and terminology guidance that explain when row groups are a storage optimization versus when single-row groups are the right mental model.
+**Requirements:** TBD — likely includes README/product positioning updates, `gin-index experiment` wording, and terminology consistency review.
 **Plans:** 0 plans
 
 Plans:
