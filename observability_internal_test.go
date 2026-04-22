@@ -9,6 +9,17 @@ import (
 	pkgerrors "github.com/pkg/errors"
 )
 
+var frozenErrorTypes = map[string]bool{
+	"":                true,
+	"config":          true,
+	"io":              true,
+	"invalid_format":  true,
+	"deserialization": true,
+	"integrity":       true,
+	"not_found":       true,
+	"other":           true,
+}
+
 func TestClassifySerializeError(t *testing.T) {
 	t.Parallel()
 
@@ -28,8 +39,12 @@ func TestClassifySerializeError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifySerializeError(tc.err); got != tc.want {
+			got := classifySerializeError(tc.err)
+			if got != tc.want {
 				t.Fatalf("classifySerializeError(%v) = %q; want %q", tc.err, got, tc.want)
+			}
+			if !frozenErrorTypes[got] {
+				t.Fatalf("classifySerializeError(%v) = %q; want frozen vocabulary member", tc.err, got)
 			}
 		})
 	}
@@ -55,8 +70,12 @@ func TestClassifyParquetError(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := classifyParquetError(tc.err); got != tc.want {
+			got := classifyParquetError(tc.err)
+			if got != tc.want {
 				t.Fatalf("classifyParquetError(%v) = %q; want %q", tc.err, got, tc.want)
+			}
+			if !frozenErrorTypes[got] {
+				t.Fatalf("classifyParquetError(%v) = %q; want frozen vocabulary member", tc.err, got)
 			}
 		})
 	}

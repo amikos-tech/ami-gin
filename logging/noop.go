@@ -20,5 +20,5 @@ func Default(logger Logger) Logger {
 	return sharedNoop
 }
 
-func (noopLogger) Enabled(Level) bool    { return false }
+func (noopLogger) Enabled(Level) bool         { return false }
 func (noopLogger) Log(Level, string, ...Attr) {}

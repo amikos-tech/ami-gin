@@ -227,9 +227,8 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 
 // EncodeWithLevelContext is the context-aware, configurable-compression sibling
 // of EncodeWithLevel. Observability is seeded from idx.Config when present;
-// caller EncodeOptions override it. Cancellation is checked before and after
-// the blocking encode body, but the zstd codec itself cannot be preempted once
-// it starts.
+// caller EncodeOptions override it. Cancellation is checked before the blocking
+// encode body, but the zstd codec itself cannot be preempted once it starts.
 func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level CompressionLevel, opts ...EncodeOption) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -254,10 +253,7 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 		}
 		var encErr error
 		result, encErr = encodeWithLevel(idx, level)
-		if encErr != nil {
-			return encErr
-		}
-		return bctx.Err()
+		return encErr
 	})
 	return result, err
 }
@@ -355,7 +351,7 @@ func Decode(data []byte) (*GINIndex, error) {
 // DecodeContext is the context-aware sibling of Decode. It wraps the
 // deserialization work in a coarse boundary span. Caller DecodeOptions can
 // supply explicit observability signals since Decode has no config receiver.
-// Cancellation is checked before and after the blocking decode body, but zstd
+// Cancellation is checked before the blocking decode body, but zstd
 // decompression itself cannot be preempted once it starts.
 func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GINIndex, error) {
 	if ctx == nil {
@@ -381,10 +377,7 @@ func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GIN
 		}
 		var decErr error
 		idx, decErr = decodeCore(data)
-		if decErr != nil {
-			return decErr
-		}
-		return bctx.Err()
+		return decErr
 	})
 	return idx, err
 }

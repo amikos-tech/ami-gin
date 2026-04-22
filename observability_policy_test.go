@@ -111,11 +111,11 @@ func TestInfoLevelAttrAllowlist(t *testing.T) {
 // checking that constructors produce the right keys.
 func TestInfoLevelEmissionsUseOnlyAllowlistedAttrs(t *testing.T) {
 	frozenAllowlist := map[string]bool{
-		"operation":   true,
+		"operation":    true,
 		"predicate_op": true,
-		"path_mode":   true,
-		"status":      true,
-		"error.type":  true,
+		"path_mode":    true,
+		"status":       true,
+		"error.type":   true,
 	}
 
 	var captured []logging.Attr
@@ -219,10 +219,10 @@ func TestNoBackendTypeLeakage(t *testing.T) {
 
 	// Disallowed type name substrings (checked against the selector expression).
 	forbiddenTypePatterns := []string{
-		"slog.Logger",    // *slog.Logger from log/slog
-		"log.Logger",     // *log.Logger from stdlib log
-		"otlp",           // any OTLP exporter type
-		"otel/sdk",       // any OTel SDK type
+		"slog.Logger", // *slog.Logger from log/slog
+		"log.Logger",  // *log.Logger from stdlib log
+		"otlp",        // any OTLP exporter type
+		"otel/sdk",    // any OTel SDK type
 	}
 
 	fset := token.NewFileSet()
@@ -470,11 +470,11 @@ func TestParquetAndSerializationObservabilityRoundTrip(t *testing.T) {
 
 	// Evaluate with capturing logger must emit attrs only from the allowlist.
 	frozenAllowlist := map[string]bool{
-		"operation":   true,
+		"operation":    true,
 		"predicate_op": true,
-		"path_mode":   true,
-		"status":      true,
-		"error.type":  true,
+		"path_mode":    true,
+		"status":       true,
+		"error.type":   true,
 	}
 	var captured []logging.Attr
 	capLogger := &policyCapLogger{attrs: &captured}

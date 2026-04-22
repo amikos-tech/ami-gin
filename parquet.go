@@ -529,6 +529,8 @@ func classifyParquetError(err error) string {
 	if err == nil {
 		return ""
 	}
+	// Check sentinel errors first; fall back to message heuristics for
+	// dependency paths that do not expose stable typed sentinels.
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
 		return "other"
 	}

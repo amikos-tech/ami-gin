@@ -1063,7 +1063,6 @@ func TestAdaptiveContainsUsesTrigramIndex(t *testing.T) {
 	assertContains(t, decoded)
 }
 
-
 func TestQueryNIN(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 4)
 
