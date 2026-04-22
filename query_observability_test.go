@@ -78,6 +78,38 @@ func TestEvaluateContextPreservesResults(t *testing.T) {
 	}
 }
 
+func TestEvaluateContextCanceledFailsOpenAndLogsError(t *testing.T) {
+	idx, err := buildQueryObsIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	var captured []logging.Attr
+	capLogger := &captureLogger{attrs: &captured}
+	cfg, err := gin.NewConfig(gin.WithLogger(capLogger))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	idx.Config = &cfg
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	got := idx.EvaluateContext(ctx, []gin.Predicate{gin.EQ("$.status", "active")})
+	if got.Count() != int(idx.Header.NumRowGroups) {
+		t.Fatalf("EvaluateContext canceled count=%d; want fail-open count=%d", got.Count(), idx.Header.NumRowGroups)
+	}
+	if !capLogger.called {
+		t.Fatal("expected canceled evaluation to emit a completion log entry")
+	}
+	if value, ok := attrValue(captured, "status"); !ok || value != "error" {
+		t.Fatalf("status attr = %q, %v; want %q, true", value, ok, "error")
+	}
+	if value, ok := attrValue(captured, "error.type"); !ok || value != "other" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "other")
+	}
+}
+
 // =============================================================================
 // Task 2: Adaptive invariant logger migration
 // =============================================================================
@@ -267,6 +299,15 @@ func (c *captureLogger) Enabled(_ logging.Level) bool { return true }
 func (c *captureLogger) Log(_ logging.Level, _ string, attrs ...logging.Attr) {
 	c.called = true
 	*c.attrs = append(*c.attrs, attrs...)
+}
+
+func attrValue(attrs []logging.Attr, key string) (string, bool) {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value, true
+		}
+	}
+	return "", false
 }
 
 // buildQueryObsIndex builds a small representative index for query tests.

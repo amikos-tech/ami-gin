@@ -5,8 +5,8 @@ package telemetry
 // New operation names must be added here; callers must not construct
 // free-form operation strings at call sites.
 const (
-	OperationEvaluate        = "query.evaluate"
-	OperationEncode          = "serialize.encode"
-	OperationDecode          = "serialize.decode"
+	OperationEvaluate         = "query.evaluate"
+	OperationEncode           = "serialize.encode"
+	OperationDecode           = "serialize.decode"
 	OperationBuildFromParquet = "parquet.build"
 )

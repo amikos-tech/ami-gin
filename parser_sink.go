@@ -5,7 +5,7 @@ package gin
 // parsers cannot reach into the builder's internals. *documentBuildState
 // is exposed as an OPAQUE handle; parsers MUST NOT read its fields.
 //
-// Path argument convention (per-method, see Pitfall #3 in 13-RESEARCH.md):
+// Path argument convention (per method):
 //   - canonicalPath: already-normalized path (via normalizeWalkPath).
 //     Parser MUST pre-normalize before calling.
 //   - path: raw, un-normalized path. The sink impl normalizes internally
@@ -13,7 +13,7 @@ package gin
 //
 // Numeric staging: prefer StageJSONNumber when the parser still has the
 // raw source text — the builder's classifier is the single source of
-// truth for numeric type (see BUILD-03 / Phase 07) and raw text preserves
+// truth for numeric type and raw text preserves
 // exact-int64 semantics outside [-2^53, 2^53]. Use StageNativeNumeric
 // only when the parser has already decoded to a Go numeric inside the
 // float64-exact range (e.g. SIMD / streaming parsers that skip the

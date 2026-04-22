@@ -167,7 +167,7 @@ func readRGSet(r io.Reader, maxRGs uint32) (*RGSet, error) {
 
 // encodeRuntime carries runtime-only observability for raw serialization.
 // Raw encode/decode are package-level functions with no GINConfig receiver,
-// so caller-supplied options are the narrow exception to D-07.
+// so caller-supplied options provide the only per-call observability override.
 type encodeRuntime struct {
 	signals telemetry.Signals
 }
@@ -225,8 +225,11 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	return EncodeWithLevelContext(context.Background(), idx, level)
 }
 
-// EncodeWithLevelContext is the context-aware, configurable-compression sibling of EncodeWithLevel.
-// Observability is seeded from idx.Config when present; caller EncodeOptions override it.
+// EncodeWithLevelContext is the context-aware, configurable-compression sibling
+// of EncodeWithLevel. Observability is seeded from idx.Config when present;
+// caller EncodeOptions override it. Cancellation is checked before and after
+// the blocking encode body, but the zstd codec itself cannot be preempted once
+// it starts.
 func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level CompressionLevel, opts ...EncodeOption) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -245,10 +248,16 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 		ClassifyError: func(e error) string {
 			return classifySerializeError(e)
 		},
-	}, func(_ context.Context) error {
+	}, func(bctx context.Context) error {
+		if err := bctx.Err(); err != nil {
+			return err
+		}
 		var encErr error
 		result, encErr = encodeWithLevel(idx, level)
-		return encErr
+		if encErr != nil {
+			return encErr
+		}
+		return bctx.Err()
 	})
 	return result, err
 }
@@ -346,6 +355,8 @@ func Decode(data []byte) (*GINIndex, error) {
 // DecodeContext is the context-aware sibling of Decode. It wraps the
 // deserialization work in a coarse boundary span. Caller DecodeOptions can
 // supply explicit observability signals since Decode has no config receiver.
+// Cancellation is checked before and after the blocking decode body, but zstd
+// decompression itself cannot be preempted once it starts.
 func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GINIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -364,10 +375,16 @@ func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GIN
 		ClassifyError: func(e error) string {
 			return classifySerializeError(e)
 		},
-	}, func(_ context.Context) error {
+	}, func(bctx context.Context) error {
+		if err := bctx.Err(); err != nil {
+			return err
+		}
 		var decErr error
 		idx, decErr = decodeCore(data)
-		return decErr
+		if decErr != nil {
+			return decErr
+		}
+		return bctx.Err()
 	})
 	return idx, err
 }
@@ -484,6 +501,9 @@ func decodeCore(data []byte) (*GINIndex, error) {
 func classifySerializeError(err error) string {
 	if err == nil {
 		return ""
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return "other"
 	}
 	if stderrors.Is(err, ErrInvalidFormat) {
 		return "invalid_format"
@@ -1728,7 +1748,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	// Restore silent observability defaults so decoded configs are always safe
-	// before any boundary code consumes them (D-08a).
+	// before any boundary code consumes them.
 	normalizeObservability(cfg)
 
 	return cfg, nil

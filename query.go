@@ -22,9 +22,11 @@ func (idx *GINIndex) Evaluate(predicates []Predicate) *RGSet {
 
 // EvaluateContext evaluates predicates against the index and returns the set
 // of row groups that may contain matching documents. The context is propagated
-// into the coarse query boundary span. If ctx is nil, context.Background() is
-// used. Observability is read from idx.Config; a nil config falls back to
-// silent/noop behavior without panicking.
+// into the coarse query boundary span and checked before each predicate.
+// If evaluation cannot complete, the method conservatively returns all row
+// groups because this API does not return an error. If ctx is nil,
+// context.Background() is used. Observability is read from idx.Config; a nil
+// config falls back to silent/noop behavior without panicking.
 func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate) *RGSet {
 	if ctx == nil {
 		ctx = context.Background()
@@ -38,12 +40,15 @@ func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate
 	signals := configSignals(idx.Config)
 
 	result := AllRGs(numRGs)
-	_ = telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
+	err := telemetry.RunBoundaryOperation(ctx, signals, telemetry.BoundaryConfig{
 		Scope:     queryScope,
 		Operation: telemetry.OperationEvaluate,
-	}, func(_ context.Context) error {
+	}, func(bctx context.Context) error {
 		r := AllRGs(numRGs)
 		for _, p := range predicates {
+			if err := bctx.Err(); err != nil {
+				return err
+			}
 			rgSet := idx.evaluatePredicate(p)
 			r = r.Intersect(rgSet)
 			if r.IsEmpty() {
@@ -54,10 +59,18 @@ func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate
 		return nil
 	})
 
-	logging.Info(logger, "evaluate completed",
-		logging.AttrOperation(telemetry.OperationEvaluate),
-		logging.AttrStatus("ok"),
-	)
+	if err != nil {
+		logging.Info(logger, "evaluate completed",
+			logging.AttrOperation(telemetry.OperationEvaluate),
+			logging.AttrStatus("error"),
+			logging.AttrErrorType("other"),
+		)
+	} else {
+		logging.Info(logger, "evaluate completed",
+			logging.AttrOperation(telemetry.OperationEvaluate),
+			logging.AttrStatus("ok"),
+		)
+	}
 	return result
 }
 

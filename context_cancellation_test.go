@@ -84,6 +84,27 @@ func TestEncodeContextAcceptsWithEncodeSignals(t *testing.T) {
 	}
 }
 
+func TestEncodeContextHonorsPreCanceledContext(t *testing.T) {
+	idx, err := buildSmallIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	data, err := gin.EncodeContext(ctx, idx)
+	if err == nil {
+		t.Fatal("expected pre-canceled context to surface an error")
+	}
+	if !errorIsCanceledOrDeadline(err) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if data != nil {
+		t.Fatalf("expected nil data on canceled encode, got %d bytes", len(data))
+	}
+}
+
 // TestDecodeContextAcceptsWithDecodeSignals proves P2 for Decode.
 func TestDecodeContextAcceptsWithDecodeSignals(t *testing.T) {
 	idx, err := buildSmallIndex()
@@ -102,6 +123,31 @@ func TestDecodeContextAcceptsWithDecodeSignals(t *testing.T) {
 	}
 	if decoded == nil {
 		t.Fatal("DecodeContext returned nil index")
+	}
+}
+
+func TestDecodeContextHonorsPreCanceledContext(t *testing.T) {
+	idx, err := buildSmallIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	data, err := gin.Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	decoded, err := gin.DecodeContext(ctx, data)
+	if err == nil {
+		t.Fatal("expected pre-canceled context to surface an error")
+	}
+	if !errorIsCanceledOrDeadline(err) {
+		t.Fatalf("expected context cancellation error, got %v", err)
+	}
+	if decoded != nil {
+		t.Fatal("expected nil index on canceled decode")
 	}
 }
 

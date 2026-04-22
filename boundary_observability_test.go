@@ -87,6 +87,25 @@ func TestS3BuildFromParquetContextCompatibility(t *testing.T) {
 	} = (*gin.S3Client)(nil)
 }
 
+func TestS3SidecarHelpersExposeContextAwareSiblings(t *testing.T) {
+	var _ interface {
+		ReadFile(bucket, key string) ([]byte, error)
+		ReadFileContext(ctx context.Context, bucket, key string) ([]byte, error)
+		WriteFile(bucket, key string, data []byte) error
+		WriteFileContext(ctx context.Context, bucket, key string, data []byte) error
+		Exists(bucket, key string) (bool, error)
+		ExistsContext(ctx context.Context, bucket, key string) (bool, error)
+		WriteSidecar(bucket, parquetKey string, idx *gin.GINIndex) error
+		WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *gin.GINIndex) error
+		ReadSidecar(bucket, parquetKey string) (*gin.GINIndex, error)
+		ReadSidecarContext(ctx context.Context, bucket, parquetKey string) (*gin.GINIndex, error)
+		HasSidecar(bucket, parquetKey string) (bool, error)
+		HasSidecarContext(ctx context.Context, bucket, parquetKey string) (bool, error)
+		LoadIndex(bucket, parquetKey string, cfg gin.ParquetConfig) (*gin.GINIndex, error)
+		LoadIndexContext(ctx context.Context, bucket, parquetKey string, cfg gin.ParquetConfig) (*gin.GINIndex, error)
+	} = (*gin.S3Client)(nil)
+}
+
 func TestS3BuildFromParquetContextHonorsCancellationWithStubTransport(t *testing.T) {
 	// Use a pre-canceled context to confirm the method propagates cancellation.
 	// We use a fake S3 config pointing to an unreachable endpoint so no live

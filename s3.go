@@ -133,8 +133,8 @@ func (c *S3Client) GetObjectSize(bucket, key string) (int64, error) {
 }
 
 // GetObjectSizeContext is the context-aware sibling of GetObjectSize. Caller
-// cancellation propagates into the HeadObject call; a 10s per-call timeout is
-// still applied as a lower bound when ctx has no deadline.
+// cancellation propagates into the HeadObject call. The request is capped at
+// 10s; caller cancellation and a shorter caller deadline both take precedence.
 func (c *S3Client) GetObjectSizeContext(ctx context.Context, bucket, key string) (int64, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -188,7 +188,14 @@ func (c *S3Client) OpenParquetContext(ctx context.Context, bucket, key string) (
 }
 
 func (c *S3Client) ReadFile(bucket, key string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return c.ReadFileContext(context.Background(), bucket, key)
+}
+
+func (c *S3Client) ReadFileContext(ctx context.Context, bucket, key string) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	out, err := c.client.GetObject(ctx, &s3.GetObjectInput{
@@ -204,7 +211,14 @@ func (c *S3Client) ReadFile(bucket, key string) ([]byte, error) {
 }
 
 func (c *S3Client) WriteFile(bucket, key string, data []byte) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	return c.WriteFileContext(context.Background(), bucket, key, data)
+}
+
+func (c *S3Client) WriteFileContext(ctx context.Context, bucket, key string, data []byte) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
 	_, err := c.client.PutObject(ctx, &s3.PutObjectInput{
@@ -219,7 +233,14 @@ func (c *S3Client) WriteFile(bucket, key string, data []byte) error {
 }
 
 func (c *S3Client) Exists(bucket, key string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	return c.ExistsContext(context.Background(), bucket, key)
+}
+
+func (c *S3Client) ExistsContext(ctx context.Context, bucket, key string) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	_, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -257,30 +278,46 @@ func (c *S3Client) BuildFromParquetContext(ctx context.Context, bucket, key, jso
 }
 
 func (c *S3Client) WriteSidecar(bucket, parquetKey string, idx *GINIndex) error {
-	data, err := Encode(idx)
+	return c.WriteSidecarContext(context.Background(), bucket, parquetKey, idx)
+}
+
+func (c *S3Client) WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *GINIndex) error {
+	data, err := EncodeContext(ctx, idx)
 	if err != nil {
 		return errors.Wrap(err, "encode index")
 	}
 	sidecarKey := parquetKey + ".gin"
-	return c.WriteFile(bucket, sidecarKey, data)
+	return c.WriteFileContext(ctx, bucket, sidecarKey, data)
 }
 
 func (c *S3Client) ReadSidecar(bucket, parquetKey string) (*GINIndex, error) {
+	return c.ReadSidecarContext(context.Background(), bucket, parquetKey)
+}
+
+func (c *S3Client) ReadSidecarContext(ctx context.Context, bucket, parquetKey string) (*GINIndex, error) {
 	sidecarKey := parquetKey + ".gin"
-	data, err := c.ReadFile(bucket, sidecarKey)
+	data, err := c.ReadFileContext(ctx, bucket, sidecarKey)
 	if err != nil {
 		return nil, errors.Wrap(err, "read sidecar")
 	}
-	return Decode(data)
+	return DecodeContext(ctx, data)
 }
 
 func (c *S3Client) HasSidecar(bucket, parquetKey string) (bool, error) {
+	return c.HasSidecarContext(context.Background(), bucket, parquetKey)
+}
+
+func (c *S3Client) HasSidecarContext(ctx context.Context, bucket, parquetKey string) (bool, error) {
 	sidecarKey := parquetKey + ".gin"
-	return c.Exists(bucket, sidecarKey)
+	return c.ExistsContext(ctx, bucket, sidecarKey)
 }
 
 func (c *S3Client) ReadFromParquetMetadata(bucket, key string, cfg ParquetConfig) (*GINIndex, error) {
-	_, reader, size, err := c.OpenParquet(bucket, key)
+	return c.ReadFromParquetMetadataContext(context.Background(), bucket, key, cfg)
+}
+
+func (c *S3Client) ReadFromParquetMetadataContext(ctx context.Context, bucket, key string, cfg ParquetConfig) (*GINIndex, error) {
+	_, reader, size, err := c.OpenParquetContext(ctx, bucket, key)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +325,11 @@ func (c *S3Client) ReadFromParquetMetadata(bucket, key string, cfg ParquetConfig
 }
 
 func (c *S3Client) HasGINIndex(bucket, key string, cfg ParquetConfig) (bool, error) {
-	_, reader, size, err := c.OpenParquet(bucket, key)
+	return c.HasGINIndexContext(context.Background(), bucket, key, cfg)
+}
+
+func (c *S3Client) HasGINIndexContext(ctx context.Context, bucket, key string, cfg ParquetConfig) (bool, error) {
+	_, reader, size, err := c.OpenParquetContext(ctx, bucket, key)
 	if err != nil {
 		return false, err
 	}
@@ -296,17 +337,21 @@ func (c *S3Client) HasGINIndex(bucket, key string, cfg ParquetConfig) (bool, err
 }
 
 func (c *S3Client) LoadIndex(bucket, parquetKey string, cfg ParquetConfig) (*GINIndex, error) {
-	idx, err := c.ReadFromParquetMetadata(bucket, parquetKey, cfg)
+	return c.LoadIndexContext(context.Background(), bucket, parquetKey, cfg)
+}
+
+func (c *S3Client) LoadIndexContext(ctx context.Context, bucket, parquetKey string, cfg ParquetConfig) (*GINIndex, error) {
+	idx, err := c.ReadFromParquetMetadataContext(ctx, bucket, parquetKey, cfg)
 	if err == nil {
 		return idx, nil
 	}
 
-	hasSidecar, err := c.HasSidecar(bucket, parquetKey)
+	hasSidecar, err := c.HasSidecarContext(ctx, bucket, parquetKey)
 	if err != nil {
 		return nil, err
 	}
 	if hasSidecar {
-		return c.ReadSidecar(bucket, parquetKey)
+		return c.ReadSidecarContext(ctx, bucket, parquetKey)
 	}
 
 	return nil, errors.New("no GIN index found (checked embedded metadata and sidecar)")

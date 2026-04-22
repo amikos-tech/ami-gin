@@ -19,8 +19,8 @@ type Logger interface {
 	Log(Level, string, ...Attr)
 }
 
-// Debug emits a debug-level message. It guards on Enabled before calling Log
-// so callers do not pay for argument construction when debug is disabled.
+// Debug emits a debug-level message. It guards on Enabled before calling Log,
+// avoiding backend dispatch work when debug is disabled.
 func Debug(logger Logger, msg string, attrs ...Attr) {
 	logger = Default(logger)
 	if !logger.Enabled(LevelDebug) {

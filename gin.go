@@ -17,14 +17,13 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
-	//   v9: phase 10 compaction for ordered-string sections, including path
+	//   v9: compaction for ordered-string sections, including path
 	//       directory names and string/adaptive term payloads
 	//   v8: explicit companion transformer failure modes in serialized config
 	//       and representation metadata (strict by default, soft-fail opt-in)
 	//   v7: explicit representation metadata for derived alias routing
-	//       (phase 09 derived representations)
-	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment
-	//       (phase 08 adaptive high-cardinality indexing)
+	//   v6: PathEntry.Mode byte + FlagTrigramIndex bit reassignment for
+	//       adaptive high-cardinality indexing
 	//   v5: never released; payloads are always rejected. Was an in-tree
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.

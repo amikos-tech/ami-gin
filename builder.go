@@ -33,11 +33,11 @@ type GINBuilder struct {
 	// builder gracefully.
 	poisonErr error
 
-	// Parser seam (Phase 13). parser defaults to stdlibParser{} at
-	// NewBuilder; parserName is the cached Parser.Name() result. During
-	// AddDocument, parserSink.BeginDocument hands the staged state back
-	// through currentDocState and increments beginDocumentCalls so
-	// AddDocument can enforce the sink contract after Parse returns.
+	// parser defaults to stdlibParser{} at NewBuilder; parserName is the
+	// cached Parser.Name() result. During AddDocument, parserSink.BeginDocument
+	// hands the staged state back through currentDocState and increments
+	// beginDocumentCalls so AddDocument can enforce the sink contract after
+	// Parse returns.
 	parser             Parser
 	parserName         string
 	currentDocState    *documentBuildState
@@ -313,8 +313,8 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		}
 	}
 
-	// D-07: return parser errors verbatim; do not wrap here. Reset the
-	// handoff fields before dispatch so AddDocument can verify Parse called
+	// Return parser errors verbatim; do not wrap here. Reset the handoff
+	// fields before dispatch so AddDocument can verify Parse called
 	// BeginDocument exactly once with the expected row-group id.
 	b.currentDocState = nil
 	b.beginDocumentCalls = 0

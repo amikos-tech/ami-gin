@@ -26,9 +26,9 @@ const (
 // maps to one of these labels only. Tests should enforce both the key list
 // and the bounded value set.
 const (
-	PathModeExact           = "exact"
-	PathModeBloomOnly       = "bloom-only"
-	PathModeAdaptiveHybrid  = "adaptive-hybrid"
+	PathModeExact          = "exact"
+	PathModeBloomOnly      = "bloom-only"
+	PathModeAdaptiveHybrid = "adaptive-hybrid"
 )
 
 // AttrOperation returns an operation attr using the frozen key.

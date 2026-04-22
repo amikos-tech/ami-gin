@@ -128,9 +128,10 @@ func BuildFromParquetReader(parquetFile string, jsonColumn string, config GINCon
 	return BuildFromParquetReaderContext(context.Background(), parquetFile, jsonColumn, config, reader, size)
 }
 
-// BuildFromParquetReaderContext is the context-aware sibling of BuildFromParquetReader.
-// Observability is config-carried (OBS-07, D-07). One coarse boundary span
-// wraps the entire build; no spans appear inside page/value/document loops.
+// BuildFromParquetReaderContext is the context-aware sibling of
+// BuildFromParquetReader. Observability comes from config. One coarse boundary
+// span wraps the entire build; no spans appear inside page/value/document
+// loops.
 func BuildFromParquetReaderContext(ctx context.Context, parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -527,6 +528,12 @@ func ListGINFiles(dir string) ([]string, error) {
 func classifyParquetError(err error) string {
 	if err == nil {
 		return ""
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return "other"
+	}
+	if stderrors.Is(err, os.ErrNotExist) {
+		return "io"
 	}
 	msg := err.Error()
 	switch {
