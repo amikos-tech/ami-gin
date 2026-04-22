@@ -63,8 +63,11 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	source, err := prepareExperimentSource(inputArg, stdin, *sampleLimit > 0)
+	source, err := prepareExperimentSource(inputArg, stdin, *sampleLimit > 0, config, *onError, stderr)
 	if err != nil {
+		if err == errExperimentAbort {
+			return 1
+		}
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
@@ -87,11 +90,6 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	usedRowGroups := 0
-	if result.ingestedDocs > 0 {
-		usedRowGroups = ceilDiv(result.ingestedDocs, *rgSize)
-	}
-
 	report := experimentReport{
 		Source: experimentSource{
 			Input: source.displayName,
@@ -99,7 +97,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		},
 		Summary: experimentSummary{
 			Documents:      result.ingestedDocs,
-			RowGroups:      usedRowGroups,
+			RowGroups:      result.rowGroups,
 			RGSize:         *rgSize,
 			SampleLimit:    *sampleLimit,
 			ProcessedLines: result.processedLines,
@@ -171,18 +169,19 @@ type experimentBuildResult struct {
 	idx            *gin.GINIndex
 	processedLines int
 	ingestedDocs   int
+	rowGroups      int
 	skippedLines   int
 	errorCount     int
 }
 
 var errExperimentAbort = errors.New("experiment ingest aborted")
 
-func prepareExperimentSource(inputArg string, stdin io.Reader, directStream bool) (experimentInputSource, error) {
+func prepareExperimentSource(inputArg string, stdin io.Reader, directStream bool, config gin.GINConfig, onError string, stderr io.Writer) (experimentInputSource, error) {
 	if directStream {
 		return prepareDirectExperimentSource(inputArg, stdin)
 	}
 	if inputArg == "-" {
-		return prepareExperimentStdin(stdin)
+		return prepareExperimentStdin(stdin, config, onError, stderr)
 	}
 	return prepareExperimentFile(inputArg)
 }
@@ -255,13 +254,23 @@ func prepareExperimentFile(path string) (experimentInputSource, error) {
 	}, nil
 }
 
-func prepareExperimentStdin(stdin io.Reader) (experimentInputSource, error) {
+func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError string, stderr io.Writer) (experimentInputSource, error) {
 	tmpFile, err := os.CreateTemp("", "gin-index-experiment-*.jsonl")
 	if err != nil {
 		return experimentInputSource{}, errors.Wrap(err, "create temp file for stdin")
 	}
 
-	count, countErr := countExperimentRecords(stdin, tmpFile)
+	var validator experimentRecordValidator
+	if onError == "abort" {
+		validator, err = newExperimentAbortValidator(config)
+		if err != nil {
+			_ = tmpFile.Close()
+			_ = os.Remove(tmpFile.Name())
+			return experimentInputSource{}, err
+		}
+	}
+
+	count, countErr := countExperimentRecords(stdin, tmpFile, validator, stderr)
 	closeErr := tmpFile.Close()
 	if countErr != nil {
 		_ = os.Remove(tmpFile.Name())
@@ -298,10 +307,23 @@ func countExperimentFile(path string) (int, error) {
 	}
 	defer f.Close()
 
-	return countExperimentRecords(f, nil)
+	return countExperimentRecords(f, nil, nil, nil)
 }
 
-func countExperimentRecords(r io.Reader, spool io.Writer) (int, error) {
+type experimentRecordValidator func(record []byte) error
+
+func newExperimentAbortValidator(config gin.GINConfig) (experimentRecordValidator, error) {
+	builder, err := gin.NewBuilder(config, 1)
+	if err != nil {
+		return nil, errors.Wrap(err, "create stdin validator")
+	}
+
+	return func(record []byte) error {
+		return validateExperimentRecord(builder, record, 0)
+	}, nil
+}
+
+func countExperimentRecords(r io.Reader, spool io.Writer, validator experimentRecordValidator, stderr io.Writer) (int, error) {
 	reader := bufio.NewReader(r)
 	count := 0
 
@@ -314,6 +336,16 @@ func countExperimentRecords(r io.Reader, spool io.Writer) (int, error) {
 				}
 			}
 			count++
+			if validator != nil {
+				record := trimExperimentLineEnding(line)
+				if validateErr := validator(record); validateErr != nil {
+					if stderr != nil {
+						fmt.Fprintf(stderr, "line %d: %v\n", count, validateErr)
+						return 0, errExperimentAbort
+					}
+					return 0, validateErr
+				}
+			}
 		}
 
 		if err == nil {
@@ -380,7 +412,78 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 	}
 
 	result.idx = builder.Finalize()
+	result.rowGroups = experimentUsedRowGroups(result.ingestedDocs, rgSize)
+	trimExperimentIndexRowGroups(result.idx, result.rowGroups)
 	return result, nil
+}
+
+func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
+	if ingestedDocs == 0 {
+		return 0
+	}
+	return ceilDiv(ingestedDocs, rgSize)
+}
+
+func trimExperimentIndexRowGroups(idx *gin.GINIndex, rowGroups int) {
+	if idx == nil {
+		return
+	}
+	if rowGroups < 0 {
+		rowGroups = 0
+	}
+
+	current := int(idx.Header.NumRowGroups)
+	idx.Header.NumRowGroups = uint32(rowGroups)
+	if rowGroups >= current {
+		return
+	}
+
+	for _, si := range idx.StringIndexes {
+		for _, rgSet := range si.RGBitmaps {
+			trimExperimentRGSet(rgSet, rowGroups)
+		}
+	}
+
+	for _, adaptive := range idx.AdaptiveStringIndexes {
+		for _, rgSet := range adaptive.RGBitmaps {
+			trimExperimentRGSet(rgSet, rowGroups)
+		}
+		for _, rgSet := range adaptive.BucketRGBitmaps {
+			trimExperimentRGSet(rgSet, rowGroups)
+		}
+	}
+
+	for _, ni := range idx.NumericIndexes {
+		if len(ni.RGStats) > rowGroups {
+			ni.RGStats = ni.RGStats[:rowGroups]
+		}
+	}
+
+	for _, ni := range idx.NullIndexes {
+		trimExperimentRGSet(ni.NullRGBitmap, rowGroups)
+		trimExperimentRGSet(ni.PresentRGBitmap, rowGroups)
+	}
+
+	for _, ti := range idx.TrigramIndexes {
+		ti.NumRGs = rowGroups
+		for _, rgSet := range ti.Trigrams {
+			trimExperimentRGSet(rgSet, rowGroups)
+		}
+	}
+
+	for _, sli := range idx.StringLengthIndexes {
+		if len(sli.RGStats) > rowGroups {
+			sli.RGStats = sli.RGStats[:rowGroups]
+		}
+	}
+}
+
+func trimExperimentRGSet(rgSet *gin.RGSet, rowGroups int) {
+	if rgSet == nil || rgSet.NumRGs <= rowGroups {
+		return
+	}
+	rgSet.Roaring().RemoveRange(uint64(rowGroups), uint64(rgSet.NumRGs))
+	rgSet.NumRGs = rowGroups
 }
 
 func validateExperimentRecord(builder *gin.GINBuilder, record []byte, rgID int) error {

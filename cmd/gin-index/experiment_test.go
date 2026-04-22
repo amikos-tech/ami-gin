@@ -290,6 +290,56 @@ func TestRunExperimentWritesSidecarRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRunExperimentTrimsOverestimatedRowGroups(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "docs.jsonl", []string{
+		`{"status":"ok","user":"alice"}`,
+		`{"status":"ok","user":"bob"}`,
+		`{"status":"error","user":"cora"}`,
+	}, true)
+	outputPath := filepath.Join(tmpDir, "sample-trim.gin")
+	predicate := `$.status = "error"`
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--rg-size", "2", "--sample", "10", "--test", predicate, "-o", outputPath, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONInt(t, summary["row_groups"]); got != 2 {
+		t.Fatalf("summary.row_groups = %d, want 2", got)
+	}
+
+	predicateMap := decodeJSONMap(t, root["predicate_test"])
+	if got := decodeJSONInt(t, predicateMap["matched"]); got != 1 {
+		t.Fatalf("predicate_test.matched = %d, want 1", got)
+	}
+	if got := decodeJSONInt(t, predicateMap["pruned"]); got != 1 {
+		t.Fatalf("predicate_test.pruned = %d, want 1", got)
+	}
+
+	idx, err := gin.ReadSidecar(strings.TrimSuffix(outputPath, ".gin"))
+	if err != nil {
+		t.Fatalf("ReadSidecar(%q): %v", outputPath, err)
+	}
+	if got := idx.Header.NumRowGroups; got != 2 {
+		t.Fatalf("sidecar NumRowGroups = %d, want 2", got)
+	}
+
+	pred, err := parsePredicate(predicate)
+	if err != nil {
+		t.Fatalf("parsePredicate(%q): %v", predicate, err)
+	}
+	if got := len(idx.EvaluateContext(context.Background(), []gin.Predicate{pred}).ToSlice()); got != 1 {
+		t.Fatalf("sidecar predicate matched = %d, want 1", got)
+	}
+}
+
 func TestRunExperimentRejectsNonGinOutput(t *testing.T) {
 	t.Parallel()
 
@@ -360,6 +410,31 @@ func TestRunExperimentOnErrorAbort(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "line 2:") {
 		t.Fatalf("stderr = %q, want line-numbered abort error", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("stdout = %q, want no summary after abort", stdout.String())
+	}
+}
+
+func TestRunExperimentOnErrorAbortFromStdinFailsFastBeforeDrain(t *testing.T) {
+	t.Parallel()
+
+	stdin := io.MultiReader(
+		strings.NewReader("not-json\n"),
+		failingReader{err: errors.New("stdin was drained after abort")},
+	)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", "abort", "-"}, stdin, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for abort mode")
+	}
+	if !strings.Contains(stderr.String(), "line 1:") {
+		t.Fatalf("stderr = %q, want line-numbered abort error", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "stdin was drained after abort") {
+		t.Fatalf("stderr = %q, want abort before stdin is fully drained", stderr.String())
 	}
 	if stdout.Len() != 0 {
 		t.Fatalf("stdout = %q, want no summary after abort", stdout.String())
@@ -640,5 +715,51 @@ func TestRunExperimentEmptyInput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stdout missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestRunExperimentEmptyInputSidecarHasZeroRowGroups(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "empty.jsonl", nil, false)
+	outputPath := filepath.Join(tmpDir, "empty.gin")
+	predicate := `$.status = "error"`
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--test", predicate, "-o", outputPath, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONInt(t, summary["row_groups"]); got != 0 {
+		t.Fatalf("summary.row_groups = %d, want 0", got)
+	}
+
+	predicateMap := decodeJSONMap(t, root["predicate_test"])
+	if got := decodeJSONInt(t, predicateMap["matched"]); got != 0 {
+		t.Fatalf("predicate_test.matched = %d, want 0", got)
+	}
+	if got := decodeJSONInt(t, predicateMap["pruned"]); got != 0 {
+		t.Fatalf("predicate_test.pruned = %d, want 0", got)
+	}
+
+	idx, err := gin.ReadSidecar(strings.TrimSuffix(outputPath, ".gin"))
+	if err != nil {
+		t.Fatalf("ReadSidecar(%q): %v", outputPath, err)
+	}
+	if got := idx.Header.NumRowGroups; got != 0 {
+		t.Fatalf("sidecar NumRowGroups = %d, want 0", got)
+	}
+
+	pred, err := parsePredicate(predicate)
+	if err != nil {
+		t.Fatalf("parsePredicate(%q): %v", predicate, err)
+	}
+	if got := len(idx.EvaluateContext(context.Background(), []gin.Predicate{pred}).ToSlice()); got != 0 {
+		t.Fatalf("sidecar predicate matched = %d, want 0", got)
 	}
 }
