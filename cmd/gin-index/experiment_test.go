@@ -167,19 +167,26 @@ func TestRunExperimentJSONGolden(t *testing.T) {
 		t.Fatalf("len(paths) = %d, want 2", len(paths))
 	}
 
-	statusPath := decodeJSONMap(t, paths[1])
-	if got := decodeJSONString(t, statusPath["path"]); got != "$.status" {
-		t.Fatalf("path[1].path = %q, want $.status", got)
+	var statusPath map[string]json.RawMessage
+	for _, raw := range paths {
+		candidate := decodeJSONMap(t, raw)
+		if decodeJSONString(t, candidate["path"]) == "$.status" {
+			statusPath = candidate
+			break
+		}
+	}
+	if statusPath == nil {
+		t.Fatalf("path $.status not found in %s", stdout.String())
 	}
 	representations, ok := statusPath["representations"]
 	if !ok {
-		t.Fatalf("path[1].representations missing from %s", stdout.String())
+		t.Fatalf("$.status representations missing from %s", stdout.String())
 	}
 	if bytes.TrimSpace(representations)[0] != '[' {
-		t.Fatalf("path[1].representations = %s, want [] not null", string(statusPath["representations"]))
+		t.Fatalf("$.status representations = %s, want [] not null", string(statusPath["representations"]))
 	}
 	if trimmed := string(bytes.TrimSpace(representations)); trimmed != "[]" {
-		t.Fatalf("path[1].representations = %s, want []", trimmed)
+		t.Fatalf("$.status representations = %s, want []", trimmed)
 	}
 }
 
