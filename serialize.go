@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/json"
 	stderrors "errors"
@@ -12,6 +13,8 @@ import (
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 const (
@@ -162,14 +165,73 @@ func readRGSet(r io.Reader, maxRGs uint32) (*RGSet, error) {
 	return RGSetFromRoaring(bitmap, int(numRGs)), nil
 }
 
+// encodeRuntime carries runtime-only observability for raw serialization.
+// Raw encode/decode are package-level functions with no GINConfig receiver,
+// so caller-supplied options are the narrow exception to D-07.
+type encodeRuntime struct {
+	signals telemetry.Signals
+}
+
+// EncodeOption configures runtime observability for EncodeContext or EncodeWithLevelContext.
+type EncodeOption func(*encodeRuntime)
+
+// decodeRuntime carries runtime-only observability for raw deserialization.
+type decodeRuntime struct {
+	signals telemetry.Signals
+}
+
+// DecodeOption configures runtime observability for DecodeContext.
+type DecodeOption func(*decodeRuntime)
+
 // Encode serializes the index using zstd-15 compression (recommended default).
+// It delegates to EncodeContext with context.Background().
 func Encode(idx *GINIndex) ([]byte, error) {
-	return EncodeWithLevel(idx, CompressionBest)
+	return EncodeContext(context.Background(), idx)
+}
+
+// EncodeContext is the context-aware sibling of Encode. It wraps
+// EncodeWithLevelContext at CompressionBest and emits a coarse boundary span.
+func EncodeContext(ctx context.Context, idx *GINIndex, opts ...EncodeOption) ([]byte, error) {
+	return EncodeWithLevelContext(ctx, idx, CompressionBest, opts...)
 }
 
 // EncodeWithLevel serializes the index with the specified compression level.
+// It delegates to EncodeWithLevelContext with context.Background().
 // Use CompressionNone (0) for no compression, or 1-19 for zstd compression levels.
 func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
+	return EncodeWithLevelContext(context.Background(), idx, level)
+}
+
+// EncodeWithLevelContext is the context-aware, configurable-compression sibling of EncodeWithLevel.
+// Observability is seeded from idx.Config when present; caller EncodeOptions override it.
+func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level CompressionLevel, opts ...EncodeOption) ([]byte, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rt := &encodeRuntime{
+		signals: configSignals(idx.Config),
+	}
+	for _, o := range opts {
+		o(rt)
+	}
+
+	var result []byte
+	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
+		Scope:     "github.com/amikos-tech/ami-gin/serialize",
+		Operation: "encode",
+		ClassifyError: func(e error) string {
+			return classifySerializeError(e)
+		},
+	}, func(_ context.Context) error {
+		var encErr error
+		result, encErr = encodeWithLevel(idx, level)
+		return encErr
+	})
+	return result, err
+}
+
+// encodeWithLevel is the internal implementation of serialization with a specific compression level.
+func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if level < 0 || level > 19 {
 		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
 	}
@@ -253,8 +315,42 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 
 // Decode deserializes an index, validates cross-structure path references, and
 // canonicalizes supported JSONPath spellings in PathDirectory while rebuilding
-// derived lookup state.
+// derived lookup state. It delegates to DecodeContext with context.Background().
 func Decode(data []byte) (*GINIndex, error) {
+	return DecodeContext(context.Background(), data)
+}
+
+// DecodeContext is the context-aware sibling of Decode. It wraps the
+// deserialization work in a coarse boundary span. Caller DecodeOptions can
+// supply explicit observability signals since Decode has no config receiver.
+func DecodeContext(ctx context.Context, data []byte, opts ...DecodeOption) (*GINIndex, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	rt := &decodeRuntime{
+		signals: telemetry.Disabled(),
+	}
+	for _, o := range opts {
+		o(rt)
+	}
+
+	var idx *GINIndex
+	err := telemetry.RunBoundaryOperation(ctx, rt.signals, telemetry.BoundaryConfig{
+		Scope:     "github.com/amikos-tech/ami-gin/serialize",
+		Operation: "decode",
+		ClassifyError: func(e error) string {
+			return classifySerializeError(e)
+		},
+	}, func(_ context.Context) error {
+		var decErr error
+		idx, decErr = decodeCore(data)
+		return decErr
+	})
+	return idx, err
+}
+
+// decodeCore is the internal deserialization implementation.
+func decodeCore(data []byte) (*GINIndex, error) {
 	if len(data) < 4 {
 		return nil, errors.Wrap(ErrInvalidFormat, "data too short")
 	}
@@ -359,6 +455,23 @@ func Decode(data []byte) (*GINIndex, error) {
 	}
 
 	return idx, nil
+}
+
+// classifySerializeError maps a serialization error to the frozen error.type vocabulary.
+func classifySerializeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	if stderrors.Is(err, ErrInvalidFormat) {
+		return "invalid_format"
+	}
+	if stderrors.Is(err, ErrVersionMismatch) {
+		return "deserialization"
+	}
+	if stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
+		return "integrity"
+	}
+	return "other"
 }
 
 func writeHeader(w io.Writer, idx *GINIndex) error {
