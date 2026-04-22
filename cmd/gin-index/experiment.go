@@ -79,7 +79,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 1
 	}
 
-	source, err := prepareExperimentSource(inputArg, stdin, *sampleLimit, config, *onError, stderr)
+	source, err := prepareExperimentSource(inputArg, stdin, *sampleLimit, *onError, stderr)
 	if err != nil {
 		if errors.Is(err, errExperimentAbort) {
 			return 1
@@ -220,14 +220,14 @@ func (s experimentInputSource) isStdin() bool {
 	return s.inputPath == ""
 }
 
-func prepareExperimentSource(inputArg string, stdin io.Reader, sampleLimit int, config gin.GINConfig, onError string, stderr io.Writer) (experimentInputSource, error) {
+func prepareExperimentSource(inputArg string, stdin io.Reader, sampleLimit int, onError string, stderr io.Writer) (experimentInputSource, error) {
 	if inputArg == "-" && sampleLimit > 0 {
 		return newExperimentInputSource("-", "", 0, func() (io.ReadCloser, error) {
 			return io.NopCloser(stdin), nil
 		}, nil), nil
 	}
 	if inputArg == "-" {
-		return prepareExperimentStdin(stdin, config, onError, stderr)
+		return prepareExperimentStdin(stdin, onError, stderr)
 	}
 	return prepareExperimentFile(inputArg)
 }
@@ -252,7 +252,7 @@ func prepareExperimentFile(path string) (experimentInputSource, error) {
 	}, nil), nil
 }
 
-func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError string, stderr io.Writer) (experimentInputSource, error) {
+func prepareExperimentStdin(stdin io.Reader, onError string, stderr io.Writer) (experimentInputSource, error) {
 	// Stdin may need a validation pass and then an ingest pass, so spool it to a
 	// temp file when the original stream cannot be rewound.
 	tmpFile, err := os.CreateTemp("", "gin-index-experiment-*.jsonl")
