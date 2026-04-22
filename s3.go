@@ -90,6 +90,12 @@ type s3ReaderAt struct {
 	bucket string
 	key    string
 	size   int64
+	// parentCtx is the caller context for this short-lived reader.
+	// Range reads derive a timeout child context from it so that caller
+	// cancellation propagates into S3 GetObject calls. This is an intentional
+	// scoped exception to the "no context in struct" guideline: s3ReaderAt is
+	// private, constructed once per build call, and never reused across requests.
+	parentCtx context.Context
 }
 
 func (r *s3ReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
@@ -102,7 +108,11 @@ func (r *s3ReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 	}
 	rangeHeader := fmt.Sprintf("bytes=%d-%d", off, end)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	parent := r.parentCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 	defer cancel()
 
 	out, err := r.client.client.GetObject(ctx, &s3.GetObjectInput{
@@ -136,16 +146,27 @@ func (c *S3Client) GetObjectSize(bucket, key string) (int64, error) {
 }
 
 func (c *S3Client) OpenParquet(bucket, key string) (*parquet.File, io.ReaderAt, int64, error) {
+	return c.OpenParquetContext(context.Background(), bucket, key)
+}
+
+// OpenParquetContext opens a remote Parquet file and returns a reader that
+// derives each range-read timeout from ctx, so that caller cancellation
+// propagates into S3 GetObject calls made during Parquet page reads.
+func (c *S3Client) OpenParquetContext(ctx context.Context, bucket, key string) (*parquet.File, io.ReaderAt, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	size, err := c.GetObjectSize(bucket, key)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 
 	reader := &s3ReaderAt{
-		client: c,
-		bucket: bucket,
-		key:    key,
-		size:   size,
+		client:    c,
+		bucket:    bucket,
+		key:       key,
+		size:      size,
+		parentCtx: ctx,
 	}
 
 	pf, err := parquet.OpenFile(reader, size)
@@ -204,12 +225,25 @@ func (c *S3Client) Exists(bucket, key string) (bool, error) {
 	return true, nil
 }
 
+// BuildFromParquet builds a GIN index from a remote Parquet file.
+// It delegates to BuildFromParquetContext with context.Background().
 func (c *S3Client) BuildFromParquet(bucket, key, jsonColumn string, ginCfg GINConfig) (*GINIndex, error) {
-	_, reader, size, err := c.OpenParquet(bucket, key)
+	return c.BuildFromParquetContext(context.Background(), bucket, key, jsonColumn, ginCfg)
+}
+
+// BuildFromParquetContext is the context-aware sibling of BuildFromParquet.
+// Caller context propagates through the S3 range reads performed during
+// Parquet page access, so cancellation stops the build without waiting for
+// individual range-read timeouts to expire.
+func (c *S3Client) BuildFromParquetContext(ctx context.Context, bucket, key, jsonColumn string, ginCfg GINConfig) (*GINIndex, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, reader, size, err := c.OpenParquetContext(ctx, bucket, key)
 	if err != nil {
 		return nil, err
 	}
-	return BuildFromParquetReader("", jsonColumn, ginCfg, reader, size)
+	return BuildFromParquetReaderContext(ctx, "", jsonColumn, ginCfg, reader, size)
 }
 
 func (c *S3Client) WriteSidecar(bucket, parquetKey string, idx *GINIndex) error {
