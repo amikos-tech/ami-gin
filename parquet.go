@@ -16,7 +16,6 @@ import (
 )
 
 const DefaultMetadataKey = "gin.index"
-const normalizedErrorTypeOther = "other"
 
 type ParquetConfig struct {
 	MetadataKey string
@@ -531,7 +530,7 @@ func classifyParquetError(err error) string {
 	// Check sentinel errors first; fall back to message heuristics for
 	// dependency paths that do not expose stable typed sentinels.
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
-		return normalizedErrorTypeOther
+		return telemetry.ErrorTypeOther
 	}
 	if stderrors.Is(err, os.ErrNotExist) {
 		return "io"
@@ -545,6 +544,6 @@ func classifyParquetError(err error) string {
 	case strings.Contains(msg, "create builder"):
 		return "config"
 	default:
-		return normalizedErrorTypeOther
+		return telemetry.ErrorTypeOther
 	}
 }

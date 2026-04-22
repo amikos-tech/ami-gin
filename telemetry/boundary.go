@@ -10,8 +10,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 )
 
-const normalizedErrorTypeOther = "other"
-
 // BoundaryConfig describes one coarse boundary operation. The shared helper
 // owns lifecycle and generic failure handling only; package-owned success
 // counters and classifier callbacks remain outside it.
@@ -96,7 +94,7 @@ func buildAttrs(cfg BoundaryConfig, err error, errType string) []attribute.KeyVa
 
 func classifyError(cfg BoundaryConfig, err error) string {
 	if cfg.ClassifyError == nil {
-		return normalizedErrorTypeOther
+		return ErrorTypeOther
 	}
 	return normalizeErrorType(cfg.ClassifyError(err))
 }
@@ -106,7 +104,7 @@ func normalizeErrorType(kind string) string {
 	case "config", "io", "invalid_format", "deserialization", "integrity", "not_found", "other":
 		return kind
 	default:
-		return normalizedErrorTypeOther
+		return ErrorTypeOther
 	}
 }
 

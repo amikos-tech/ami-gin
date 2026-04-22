@@ -492,7 +492,7 @@ func classifySerializeError(err error) string {
 		return ""
 	}
 	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
-		return normalizedErrorTypeOther
+		return telemetry.ErrorTypeOther
 	}
 	if stderrors.Is(err, ErrInvalidFormat) {
 		return "invalid_format"
@@ -503,7 +503,7 @@ func classifySerializeError(err error) string {
 	if stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
 		return "integrity"
 	}
-	return normalizedErrorTypeOther
+	return telemetry.ErrorTypeOther
 }
 
 func writeHeader(w io.Writer, idx *GINIndex) error {
