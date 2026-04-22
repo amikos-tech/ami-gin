@@ -929,3 +929,30 @@ func TestEvaluateExperimentPredicateCanceled(t *testing.T) {
 		t.Fatalf("evaluateExperimentPredicate() result = %#v, want nil on cancellation", result)
 	}
 }
+
+func TestRunExperimentCanceledPredicateExitsCleanly(t *testing.T) {
+	// Cannot run in parallel: swaps the package-level newExperimentInterruptContext.
+	orig := newExperimentInterruptContext
+	t.Cleanup(func() { newExperimentInterruptContext = orig })
+	newExperimentInterruptContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+		ctx, cancel := context.WithCancel(parent)
+		cancel()
+		return ctx, func() {}
+	}
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "docs.jsonl", []string{
+		`{"status":"ok"}`,
+		`{"status":"error"}`,
+	}, true)
+
+	var stdout, stderr bytes.Buffer
+	code := runExperiment([]string{"--test", `$.status = "ok"`, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatalf("runExperiment() code = 0, want non-zero on canceled predicate eval; stderr=%q", stderr.String())
+	}
+	errOut := stderr.String()
+	if !strings.Contains(errOut, "Error:") || !strings.Contains(errOut, "canceled") {
+		t.Fatalf("stderr = %q, want 'Error: ... canceled ...'", errOut)
+	}
+}

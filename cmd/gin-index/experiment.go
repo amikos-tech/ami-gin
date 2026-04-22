@@ -129,7 +129,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			return 1
 		}
 
-		evalCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		evalCtx, stop := newExperimentInterruptContext(context.Background())
 		defer stop()
 
 		report.PredicateTest, err = evaluateExperimentPredicate(evalCtx, report.Summary.RowGroups, result.idx, *testPredicate, pred)
@@ -170,6 +170,12 @@ type experimentBuildResult struct {
 }
 
 var errExperimentAbort = errors.New("experiment ingest aborted")
+
+// newExperimentInterruptContext is overridable in tests to inject a
+// pre-canceled context without delivering a real SIGINT to the process.
+var newExperimentInterruptContext = func(parent context.Context) (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(parent, os.Interrupt)
+}
 
 func newExperimentInputSource(displayName, inputPath string, candidateRecords int, openFn func() (io.ReadCloser, error), cleanupFn func() error) experimentInputSource {
 	return experimentInputSource{
@@ -247,9 +253,7 @@ func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError strin
 		validator, err = newExperimentAbortValidator(config)
 		if err != nil {
 			_ = tmpFile.Close()
-			if removeErr := removeExperimentTempFile(tmpFile.Name()); removeErr != nil {
-				return experimentInputSource{}, errors.Wrapf(err, "cleanup failed: %v", removeErr)
-			}
+			warnOnTempRemoveFailure(tmpFile.Name(), stderr)
 			return experimentInputSource{}, err
 		}
 	}
@@ -257,15 +261,11 @@ func prepareExperimentStdin(stdin io.Reader, config gin.GINConfig, onError strin
 	count, countErr := countExperimentRecords(stdin, tmpFile, validator, stderr)
 	closeErr := tmpFile.Close()
 	if countErr != nil {
-		if removeErr := removeExperimentTempFile(tmpFile.Name()); removeErr != nil {
-			return experimentInputSource{}, errors.Wrapf(countErr, "cleanup failed: %v", removeErr)
-		}
+		warnOnTempRemoveFailure(tmpFile.Name(), stderr)
 		return experimentInputSource{}, countErr
 	}
 	if closeErr != nil {
-		if removeErr := removeExperimentTempFile(tmpFile.Name()); removeErr != nil {
-			return experimentInputSource{}, errors.Wrapf(closeErr, "cleanup failed: %v", removeErr)
-		}
+		warnOnTempRemoveFailure(tmpFile.Name(), stderr)
 		return experimentInputSource{}, errors.Wrap(closeErr, "close temp file for stdin")
 	}
 
@@ -296,6 +296,12 @@ func removeExperimentTempFile(path string) error {
 		return errors.Wrap(err, "remove temp file for stdin")
 	}
 	return nil
+}
+
+func warnOnTempRemoveFailure(path string, stderr io.Writer) {
+	if err := removeExperimentTempFile(path); err != nil {
+		fmt.Fprintf(stderr, "Warning: %v\n", err)
+	}
 }
 
 type experimentRecordValidator func(record []byte) error
@@ -416,6 +422,9 @@ func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
 }
 
 func experimentSummaryStatus(source experimentInputSource, result experimentBuildResult) string {
+	// candidateRecords == 0 means the stdin direct-stream path was used; there is
+	// no way to know whether more input was queued past the cap, so sample-capped
+	// runs are always reported as truncated there.
 	if result.sampleCapped && (source.candidateRecords == 0 || result.processedLines < source.candidateRecords) {
 		return "truncated"
 	}
