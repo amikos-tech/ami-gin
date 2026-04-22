@@ -152,7 +152,11 @@ func BuildFromParquetReaderContext(ctx context.Context, parquetFile string, json
 	return idx, err
 }
 
-func buildFromParquetReaderCore(_ context.Context, parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
+func buildFromParquetReaderCore(ctx context.Context, parquetFile string, jsonColumn string, config GINConfig, reader io.ReaderAt, size int64) (*GINIndex, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	var pf *parquet.File
 	var fileToClose *os.File
 	var err error
@@ -189,6 +193,9 @@ func buildFromParquetReaderCore(_ context.Context, parquetFile string, jsonColum
 	}
 
 	for rgID, rg := range pf.RowGroups() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		chunk := rg.ColumnChunks()[colIdx]
 		pages := chunk.Pages()
 

@@ -129,7 +129,17 @@ func (r *s3ReaderAt) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (c *S3Client) GetObjectSize(bucket, key string) (int64, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	return c.GetObjectSizeContext(context.Background(), bucket, key)
+}
+
+// GetObjectSizeContext is the context-aware sibling of GetObjectSize. Caller
+// cancellation propagates into the HeadObject call; a 10s per-call timeout is
+// still applied as a lower bound when ctx has no deadline.
+func (c *S3Client) GetObjectSizeContext(ctx context.Context, bucket, key string) (int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	out, err := c.client.HeadObject(ctx, &s3.HeadObjectInput{
@@ -156,7 +166,7 @@ func (c *S3Client) OpenParquetContext(ctx context.Context, bucket, key string) (
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	size, err := c.GetObjectSize(bucket, key)
+	size, err := c.GetObjectSizeContext(ctx, bucket, key)
 	if err != nil {
 		return nil, nil, 0, err
 	}

@@ -173,7 +173,19 @@ type encodeRuntime struct {
 }
 
 // EncodeOption configures runtime observability for EncodeContext or EncodeWithLevelContext.
+// Construct options with the exported WithEncodeSignals helper; the underlying
+// runtime struct is intentionally unexported.
 type EncodeOption func(*encodeRuntime)
+
+// WithEncodeSignals overrides the telemetry signals used by EncodeContext and
+// EncodeWithLevelContext. By default the encoder seeds signals from idx.Config;
+// this option lets external callers provide explicit signals when the index
+// config is unavailable or when they want to override it per call.
+func WithEncodeSignals(signals telemetry.Signals) EncodeOption {
+	return func(rt *encodeRuntime) {
+		rt.signals = signals
+	}
+}
 
 // decodeRuntime carries runtime-only observability for raw deserialization.
 type decodeRuntime struct {
@@ -181,7 +193,18 @@ type decodeRuntime struct {
 }
 
 // DecodeOption configures runtime observability for DecodeContext.
+// Construct options with the exported WithDecodeSignals helper; the underlying
+// runtime struct is intentionally unexported.
 type DecodeOption func(*decodeRuntime)
+
+// WithDecodeSignals sets the telemetry signals used by DecodeContext. Decode has
+// no index receiver, so signals default to telemetry.Disabled(); callers use
+// this option to route spans and metrics into an existing provider.
+func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
+	return func(rt *decodeRuntime) {
+		rt.signals = signals
+	}
+}
 
 // Encode serializes the index using zstd-15 compression (recommended default).
 // It delegates to EncodeContext with context.Background().
