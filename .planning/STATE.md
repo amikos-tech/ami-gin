@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: executing
-stopped_at: Completed 16-03-PLAN.md; Phase 16 complete and ready for Phase 17 planning
-last_updated: "2026-04-23T10:15:34Z"
-last_activity: 2026-04-23 -- Phase 16 plan 16-03 completed; Phase 16 integration gate passed
+status: planning
+stopped_at: Completed 16-03-PLAN.md; Phase 16 complete
+last_updated: "2026-04-23T10:30:30.781Z"
+last_activity: 2026-04-23
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 24
-  completed_plans: 22
-  percent: 92
+  completed_plans: 23
+  percent: 96
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 16 — adddocument-atomicity-lucene-contract
+**Current focus:** Phase 17 — failure-mode-taxonomy-unification
 
 ## Current Position
 
-Phase: 16 (adddocument-atomicity-lucene-contract) — COMPLETE
-Plan: 4 of 4
+Phase: 17
+Plan: Not started
 Status: Phase 16 complete; ready for Phase 17 planning
-Last activity: 2026-04-23 -- Phase 16 plan 16-03 completed; phase integration gate passed
+Last activity: 2026-04-23
 
 Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements fully complete, 4/4 Phase 16 plans executed)
 
