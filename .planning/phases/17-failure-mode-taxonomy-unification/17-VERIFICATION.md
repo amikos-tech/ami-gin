@@ -42,10 +42,6 @@ residual_risks:
     severity: advisory
     file: serialize.go
     note: "Oversized config decode errors do not wrap ErrInvalidFormat. This affects decode error classification, not the failure-mode taxonomy goal."
-  - id: META-01
-    severity: info
-    file: .planning/ROADMAP.md
-    note: "ROADMAP.md still marks Phase 17 as 3/4 complete and 17-04 unchecked even though the 17-04 summary and artifacts exist."
 ---
 
 # Phase 17: Failure-Mode Taxonomy Unification Verification Report
@@ -157,8 +153,6 @@ These are advisory code review findings from `17-REVIEW.md`. They are real follo
 | WR-01 | `transformer_registry.go:126-129` | Reconstructed regex transformers with negative capture groups can panic during ingest. | Validate `RegexParams.Group >= 0` in regex transformer reconstruction and keep runtime guards defensive. |
 | WR-02 | `transformer_registry.go:192-224` | `RegexExtractInt` can treat empty/sign-only/dot-only captures as numeric zero. | Track digit consumption in `parseFloatSimple` and reject strings without digits. |
 | WR-03 | `serialize.go:1665-1666` | Oversized config decode errors do not wrap `ErrInvalidFormat`. | Wrap `ErrInvalidFormat` and add a regression test for `errors.Is(err, ErrInvalidFormat)`. |
-| META-01 | `.planning/ROADMAP.md` | Roadmap progress still shows Phase 17 as in progress with 17-04 unchecked. | Update planning metadata after this verification if the orchestrator expects roadmap state to match phase artifacts. |
-
 ### Human Verification Required
 
 None. This phase is library/API, serialization, tests, and deterministic CLI example output; all required behaviors were verified programmatically.
