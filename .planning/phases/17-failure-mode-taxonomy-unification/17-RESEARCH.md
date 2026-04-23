@@ -445,17 +445,15 @@ Use a package-private signal or equivalent result type so public hard-mode error
 | A4 | Proposed test names and a new `failure_modes_test.go` file are organizational recommendations. [ASSUMED test names; ASSUMED file organization] | Validation Architecture | If the planner extends existing test files instead, requirement coverage remains valid but commands should be renamed to match final tests. |
 | A5 | The research remains valid for local code topology until 2026-05-23. [ASSUMED validity window] | Metadata | If the code changes before Phase 17 planning, symbol discovery and line references should be refreshed. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Exact public string values for `IngestFailureMode`.**
+1. **RESOLVED: Exact public string values for `IngestFailureMode`.**
    - What we know: The public names are locked as `IngestFailureHard` and `IngestFailureSoft`, legacy public names are removed, and legacy transformer wire tokens must decode. [CITED: .planning/phases/17-failure-mode-taxonomy-unification/17-CONTEXT.md]
-   - What's unclear: The context does not explicitly lock whether public string values are `hard`/`soft` or legacy `strict`/`soft_fail`. [CITED: .planning/phases/17-failure-mode-taxonomy-unification/17-CONTEXT.md]
-   - Recommendation: Use `hard`/`soft` publicly and private `strict`/`soft_fail` transformer wire mapping to preserve v9. [ASSUMED implementation tradeoff; CITED: .planning/phases/17-failure-mode-taxonomy-unification/17-CONTEXT.md]
+   - Resolution: Use public string values `hard` and `soft` for `IngestFailureHard` and `IngestFailureSoft`. Preserve v9 compatibility by mapping transformer metadata to and from legacy wire tokens `strict` and `soft_fail` privately in serialization code. [SELECTED BY PLAN: .planning/phases/17-failure-mode-taxonomy-unification/17-01-PLAN.md and 17-02-PLAN.md]
 
-2. **Single new `failure_modes_test.go` vs extending existing test files.**
+2. **RESOLVED: Single new `failure_modes_test.go` vs extending existing test files.**
    - What we know: Existing relevant tests are split across `parser_test.go`, `transformers_test.go`, `gin_test.go`, `atomicity_test.go`, and `serialize_security_test.go`. [VERIFIED: rg; VERIFIED: parser_test.go; VERIFIED: transformers_test.go; VERIFIED: atomicity_test.go; VERIFIED: serialize_security_test.go]
-   - What's unclear: The context leaves exact test table organization to the agent. [CITED: .planning/phases/17-failure-mode-taxonomy-unification/17-CONTEXT.md]
-   - Recommendation: Add one focused `failure_modes_test.go` for cross-layer hard/soft semantics, then leave serialization tests in `serialize_security_test.go` and rewrite the obsolete transformer soft test in place. [ASSUMED implementation sketch; VERIFIED: transformers_test.go:538-576]
+   - Resolution: Add a focused `failure_modes_test.go` for cross-layer hard/soft semantics and soft atomicity shape, keep serialization compatibility tests in `serialize_security_test.go`, and update obsolete transformer soft expectations in `transformers_test.go`. [SELECTED BY PLAN: .planning/phases/17-failure-mode-taxonomy-unification/17-01-PLAN.md, 17-02-PLAN.md, and 17-03-PLAN.md]
 
 ## Environment Availability
 
