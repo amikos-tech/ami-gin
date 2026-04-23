@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/leanovate/gopter"
+	"github.com/leanovate/gopter/gen"
+	"github.com/leanovate/gopter/prop"
 	"github.com/pkg/errors"
 )
 
@@ -214,11 +218,11 @@ func requireAddDocumentNonTragicFailure(t *testing.T, builder *GINBuilder, err e
 	}
 }
 
-func requireSubsequentValidDocument(t *testing.T, builder *GINBuilder, docID DocID) {
+func requireSubsequentValidDocument(t *testing.T, builder *GINBuilder) {
 	t.Helper()
 	builder.parser = stdlibParser{}
 	builder.parserName = stdlibParserName
-	if err := builder.AddDocument(docID, []byte(`{"ok":"after-failure"}`)); err != nil {
+	if err := builder.AddDocument(1, []byte(`{"ok":"after-failure"}`)); err != nil {
 		t.Fatalf("subsequent valid AddDocument failed: %v", err)
 	}
 }
@@ -228,21 +232,21 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		builder := mustNewBuilder(t, DefaultConfig(), 4)
 		err := builder.AddDocument(0, []byte("garbage"))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("trailing-json", func(t *testing.T) {
 		builder := mustNewBuilder(t, DefaultConfig(), 4)
 		err := builder.AddDocument(0, []byte(`{"a":1} []`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("non-utf8-truncated-json", func(t *testing.T) {
 		builder := mustNewBuilder(t, DefaultConfig(), 4)
 		err := builder.AddDocument(0, []byte{0xff, '{', '"', 'a', '"', ':'})
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("unsupported-token", func(t *testing.T) {
@@ -252,7 +256,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"bad":true}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("strict-transformer", func(t *testing.T) {
@@ -275,7 +279,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"score":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("non-finite-numeric", func(t *testing.T) {
@@ -285,7 +289,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"score":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("validator-rejected-numeric-promotion", func(t *testing.T) {
@@ -319,7 +323,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"a":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("double-begin-document", func(t *testing.T) {
@@ -329,7 +333,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"a":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("wrong-rgid", func(t *testing.T) {
@@ -339,7 +343,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"a":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("uint64-overflow", func(t *testing.T) {
@@ -349,7 +353,7 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 		}
 		err = builder.AddDocument(0, []byte(`{"big":1}`))
 		requireAddDocumentNonTragicFailure(t, builder, err, 0, 0)
-		requireSubsequentValidDocument(t, builder, 1)
+		requireSubsequentValidDocument(t, builder)
 	})
 
 	t.Run("unsupported-number-without-partial-mutation-regression", func(t *testing.T) {
@@ -378,4 +382,145 @@ func TestAddDocumentPublicFailuresDoNotSetTragicErr(t *testing.T) {
 			t.Fatal("rejected document path was added to finalized index")
 		}
 	})
+}
+
+func genParserMalformedDoc() gopter.Gen {
+	return gen.OneConstOf(
+		[]byte("garbage"),
+		[]byte(`{"truncated":`),
+		[]byte(`{"a":1} []`),
+		[]byte{0xff, '{', '"', 'a', '"', ':'},
+	)
+}
+
+func genHardTransformerRejectingDoc() gopter.Gen {
+	return gen.OneConstOf(
+		[]byte(`{"email":42}`),
+		[]byte(`{"email":"missing-at"}`),
+	)
+}
+
+func genNumericPromotionFailingDoc() gopter.Gen {
+	return gen.Const([][]byte{
+		[]byte(`{"email":"numeric-seed@example.com","score":9007199254740993,"kind":"numeric-seed"}`),
+		[]byte(`{"score":1.5}`),
+	})
+}
+
+func generatedAtomicityCleanDoc(index, value int) []byte {
+	score := int64(value%1000000 + 1)
+	ratio := float64(value%1000)/10 + 0.5
+	return mustAtomicityJSON(map[string]any{
+		"email":  "user" + strconv.Itoa(index) + "@example.com",
+		"score":  score,
+		"ratio":  ratio,
+		"active": value%2 == 0,
+		"empty":  nil,
+		"tags": []any{
+			"tag-" + strconv.Itoa(value%17),
+			int64(value % 23),
+			value%3 == 0,
+		},
+		"nested": map[string]any{
+			"label": "label-" + strconv.Itoa(index%31),
+			"count": int64(index + 1),
+		},
+	})
+}
+
+func genAtomicityCorpus(size int) gopter.Gen {
+	if size <= 0 {
+		size = 1000
+	}
+	if size > 1000 {
+		size = 1000
+	}
+	return gopter.CombineGens(
+		genParserMalformedDoc(),
+		genHardTransformerRejectingDoc(),
+		genNumericPromotionFailingDoc(),
+		gen.SliceOfN(1000, gen.IntRange(0, 1000000)),
+	).Map(func(vals []interface{}) atomicityCorpus {
+		parserMalformed := vals[0].([]byte)
+		transformerRejecting := vals[1].([]byte)
+		numericPromotionPair := vals[2].([][]byte)
+		values := vals[3].([]int)
+
+		corpus := atomicityCorpus{
+			all:       make([]atomicityDoc, 0, size),
+			cleanOnly: make([]atomicityDoc, 0, size),
+			numRGs:    size,
+		}
+		for i := 0; i < size; i++ {
+			docID := DocID(i*3 + 1)
+			doc := atomicityDoc{
+				docID: docID,
+				doc:   generatedAtomicityCleanDoc(i, values[i]),
+			}
+			if i == 0 {
+				doc.doc = numericPromotionPair[0]
+			}
+			if i%10 == 9 {
+				doc.shouldFail = true
+				corpus.failingCount++
+				switch (i / 10) % 3 {
+				case 0:
+					doc.doc = parserMalformed
+				case 1:
+					doc.doc = transformerRejecting
+				default:
+					doc.doc = numericPromotionPair[1]
+				}
+			}
+
+			corpus.all = append(corpus.all, doc)
+			if !doc.shouldFail {
+				corpus.cleanOnly = append(corpus.cleanOnly, doc)
+			}
+		}
+		hasMinimumFailures := corpus.failingCount*10 >= len(corpus.all)
+		if !hasMinimumFailures {
+			panic("atomicity corpus must contain at least ten percent failing docs")
+		}
+		return corpus
+	})
+}
+
+func TestAddDocumentAtomicity(t *testing.T) {
+	config, err := strictEmailAtomicityConfig()
+	if err != nil {
+		t.Fatalf("strictEmailAtomicityConfig: %v", err)
+	}
+
+	// Each property iteration ingests roughly 2000 documents plus two Encode calls, so corpus size carries coverage and iteration count stays bounded.
+	properties := gopter.NewProperties(propertyTestParametersWithBudgets(50, 10))
+	properties.Property("failed documents do not change encoded index", prop.ForAll(
+		func(corpus atomicityCorpus) string {
+			if len(corpus.all) != 1000 {
+				return "generated corpus does not contain 1000 attempted docs"
+			}
+			hasMinimumFailures := corpus.failingCount*10 >= len(corpus.all)
+			if !hasMinimumFailures {
+				return "generated corpus does not guarantee at least ten percent failing docs"
+			}
+
+			fullBytes, err := buildAtomicityIndex(config, corpus.all, corpus.numRGs)
+			if err != nil {
+				return err.Error()
+			}
+			cleanBytes, err := buildAtomicityIndex(config, corpus.cleanOnly, corpus.numRGs)
+			if err != nil {
+				return err.Error()
+			}
+
+			// Both builds use corpus.numRGs, so Header.NumRowGroups matches before bytes.Equal compares the full encoded payload and DocIDMapping.
+			if !bytes.Equal(fullBytes, cleanBytes) {
+				return "full corpus and clean corpus encoded bytes differ"
+			}
+			return ""
+		},
+		genAtomicityCorpus(1000),
+	))
+
+	properties.TestingRun(t)
 }
