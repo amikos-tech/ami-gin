@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"math"
 	"strings"
 	"testing"
@@ -404,6 +405,151 @@ func TestNumericFailureModeSoftKeepsMergeRecoveryTragic(t *testing.T) {
 	if builder.numDocs != 0 || builder.nextPos != 0 {
 		t.Fatalf("builder advanced after tragic merge: numDocs=%d nextPos=%d", builder.numDocs, builder.nextPos)
 	}
+}
+
+func TestTransformerFailureModeHardReturnsError(t *testing.T) {
+	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain"))
+	builder := mustNewBuilder(t, config, 2)
+
+	err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
+	if err == nil {
+		t.Fatal("AddDocument transformer rejection error = nil, want hard error")
+	}
+	if !strings.Contains(err.Error(), `companion transformer "domain" on $.email failed to produce a value`) {
+		t.Fatalf("AddDocument transformer rejection error = %v, want companion transformer context", err)
+	}
+	if builder.tragicErr != nil {
+		t.Fatalf("builder.tragicErr = %v, want nil", builder.tragicErr)
+	}
+	if builder.numDocs != 0 || builder.nextPos != 0 {
+		t.Fatalf("builder advanced after transformer hard failure: numDocs=%d nextPos=%d", builder.numDocs, builder.nextPos)
+	}
+}
+
+func TestTransformerFailureModeSoftSkipsWholeDocument(t *testing.T) {
+	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
+	builder := mustNewBuilder(t, config, 2)
+
+	err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
+	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+
+	idx := requireSingleDenseValidDocument(t, builder, DocID(1), `{"email":"ok@example.com"}`)
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; ok {
+		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	}
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0})
+}
+
+func TestTransformerFailureModeSoftDiscardsPartiallyStagedDocument(t *testing.T) {
+	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
+	builder := mustNewBuilder(t, config, 2)
+
+	err := builder.AddDocument(DocID(0), []byte(`{"before":"not-finalized","email":42}`))
+	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+
+	if err := builder.AddDocument(DocID(1), []byte(`{"before":"kept","email":"ok@example.com"}`)); err != nil {
+		t.Fatalf("valid AddDocument after transformer soft skip: %v", err)
+	}
+	if got := builder.docIDToPos[DocID(1)]; got != 0 {
+		t.Fatalf("docIDToPos[1] = %d, want 0", got)
+	}
+
+	idx := builder.Finalize()
+	requireRows(t, idx, EQ("$.before", "not-finalized"), []int{})
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; ok {
+		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	}
+	requireRows(t, idx, EQ("$.before", "kept"), []int{0})
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0})
+}
+
+func buildSoftAttemptedIndex(t *testing.T, config GINConfig, docs []atomicityDoc, numRGs int) []byte {
+	t.Helper()
+	builder := mustNewBuilder(t, config, numRGs)
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, doc.doc); err != nil {
+			t.Fatalf("AddDocument(%d) error = %v, want nil under soft config", doc.docID, err)
+		}
+	}
+	encoded, err := Encode(builder.Finalize())
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	return encoded
+}
+
+func TestSoftFailureModesMatchCleanCorpus(t *testing.T) {
+	config := softFailureConfig(
+		t,
+		WithParserFailureMode(IngestFailureSoft),
+		WithNumericFailureMode(IngestFailureSoft),
+		WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)),
+	)
+	fullCorpus := []atomicityDoc{
+		{docID: DocID(0), doc: []byte(`{"email":"alice@example.com","score":9007199254740993}`)},
+		{docID: DocID(1), doc: []byte(`{"before":"not-finalized","email":42,"score":9007199254740992}`)},
+		{docID: DocID(2), doc: []byte(`{"email":"bob@example.com","score":1.5}`)},
+		{docID: DocID(3), doc: []byte(`not-json`)},
+		{docID: DocID(4), doc: []byte(`{"email":"carol@example.com","score":9007199254740992}`)},
+	}
+	cleanOnly := []atomicityDoc{
+		{docID: DocID(0), doc: []byte(`{"email":"alice@example.com","score":9007199254740993}`)},
+		{docID: DocID(4), doc: []byte(`{"email":"carol@example.com","score":9007199254740992}`)},
+	}
+
+	fullBytes := buildSoftAttemptedIndex(t, config, fullCorpus, 5)
+	cleanBytes := buildSoftAttemptedIndex(t, config, cleanOnly, 5)
+	if !bytes.Equal(fullBytes, cleanBytes) {
+		t.Fatal("soft failure full corpus and clean-only corpus encoded bytes differ")
+	}
+}
+
+func TestAllSoftFailureModesSilentlyDropFailures(t *testing.T) {
+	config := softFailureConfig(
+		t,
+		WithParserFailureMode(IngestFailureSoft),
+		WithNumericFailureMode(IngestFailureSoft),
+		WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)),
+	)
+	builder := mustNewBuilder(t, config, 5)
+
+	if err := builder.AddDocument(DocID(0), []byte(`{"email":"seed@example.com","score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument: %v", err)
+	}
+
+	// This silent-drop behavior is opt-in: callers explicitly configured parser,
+	// transformer, and numeric layers as soft. Phase 18 adds structured reporting.
+	softFailures := []struct {
+		docID DocID
+		doc   []byte
+	}{
+		{docID: DocID(1), doc: []byte(`not-json`)},
+		{docID: DocID(2), doc: []byte(`{"email":42}`)},
+		{docID: DocID(3), doc: []byte(`{"email":"float@example.com","score":1.5}`)},
+	}
+	for _, failure := range softFailures {
+		err := builder.AddDocument(failure.docID, failure.doc)
+		requireSoftSkippedDocument(t, builder, err, failure.docID, 1, 1)
+	}
+
+	if err := builder.AddDocument(DocID(4), []byte(`{"email":"final@example.com","score":9007199254740992}`)); err != nil {
+		t.Fatalf("final AddDocument: %v", err)
+	}
+	if got := builder.docIDToPos[DocID(4)]; got != 1 {
+		t.Fatalf("docIDToPos[4] = %d, want 1", got)
+	}
+	idx := builder.Finalize()
+	if idx.Header.NumDocs != 2 {
+		t.Fatalf("Header.NumDocs = %d, want 2", idx.Header.NumDocs)
+	}
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0, 1})
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; ok {
+		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	}
+	requireRows(t, idx, EQ("$.email", "float@example.com"), []int{})
 }
 
 type softNativeNaNParser struct{}
