@@ -613,6 +613,101 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	if len(data) < 4 {
+		t.Fatalf("encoded data too short: %d", len(data))
+	}
+
+	buf := bytes.NewReader(data[4:])
+	idx := NewGINIndex()
+	if err := readHeader(buf, idx); err != nil {
+		t.Fatalf("readHeader() error = %v", err)
+	}
+	if idx.Header.Version != Version {
+		t.Fatalf("encoded version = %d, want %d", idx.Header.Version, Version)
+	}
+	if Version != 9 {
+		t.Fatalf("Version = %d, want 9", Version)
+	}
+	if err := readPathDirectory(buf, idx); err != nil {
+		t.Fatalf("readPathDirectory() error = %v", err)
+	}
+	if _, err := readBloomFilter(buf); err != nil {
+		t.Fatalf("readBloomFilter() error = %v", err)
+	}
+	if err := readStringIndexes(buf, idx); err != nil {
+		t.Fatalf("readStringIndexes() error = %v", err)
+	}
+	if err := readAdaptiveStringIndexes(buf, idx); err != nil {
+		t.Fatalf("readAdaptiveStringIndexes() error = %v", err)
+	}
+	if err := readStringLengthIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
+		t.Fatalf("readStringLengthIndexes() error = %v", err)
+	}
+	if err := readNumericIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
+		t.Fatalf("readNumericIndexes() error = %v", err)
+	}
+	if err := readNullIndexes(buf, idx); err != nil {
+		t.Fatalf("readNullIndexes() error = %v", err)
+	}
+	if err := readTrigramIndexes(buf, idx); err != nil {
+		t.Fatalf("readTrigramIndexes() error = %v", err)
+	}
+	if err := readHyperLogLogs(buf, idx); err != nil {
+		t.Fatalf("readHyperLogLogs() error = %v", err)
+	}
+	if idx.Header.Flags&FlagHasDocIDMap != 0 {
+		if _, err := readDocIDMapping(buf, idx.Header.NumDocs); err != nil {
+			t.Fatalf("readDocIDMapping() error = %v", err)
+		}
+	}
+
+	var configLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &configLen); err != nil {
+		t.Fatalf("read config length error = %v", err)
+	}
+	configJSON := make([]byte, configLen)
+	if _, err := io.ReadFull(buf, configJSON); err != nil {
+		t.Fatalf("read config payload error = %v", err)
+	}
+
+	var sc SerializedConfig
+	if err := json.Unmarshal(configJSON, &sc); err != nil {
+		t.Fatalf("json.Unmarshal(config) error = %v", err)
+	}
+	if len(sc.Transformers) != 1 {
+		t.Fatalf("len(config transformers) = %d, want 1", len(sc.Transformers))
+	}
+	if got := sc.Transformers[0].FailureMode; got != transformerFailureWireSoft {
+		t.Fatalf("config transformer failure_mode = %q, want %q", got, transformerFailureWireSoft)
+	}
+
+	representations, _ := locateRepresentationSection(t, data)
+	if len(representations) != 1 {
+		t.Fatalf("len(representations) = %d, want 1", len(representations))
+	}
+	if got := representations[0].Transformer.FailureMode; got != IngestFailureSoft {
+		t.Fatalf("decoded representation failure mode = %q, want %q", got, IngestFailureSoft)
+	}
+}
+
 func TestDecodeRepresentationAliasParity(t *testing.T) {
 	idx := buildRepresentationSerializationFixture(t)
 
