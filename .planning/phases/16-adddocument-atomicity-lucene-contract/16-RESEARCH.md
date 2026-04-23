@@ -474,19 +474,22 @@ Source: context requires marker signatures without `error` returns; exact grep/a
 | A2 | No OS-registered state embeds the internal `poisonErr` name. [ASSUMED] | Runtime State Inventory | A local service or generated artifact outside the repo could retain stale wording. [ASSUMED] |
 | A3 | Plan sizing into four plans is appropriate. [ASSUMED] | Recommended Plan Decomposition | Planner may need to split tests from CI or merge them depending on implementation diff size. [ASSUMED] |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should the CI lint job call `make lint` or add a separate marker-check step?** [VERIFIED: `.github/workflows/ci.yml:56-72`]
+   - RESOLVED: CI uses a separate explicit marker-check step in `.github/workflows/ci.yml` in addition to local `make lint`.
    - What we know: CI currently uses the golangci action directly. [VERIFIED: `.github/workflows/ci.yml:68-72`]
    - What's unclear: Whether the project prefers action-native golangci execution or Makefile-as-source-of-truth. [ASSUMED]
    - Recommendation: Add a separate explicit marker-check step to minimize behavior change to the existing golangci action. [ASSUMED]
 
 2. **Should `runMergeWithRecover` include raw `panic_value` in logs?** [VERIFIED: `16-CONTEXT.md`; VERIFIED: `logging/attrs.go:5-23`]
+   - RESOLVED: Recovery logging omits the raw panic value and does not emit a `panic_value` attr.
    - What we know: Context asks for attrs beyond `panic_value` at discretion, and the logging package has exported `Attr` fields but a frozen helper vocabulary. [VERIFIED: `16-CONTEXT.md`; VERIFIED: `logging/attrs.go:5-23`]
    - What's unclear: Whether Error-level logs may use raw attr keys outside the INFO-level frozen vocabulary. [ASSUMED]
-   - Recommendation: Use `logging.AttrErrorType("other")` plus a narrowly named `panic_value` attr only if policy tests allow Error-level custom attrs. [VERIFIED: `logging/attrs.go:55-59`; ASSUMED]
+   - Recommendation: Use safe existing attrs such as `logging.AttrErrorType("other")` and omit raw recovered values entirely. [VERIFIED: `logging/attrs.go:55-59`; ASSUMED]
 
 3. **Should validator tests assert the exact old wrapped promotion message or the D-09 normalized message?** [VERIFIED: `builder.go:818-821`; VERIFIED: `16-CONTEXT.md`]
+   - RESOLVED: Validator tests assert normalized `unsupported mixed numeric promotion at $.score` wording.
    - What we know: Existing merge wraps one promotion path differently from `stageNumericObservation`. [VERIFIED: `builder.go:632-647`; VERIFIED: `builder.go:818-821`]
    - What's unclear: Whether D-09's wording stability refers to the unwrapped validator message or the older wrapped merge path. [ASSUMED]
    - Recommendation: Lock `"unsupported mixed numeric promotion at $.score"` for Phase 16 tests because it is the context's named string and includes path context. [VERIFIED: `16-CONTEXT.md`]
