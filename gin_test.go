@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
@@ -443,6 +445,118 @@ func TestAddDocumentRefusesAfterTragicFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "simulated tragic failure") {
 		t.Fatalf("AddDocument error = %q, want original cause preserved", err.Error())
 	}
+}
+
+func TestRunMergeWithRecoverConvertsPanicToTragicError(t *testing.T) {
+	err := runMergeWithRecover(nil, func() { panic("simulated") })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
+		t.Fatalf("runMergeWithRecover() error = %q, want tragic context", err.Error())
+	}
+	if !strings.Contains(err.Error(), "simulated") {
+		t.Fatalf("runMergeWithRecover() error = %q, want panic cause", err.Error())
+	}
+}
+
+func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+
+	err := runMergeWithRecover(logger, func() { panic("secret document bytes") })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+
+	entry := logger.entries[0]
+	if entry.level != logging.LevelError {
+		t.Fatalf("captured log level = %v, want %v", entry.level, logging.LevelError)
+	}
+	if entry.message != "builder tragic: recovered panic in merge" {
+		t.Fatalf("captured message = %q, want tragic recovery message", entry.message)
+	}
+	if value, ok := tragicAttrValue(entry.attrs, "error.type"); !ok || value != "other" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "other")
+	}
+	if _, ok := tragicAttrValue(entry.attrs, "panic_type"); !ok {
+		t.Fatal("panic_type attr missing")
+	}
+	for _, attr := range entry.attrs {
+		if attr.Key == "panic_value" {
+			t.Fatal("panic_value attr must not be logged")
+		}
+		if strings.Contains(attr.Value, "secret document bytes") {
+			t.Fatalf("attr %q leaked panic payload %q", attr.Key, attr.Value)
+		}
+	}
+}
+
+func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	mergeStagedPathsPanicHookForTest = func() { panic("simulated merge panic") }
+	t.Cleanup(func() { mergeStagedPathsPanicHookForTest = nil })
+
+	err := builder.AddDocument(0, []byte(`{"name":"alice"}`))
+	if err == nil {
+		t.Fatal("AddDocument() error = nil, want recovered merge panic")
+	}
+	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
+		t.Fatalf("AddDocument() error = %q, want recovered merge panic context", err.Error())
+	}
+	if builder.tragicErr == nil {
+		t.Fatal("builder.tragicErr = nil, want recovered merge panic error")
+	}
+	if builder.numDocs != 0 {
+		t.Fatalf("numDocs = %d, want 0", builder.numDocs)
+	}
+	if builder.nextPos != 0 {
+		t.Fatalf("nextPos = %d, want 0", builder.nextPos)
+	}
+	if _, exists := builder.docIDToPos[DocID(0)]; exists {
+		t.Fatal("docIDToPos contains rejected document")
+	}
+
+	mergeStagedPathsPanicHookForTest = nil
+	err = builder.AddDocument(1, []byte(`{"name":"bob"}`))
+	if err == nil {
+		t.Fatal("AddDocument after tragedy = nil, want refusal")
+	}
+	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
+		t.Fatalf("AddDocument refusal = %q, want tragic closure context", err.Error())
+	}
+}
+
+type tragicLogEntry struct {
+	level   logging.Level
+	message string
+	attrs   []logging.Attr
+}
+
+type tragicCaptureLogger struct {
+	entries []tragicLogEntry
+}
+
+func (l *tragicCaptureLogger) Enabled(_ logging.Level) bool { return true }
+
+func (l *tragicCaptureLogger) Log(level logging.Level, message string, attrs ...logging.Attr) {
+	copied := append([]logging.Attr(nil), attrs...)
+	l.entries = append(l.entries, tragicLogEntry{
+		level:   level,
+		message: message,
+		attrs:   copied,
+	})
+}
+
+func tragicAttrValue(attrs []logging.Attr, key string) (string, bool) {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value, true
+		}
+	}
+	return "", false
 }
 
 func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
