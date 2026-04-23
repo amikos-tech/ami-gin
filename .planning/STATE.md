@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: "Phase 16 shipped - PR #31"
-stopped_at: Completed 16-03-PLAN.md; Phase 16 complete
-last_updated: "2026-04-23T12:57:37Z"
+status: "Phase 16 shipped - PR #31; learnings extracted"
+stopped_at: Extracted Phase 16 learnings; ready for Phase 17 planning
+last_updated: "2026-04-23T14:21:35Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 15
@@ -27,7 +27,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 Phase: 17
 Plan: Not started
-Status: Phase 16 shipped in PR #31; ready for Phase 17 planning
+Status: Phase 16 shipped in PR #31; learnings extracted; ready for Phase 17 planning
 Last activity: 2026-04-23
 
 Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements fully complete, 4/4 Phase 16 plans executed)
@@ -134,8 +134,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: Phase 16 plan 16-03 execution
-Stopped at: Completed 16-03-PLAN.md; Phase 16 complete
+Last session: Phase 16 learning extraction
+Stopped at: Extracted `16-LEARNINGS.md`; ready for Phase 17 planning
 Resume file: None
 
 **Next step:** Plan Phase 17 failure-mode taxonomy unification.
