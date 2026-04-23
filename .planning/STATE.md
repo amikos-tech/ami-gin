@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: planning
-stopped_at: Phase 17 context gathered
-last_updated: "2026-04-23T14:32:31.272Z"
+status: ready_to_execute
+stopped_at: Phase 17 planned
+last_updated: "2026-04-23T15:02:00.000Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 15
   completed_phases: 8
-  total_plans: 24
+  total_plans: 28
   completed_plans: 23
-  percent: 96
+  percent: 82
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 17
-Plan: Not started
-Status: Phase 16 shipped in PR #31; learnings extracted; ready for Phase 17 planning
+Plan: 17-01 ready
+Status: Phase 17 planned and verified; ready to execute 4 plans across 3 waves
 Last activity: 2026-04-23
 
-Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements fully complete, 4/4 Phase 16 plans executed)
+Progress: [----------] 0% for Phase 17 (0/4 plans executed; 4/4 plans planned and checker-verified)
 
 ## Performance Metrics
 
@@ -57,7 +57,7 @@ Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements full
 | Phase | Plans | Status |
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
-| 17 | TBD | Planned (defining) |
+| 17 | 4 | Ready to execute (0/4 plans complete) |
 | 18 | TBD | Planned (defining) |
 
 ## Accumulated Context
@@ -80,6 +80,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
 - **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; the Wave 2 integration fix resolved the `gin_test.go` goconst finding and `make lint` is green.
 - **16-03 atomicity proof**: `atomicity_test.go` uses a bounded 1000-document full-vs-clean property with deterministic 10% failing slots and encoded-byte equality; the public failure catalog asserts user-input failures leave `tragicErr` nil.
+- **17 planning resolution**: public `IngestFailureMode` string values are planned as `hard` and `soft`, while transformer serialization preserves legacy v9 wire tokens `strict` and `soft_fail` through private mapping.
+- **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
 
 ### Roadmap Evolution
 
@@ -91,13 +93,13 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
   - Phase 18: Structured IngestError + CLI integration — IERR-01..03
 - DAG: 16 → 17 → 18 (strict sequence; Phases 17 and 18 only become possible because Phase 16 makes per-document failure first-class).
 - Phase 16 completed 2026-04-23 with ATOMIC-01, ATOMIC-02, and ATOMIC-03 fully covered.
+- Phase 17 planned 2026-04-23 with 4 plans across 3 waves; plan checker passed after resolving research open questions.
 - v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Plan Phase 17 failure-mode taxonomy unification
-- Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
+- Execute Phase 17 failure-mode taxonomy unification
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
 ### Blockers/Concerns
@@ -134,8 +136,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-23T14:32:31.267Z
-Stopped at: Phase 17 context gathered
-Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-CONTEXT.md
+Last session: 2026-04-23T15:02:00.000Z
+Stopped at: Phase 17 planned
+Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-01-PLAN.md
 
-**Next step:** Plan Phase 17 failure-mode taxonomy unification.
+**Next step:** Execute Phase 17 failure-mode taxonomy unification.
