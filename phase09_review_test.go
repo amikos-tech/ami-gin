@@ -226,7 +226,7 @@ func TestPhase09CompanionTransformFailuresRejectDocumentsByDefault(t *testing.T)
 }
 
 func TestPhase09FinalizeOmitsNeverMaterializedRepresentations(t *testing.T) {
-	config, err := NewConfig(WithISODateTransformer("$.timestamp", "epoch_ms", WithTransformerFailureMode(TransformerFailureSoft)))
+	config, err := NewConfig(WithISODateTransformer("$.timestamp", "epoch_ms", WithTransformerFailureMode(IngestFailureSoft)))
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
 	}
@@ -292,7 +292,7 @@ func TestPhase09ConfigValidationErrors(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
-	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, TransformerFailureStrict, nil)
+	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, IngestFailureHard, nil)
 	if err == nil {
 		t.Fatal("addRepresentation(..., nil) error = nil, want transformer function validation")
 	}

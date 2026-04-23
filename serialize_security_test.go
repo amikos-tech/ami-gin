@@ -586,7 +586,7 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 
 func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(TransformerFailureSoft)),
+		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
@@ -603,8 +603,8 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("len(decoded.Config.representationSpecs[$.email]) = %d, want 1", len(specs))
 	}
-	if specs[0].Transformer.FailureMode != TransformerFailureSoft {
-		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, TransformerFailureSoft)
+	if specs[0].Transformer.FailureMode != IngestFailureSoft {
+		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, IngestFailureSoft)
 	}
 
 	reloadedBuilder := mustNewBuilder(t, *decoded.Config, 1)

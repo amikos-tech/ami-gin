@@ -543,7 +543,7 @@ func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
 				return nil, false
 			}
 			return s, true
-		}, WithTransformerFailureMode(TransformerFailureSoft)),
+		}, WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
