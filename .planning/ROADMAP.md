@@ -132,8 +132,8 @@ Plans:
 
 Plans:
 - [x] 17-01-PLAN.md — Unified public failure-mode API and parser/numeric config defaults
-- [ ] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
-- [ ] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
+- [x] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
+- [x] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
 - [ ] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
 
 ### Phase 18: Structured `IngestError` + CLI integration
@@ -192,7 +192,7 @@ Plans:
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 17. Failure-Mode Taxonomy Unification | v1.2 | 1/4 | In Progress | - |
+| 17. Failure-Mode Taxonomy Unification | v1.2 | 3/4 | In Progress | - |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |
