@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: "Defining requirements — milestone bootstrap complete"
-stopped_at: Milestone v1.2 bootstrapped (Phases 16–18 added; SIMD renumbered to v1.3 Phases 19–20)
-last_updated: "2026-04-23T00:00:00Z"
+status: "Phase 16 planned — ready for /gsd-execute-phase 16"
+stopped_at: Phase 16 plan-phase complete (4 plans verified across 3 waves)
+last_updated: "2026-04-23T09:00:30Z"
 last_activity: 2026-04-23
 last_learnings_extraction:
   phase: 14
@@ -13,7 +13,7 @@ last_learnings_extraction:
 progress:
   total_phases: 3
   completed_phases: 0
-  total_plans: 0
+  total_plans: 4
   completed_plans: 0
   percent: 0
 ---
@@ -25,16 +25,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.2 Phase 16 — AddDocument atomicity (Lucene contract); ready for `/gsd-discuss-phase 16`
+**Current focus:** v1.2 Phase 16 — AddDocument atomicity (Lucene contract); ready for `/gsd-execute-phase 16`
 
 ## Current Position
 
-Phase: 16 (addDocument-atomicity-lucene-contract) — Not started (defining requirements complete)
-Plan: —
-Status: Milestone v1.2 bootstrapped; awaiting phase planning
-Last activity: 2026-04-23 — Milestone v1.2 started (Ingest Correctness & Per-Document Isolation)
+Phase: 16 (addDocument-atomicity-lucene-contract) — Planned; ready to execute
+Plan: 4 plans across 3 waves
+Status: 16-01 through 16-04 PLAN.md written and plan-checker verified
+Last activity: 2026-04-23 — Phase 16 plan-phase complete
 
-Progress: [..........] 0% (0/3 phases, 0/8 requirements)
+Progress: [..........] 0% (0/3 phases, 0/8 requirements, 0/4 Phase 16 plans executed)
 
 ## Performance Metrics
 
@@ -60,7 +60,7 @@ Progress: [..........] 0% (0/3 phases, 0/8 requirements)
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 16 | TBD | Planned (defining) |
+| 16 | 4 | Ready to execute |
 | 17 | TBD | Planned (defining) |
 | 18 | TBD | Planned (defining) |
 
@@ -94,14 +94,14 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Run `/gsd-discuss-phase 16` to gather context before planning Phase 16 atomicity work
+- Run `/gsd-execute-phase 16` to implement the four verified Phase 16 plans
 - Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
 ### Blockers/Concerns
 
-- The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation planned during Phase 16 planning: a `// MUST_BE_CHECKED_BY_VALIDATOR` marker convention plus a CI grep that flags merge-layer error returns reintroduced.
-- `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — needs an explicit audit in Phase 16 plan 1.1 to confirm.
+- The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation is captured in Phase 16 plans: `// MUST_BE_CHECKED_BY_VALIDATOR` markers plus local and CI checks for merge-layer error returns.
+- `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
 
 ### Quick Tasks Completed (v1.1, retained for reference)
@@ -131,7 +131,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: v1.2 milestone bootstrap (manual, due to renumbering not supported by `gsd-add-phase`)
-Stopped at: Milestone v1.2 defined; phases 16–18 added to roadmap; SIMD renumbered to v1.3 phases 19–20
+Last session: Phase 16 `/gsd-plan-phase` (verified plan set)
+Stopped at: 16-01 through 16-04 PLAN.md written and plan-checker verified; ATOMIC-01, ATOMIC-02, and ATOMIC-03 covered
+Resume file: .planning/phases/16-adddocument-atomicity-lucene-contract/16-01-PLAN.md
 
-**Next step:** `/gsd-discuss-phase 16` to gather context before planning the atomicity work.
+**Next step:** `/gsd-execute-phase 16` to execute the verified plans.

@@ -111,7 +111,13 @@ Plans:
   4. A `recover()`-in-merge belt-and-suspenders converts any reachable panic in `mergeStagedPaths` to `tragicErr` rather than letting it escape; an explicit test invokes the recovery path.
   5. An atomicity property test (`atomicity_test.go`) ingests a `gopter`-generated corpus of ≥1000 documents with ≥10% guaranteed-failing documents (mixed parser/numeric/transformer failures) and asserts the encoded index is byte-identical to the same corpus without the failures.
   6. A `// MUST_BE_CHECKED_BY_VALIDATOR` marker convention is established on merge-layer functions, with a CI grep that flags any reintroduction of merge-layer error returns.
-**Plans**: TBD (planned during `/gsd-discuss-phase 16` and `/gsd-plan-phase 16`)
+**Plans**: 4 plans
+
+Plans:
+- [ ] 16-01-PLAN.md — Validator-complete numeric promotion hoisting and no-error merge signatures
+- [ ] 16-02-PLAN.md — Tragic terminal state rename, merge recovery, and safe recovery logging
+- [ ] 16-03-PLAN.md — Public failure catalog and AddDocument atomicity property tests
+- [ ] 16-04-PLAN.md — Local lint and CI marker/signature enforcement
 
 ### Phase 17: Failure-Mode Taxonomy Unification
 **Goal**: Provide one mental model for "what can go wrong with a document and how do I configure the response." Unify the existing transformer-only failure-mode concept into a single `IngestFailureMode` type that applies uniformly to parser, transformer, and numeric-promotion layers.
@@ -174,7 +180,7 @@ Plans:
 | 13. Parser Seam Extraction | v1.1 | 3/3 | Complete | 2026-04-21 |
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
-| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 0/- | Planned | - |
+| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 0/4 | Ready to execute | - |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 0/- | Planned | - |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
