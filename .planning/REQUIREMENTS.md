@@ -16,7 +16,7 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 ### Atomicity (Lucene contract)
 
 - [ ] **ATOMIC-01**: `AddDocument` returning a non-tragic error leaves the builder in a state indistinguishable from never having received the failed call. Verified by an atomicity property test that ingests a corpus, interleaves guaranteed-failing documents, and asserts the encoded index is byte-identical to the same corpus without the failures.
-- [ ] **ATOMIC-02**: `mergeStagedPaths` and `mergeNumericObservation` become infallible — `validateStagedPaths` is extended to fully simulate every reason these merge functions could fail, against the *real* `pathData` state (not a fresh preview). The merge-layer error returns are removed and a compile-time check enforces the new signatures.
+- [x] **ATOMIC-02**: `mergeStagedPaths` and `mergeNumericObservation` become infallible — `validateStagedPaths` is extended to fully simulate every reason these merge functions could fail, against the *real* `pathData` state (not a fresh preview). The merge-layer error returns are removed and a compile-time check enforces the new signatures. Completed by 16-01.
 - [ ] **ATOMIC-03**: `tragicErr` (renamed from `poisonErr` at `builder.go:34`) is reserved for internal-invariant violations only; no user-input failure mode reaches it. A `recover()`-in-merge belt-and-suspenders converts any reachable panic to `tragicErr`. A unit-test allowlist enforces that `tragicErr` stays nil across the full public failure-mode catalog.
 
 ### Failure-Mode Taxonomy
@@ -46,7 +46,7 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | ATOMIC-01 | Phase 16 | Planned |
-| ATOMIC-02 | Phase 16 | Planned |
+| ATOMIC-02 | Phase 16 | Complete (16-01) |
 | ATOMIC-03 | Phase 16 | Planned |
 | FAIL-01 | Phase 17 | Planned |
 | FAIL-02 | Phase 17 | Planned |

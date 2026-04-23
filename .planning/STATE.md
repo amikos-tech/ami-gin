@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: executing
-stopped_at: 16-01 through 16-04 PLAN.md written and plan-checker verified; ATOMIC-01, ATOMIC-02, and ATOMIC-03 covered
-last_updated: "2026-04-23T09:33:22.050Z"
-last_activity: 2026-04-23 -- Phase 16 execution started
+stopped_at: Completed 16-01-PLAN.md; ready for 16-02
+last_updated: "2026-04-23T09:40:14Z"
+last_activity: 2026-04-23 -- Phase 16 plan 16-01 completed
 progress:
   total_phases: 15
   completed_phases: 7
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 16 (adddocument-atomicity-lucene-contract) — EXECUTING
-Plan: 1 of 4
+Plan: 2 of 4
 Status: Executing Phase 16
-Last activity: 2026-04-23 -- Phase 16 execution started
+Last activity: 2026-04-23 -- Phase 16 plan 16-01 completed
 
-Progress: [..........] 0% (0/3 phases, 0/8 requirements, 0/4 Phase 16 plans executed)
+Progress: [##........] 25% (0/3 phases, 1/8 requirements, 1/4 Phase 16 plans executed)
 
 ## Performance Metrics
 
@@ -56,7 +56,7 @@ Progress: [..........] 0% (0/3 phases, 0/8 requirements, 0/4 Phase 16 plans exec
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 16 | 4 | Ready to execute |
+| 16 | 4 | In Progress (1/4 plans complete) |
 | 17 | TBD | Planned (defining) |
 | 18 | TBD | Planned (defining) |
 
@@ -75,6 +75,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **Industry-precedent grounded**: Lucene IndexWriter's per-document isolation contract is the target. Tantivy/Bleve/PostgreSQL GIN/RocksDB also reviewed; Lucene is the closest analog.
 - **Scope explicitly tight (Shape 1 from brainstorming)**: 3 phases — atomicity, failure-mode taxonomy, structured IngestError + CLI. No `ValidateDocument` dry-run, no snapshot/restore, no perf items.
 - **Numbering = Option B**: v1.2 takes phases 16–18 (chronological); SIMD renumbered to v1.3 phases 19–20.
+- **16-01 pre-check result**: `validateStagedPaths` already covered both lossy mixed numeric promotion directions before merge signature edits; `builder.go` validator logic was left unchanged.
+- **16-01 test isolation**: focused validator tests seed staged numeric observations directly because `stageJSONNumberLiteral` already rejects these lossy promotions before `validateStagedPaths` can be isolated.
 
 ### Roadmap Evolution
 
@@ -90,7 +92,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Run `/gsd-execute-phase 16` to implement the four verified Phase 16 plans
+- Continue Phase 16 execution with 16-02
 - Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -127,8 +129,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: Phase 16 `/gsd-plan-phase` (verified plan set)
-Stopped at: 16-01 through 16-04 PLAN.md written and plan-checker verified; ATOMIC-01, ATOMIC-02, and ATOMIC-03 covered
-Resume file: .planning/phases/16-adddocument-atomicity-lucene-contract/16-01-PLAN.md
+Last session: Phase 16 plan 16-01 execution
+Stopped at: Completed 16-01-PLAN.md; ready for 16-02
+Resume file: None
 
-**Next step:** `/gsd-execute-phase 16` to execute the verified plans.
+**Next step:** Continue Phase 16 execution with 16-02.
