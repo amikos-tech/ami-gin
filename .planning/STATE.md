@@ -78,7 +78,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **16-01 pre-check result**: `validateStagedPaths` already covered both lossy mixed numeric promotion directions before merge signature edits; `builder.go` validator logic was left unchanged.
 - **16-01 test isolation**: focused validator tests seed staged numeric observations directly because `stageJSONNumberLiteral` already rejects these lossy promotions before `validateStagedPaths` can be isolated.
 - **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
-- **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; full `make lint` remains blocked by a deferred unowned `gin_test.go` goconst finding.
+- **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; the Wave 2 integration fix resolved the `gin_test.go` goconst finding and `make lint` is green.
 
 ### Roadmap Evolution
 
@@ -101,7 +101,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 ### Blockers/Concerns
 
 - The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation is captured in Phase 16 plans: `// MUST_BE_CHECKED_BY_VALIDATOR` markers plus local and CI checks for merge-layer error returns.
-- Full `make lint` is currently blocked by a `goconst` finding in `gin_test.go` outside plan 16-04 ownership; `make check-validator-markers` itself is green and CI now runs it explicitly.
+- `make lint` is green after the Wave 2 integration fix; `make check-validator-markers` is green and CI now runs it explicitly.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
 
