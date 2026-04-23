@@ -538,10 +538,7 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case int64:
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint:
-		if v > math.MaxInt64 {
-			return errors.Errorf("unsupported integer at %s", canonicalPath)
-		}
-		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint8:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
 	case uint16:
@@ -549,10 +546,7 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case uint32:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
 	case uint64:
-		if v > math.MaxInt64 {
-			return errors.Errorf("unsupported integer at %s", canonicalPath)
-		}
-		return b.stageNativeNumeric(canonicalPath, int64(v), state)
+		return b.stageNativeNumeric(canonicalPath, v, state)
 	case []any:
 		for i, item := range v {
 			if err := b.stageMaterializedValue(fmt.Sprintf("%s[%d]", path, i), item, state, true); err != nil {
@@ -647,6 +641,16 @@ func stagedNumericFromValue(value any) (stagedNumericValue, error) {
 	switch v := value.(type) {
 	case int64:
 		return stagedNumericValue{isInt: true, intVal: v}, nil
+	case uint:
+		if v > math.MaxInt64 {
+			return stagedNumericValue{}, errors.New("unsupported integer")
+		}
+		return stagedNumericValue{isInt: true, intVal: int64(v)}, nil
+	case uint64:
+		if v > math.MaxInt64 {
+			return stagedNumericValue{}, errors.New("unsupported integer")
+		}
+		return stagedNumericValue{isInt: true, intVal: int64(v)}, nil
 	case float64:
 		if math.IsNaN(v) || math.IsInf(v, 0) {
 			return stagedNumericValue{}, errors.New("non-finite numeric value")

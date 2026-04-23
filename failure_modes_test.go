@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"math"
 	"strings"
 	"testing"
 
@@ -386,6 +387,37 @@ func TestNumericFailureModeSoftSkipsValidatorRejectedPromotion(t *testing.T) {
 	requireRows(t, idx, EQ("$.score", int64(9007199254740992)), []int{1})
 }
 
+func TestNumericFailureModeSoftSkipsOversizedUnsignedTransformerValue(t *testing.T) {
+	config := softFailureConfig(
+		t,
+		WithNumericFailureMode(IngestFailureSoft),
+		WithCustomTransformer("$.token", "numeric", func(value any) (any, bool) {
+			token, ok := value.(string)
+			if !ok {
+				return nil, false
+			}
+			if token == "skip" {
+				return uint64(math.MaxUint64), true
+			}
+			return int64(7), true
+		}),
+	)
+	builder := mustNewBuilder(t, config, 2)
+
+	err := builder.AddDocument(DocID(0), []byte(`{"token":"skip"}`))
+	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+
+	if err := builder.AddDocument(DocID(1), []byte(`{"token":"keep"}`)); err != nil {
+		t.Fatalf("valid AddDocument after oversized uint soft skip failed: %v", err)
+	}
+	if got := builder.docIDToPos[DocID(1)]; got != 0 {
+		t.Fatalf("docIDToPos[1] = %d, want 0", got)
+	}
+
+	idx := builder.Finalize()
+	requireRows(t, idx, EQ("$.token", As("numeric", int64(7))), []int{0})
+}
+
 func TestNumericFailureModeSoftKeepsMergeRecoveryTragic(t *testing.T) {
 	config := softFailureConfig(t, WithNumericFailureMode(IngestFailureSoft))
 	builder := mustNewBuilder(t, config, 2)
@@ -549,4 +581,29 @@ func TestAllSoftFailureModesSilentlyDropFailures(t *testing.T) {
 		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
 	}
 	requireRows(t, idx, EQ("$.email", "float@example.com"), []int{})
+}
+
+func TestDecodeRestoresHardFailureModeDefaults(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(DocID(0), []byte(`{"name":"kept"}`)); err != nil {
+		t.Fatalf("seed AddDocument: %v", err)
+	}
+
+	encoded, err := Encode(builder.Finalize())
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	decoded, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if decoded.Config == nil {
+		t.Fatal("decoded.Config = nil, want config")
+	}
+	if decoded.Config.ParserFailureMode != IngestFailureHard {
+		t.Fatalf("decoded.Config.ParserFailureMode = %q, want %q", decoded.Config.ParserFailureMode, IngestFailureHard)
+	}
+	if decoded.Config.NumericFailureMode != IngestFailureHard {
+		t.Fatalf("decoded.Config.NumericFailureMode = %q, want %q", decoded.Config.NumericFailureMode, IngestFailureHard)
+	}
 }

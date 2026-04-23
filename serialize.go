@@ -1747,6 +1747,11 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		return nil, errors.Wrap(err, "validate config")
 	}
 
+	// Builder-only ingest routing fields are not serialized. Restore their
+	// documented hard defaults so decoded configs never expose an empty state.
+	cfg.ParserFailureMode = normalizeIngestFailureMode(cfg.ParserFailureMode)
+	cfg.NumericFailureMode = normalizeIngestFailureMode(cfg.NumericFailureMode)
+
 	// Restore silent observability defaults so decoded configs are always safe
 	// before any boundary code consumes them.
 	normalizeObservability(cfg)
