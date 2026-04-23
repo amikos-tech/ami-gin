@@ -26,6 +26,31 @@ func TestWalkJSONPropagatesStagingErrors(t *testing.T) {
 	}
 }
 
+func TestWalkJSONRecoversMergePanic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	builder.testHooks.mergeStagedPathsPanicHook = func() { panic("simulated walkJSON merge panic") }
+
+	err := builder.walkJSON("$.name", "alice", 0)
+	if err == nil {
+		t.Fatal("walkJSON() error = nil, want recovered merge panic")
+	}
+	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
+		t.Fatalf("walkJSON() error = %q, want recovered merge panic context", err.Error())
+	}
+	if builder.tragicErr == nil {
+		t.Fatal("builder.tragicErr = nil, want recovered merge panic error")
+	}
+
+	builder.testHooks.mergeStagedPathsPanicHook = nil
+	err = builder.walkJSON("$.name", "bob", 0)
+	if err == nil {
+		t.Fatal("walkJSON() after tragedy = nil, want refusal")
+	}
+	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
+		t.Fatalf("walkJSON() after tragedy = %q, want tragic closure context", err.Error())
+	}
+}
+
 func TestSortedObjectKeys(t *testing.T) {
 	got := sortedObjectKeys(map[string]any{
 		"z": 1,

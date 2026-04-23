@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/amikos-tech/ami-gin/logging"
+	pkgerrors "github.com/pkg/errors"
 )
 
 const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion at $.score"
@@ -462,10 +463,29 @@ func TestRunMergeWithRecoverConvertsPanicToTragicError(t *testing.T) {
 	}
 }
 
+func newPkgErrorsPanicForTest() error {
+	return pkgerrors.New("stacked merge panic")
+}
+
+func TestRunMergeWithRecoverPreservesErrorPanicCauseAndStack(t *testing.T) {
+	original := newPkgErrorsPanicForTest()
+
+	err := runMergeWithRecover(nil, func() { panic(original) })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if pkgerrors.Cause(err) != original {
+		t.Fatalf("Cause(runMergeWithRecover()) = %#v, want original panic error", pkgerrors.Cause(err))
+	}
+	if stack := fmt.Sprintf("%+v", err); !strings.Contains(stack, "newPkgErrorsPanicForTest") {
+		t.Fatalf("formatted error stack did not include original panic site:\n%s", stack)
+	}
+}
+
 func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
 	logger := &tragicCaptureLogger{}
 
-	err := runMergeWithRecover(logger, func() { panic("secret document bytes") })
+	err := runMergeWithRecover(logger, func() { panic(pkgerrors.New("secret document bytes")) })
 	if err == nil {
 		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
 	}
@@ -491,16 +511,34 @@ func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
 		if attr.Key == panicValueKey {
 			t.Fatal("raw panic value attr must not be logged")
 		}
+		if attr.Key == "panic_message" {
+			t.Fatal("non-allowlisted error panic message must not be logged")
+		}
 		if strings.Contains(attr.Value, "secret document bytes") {
 			t.Fatalf("attr %q leaked panic payload %q", attr.Key, attr.Value)
 		}
 	}
 }
 
+func TestRunMergeWithRecoverLogsAllowlistedInternalPanicMessage(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+	message := "validator missed unsupported mixed numeric promotion at $.score"
+
+	err := runMergeWithRecover(logger, func() { panic(pkgerrors.New(message)) })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+	if value, ok := tragicAttrValue(logger.entries[0].attrs, "panic_message"); !ok || value != message {
+		t.Fatalf("panic_message attr = %q, %v; want %q, true", value, ok, message)
+	}
+}
+
 func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
-	mergeStagedPathsPanicHookForTest = func() { panic("simulated merge panic") }
-	t.Cleanup(func() { mergeStagedPathsPanicHookForTest = nil })
+	builder.testHooks.mergeStagedPathsPanicHook = func() { panic("simulated merge panic") }
 
 	err := builder.AddDocument(0, []byte(`{"name":"alice"}`))
 	if err == nil {
@@ -522,13 +560,18 @@ func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
 		t.Fatal("docIDToPos contains rejected document")
 	}
 
-	mergeStagedPathsPanicHookForTest = nil
+	builder.testHooks.mergeStagedPathsPanicHook = nil
 	err = builder.AddDocument(1, []byte(`{"name":"bob"}`))
 	if err == nil {
 		t.Fatal("AddDocument after tragedy = nil, want refusal")
 	}
 	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
 		t.Fatalf("AddDocument refusal = %q, want tragic closure context", err.Error())
+	}
+
+	idx := builder.Finalize()
+	if _, err := Encode(idx); err != nil {
+		t.Fatalf("Encode(Finalize() after tragedy) error = %v", err)
 	}
 }
 

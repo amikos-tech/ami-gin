@@ -32,7 +32,9 @@ type GINBuilder struct {
 	// tragicErr is non-nil once an internal invariant violation or recovered
 	// merge panic has closed the builder. Subsequent AddDocument calls refuse
 	// to compound corruption; Finalize remains callable so callers can discard
-	// the builder gracefully.
+	// the builder gracefully. Partial merges committed before a tragic panic are
+	// not rolled back; Finalize after tragedy reflects an undefined subset of the
+	// failing document's paths.
 	tragicErr error
 
 	// parser defaults to stdlibParser{} at NewBuilder; parserName is the
@@ -44,6 +46,11 @@ type GINBuilder struct {
 	parserName         string
 	currentDocState    *documentBuildState
 	beginDocumentCalls int
+	testHooks          builderTestHooks
+}
+
+type builderTestHooks struct {
+	mergeStagedPathsPanicHook func()
 }
 
 type pathBuildData struct {
@@ -358,11 +365,21 @@ func normalizeWalkPath(path string) string {
 }
 
 func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
+	if b.tragicErr != nil {
+		return errors.Wrap(b.tragicErr, "builder closed by prior tragic failure; discard and rebuild")
+	}
+
 	state := newDocumentBuildState(rgID)
 	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
 		return err
 	}
-	b.mergeStagedPaths(state)
+	if err := b.validateStagedPaths(state); err != nil {
+		return err
+	}
+	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
+		b.tragicErr = err
+		return err
+	}
 	return nil
 }
 
@@ -722,15 +739,35 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 func runMergeWithRecover(logger logging.Logger, fn func()) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			logging.Error(logger, "builder tragic: recovered panic in merge",
+			attrs := []logging.Attr{
 				logging.AttrErrorType("other"),
 				logging.Attr{Key: "panic_type", Value: fmt.Sprintf("%T", recovered)},
-			)
+			}
+			if message, ok := safeMergePanicMessage(recovered); ok {
+				attrs = append(attrs, logging.Attr{Key: "panic_message", Value: message})
+			}
+			logging.Error(logger, "builder tragic: recovered panic in merge", attrs...)
+			if e, ok := recovered.(error); ok {
+				err = errors.Wrap(e, "builder tragic: recovered panic in merge")
+				return
+			}
 			err = errors.Errorf("builder tragic: recovered panic in merge: %v", recovered)
 		}
 	}()
 	fn()
 	return nil
+}
+
+func safeMergePanicMessage(recovered any) (string, bool) {
+	e, ok := recovered.(error)
+	if !ok {
+		return "", false
+	}
+	message := e.Error()
+	if strings.HasPrefix(message, "validator missed unsupported mixed numeric promotion") {
+		return message, true
+	}
+	return "", false
 }
 
 func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
@@ -752,10 +789,6 @@ func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	return nil
 }
 
-// mergeStagedPathsPanicHookForTest exists only for package tests that need to
-// exercise the real AddDocument recovery path.
-var mergeStagedPathsPanicHookForTest func()
-
 // MUST_BE_CHECKED_BY_VALIDATOR
 func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 	paths := make([]string, 0, len(state.paths))
@@ -766,8 +799,8 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 
 	for _, path := range paths {
 		staged := state.paths[path]
-		if mergeStagedPathsPanicHookForTest != nil {
-			mergeStagedPathsPanicHookForTest()
+		if b.testHooks.mergeStagedPathsPanicHook != nil {
+			b.testHooks.mergeStagedPathsPanicHook()
 		}
 		pd := b.getOrCreatePath(path)
 		pd.observedTypes |= staged.observedTypes
