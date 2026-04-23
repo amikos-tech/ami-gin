@@ -345,6 +345,8 @@ func TestNumericFailureModeSoftSkipsMalformedLiteralAndNonFinite(t *testing.T) {
 		}
 		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
 		requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+		builder.parser = stdlibParser{}
+		builder.parserName = stdlibParserName
 		idx := requireSingleDenseValidDocument(t, builder, DocID(1), `{"score":2}`)
 		requireRows(t, idx, EQ("$.score", int64(2)), []int{0})
 	})
@@ -356,6 +358,8 @@ func TestNumericFailureModeSoftSkipsMalformedLiteralAndNonFinite(t *testing.T) {
 		}
 		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
 		requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+		builder.parser = stdlibParser{}
+		builder.parserName = stdlibParserName
 		idx := requireSingleDenseValidDocument(t, builder, DocID(1), `{"score":2}`)
 		requireRows(t, idx, EQ("$.score", int64(2)), []int{0})
 	})

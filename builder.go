@@ -20,6 +20,40 @@ const maxInt64AsFloat64 = float64(1 << 63) // upper bound for float64→int64; m
 const validatorMissedPanicPrefix = "validator missed "
 const validatorMissedMixedNumericPromotion = validatorMissedPanicPrefix + "unsupported mixed numeric promotion"
 
+var errSkipDocument = errors.New("skip document")
+
+type stageCallbackError struct {
+	err error
+}
+
+func (e *stageCallbackError) Error() string { return e.err.Error() }
+func (e *stageCallbackError) Unwrap() error { return e.err }
+func (e *stageCallbackError) Cause() error  { return e.err }
+
+func isSkipDocument(err error) bool {
+	return err != nil && (errors.Cause(err) == errSkipDocument || errors.Is(err, errSkipDocument))
+}
+
+func tagStageError(err error) error {
+	if err == nil || isSkipDocument(err) || isStageCallbackError(err) {
+		return err
+	}
+	return &stageCallbackError{err: err}
+}
+
+func isStageCallbackError(err error) bool {
+	var tagged *stageCallbackError
+	return errors.As(err, &tagged)
+}
+
+func unwrapStageCallbackError(err error) error {
+	var tagged *stageCallbackError
+	if errors.As(err, &tagged) {
+		return tagged.err
+	}
+	return err
+}
+
 type GINBuilder struct {
 	config     GINConfig
 	numRGs     int
@@ -337,6 +371,15 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 	}()
 
 	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
+		if isSkipDocument(err) {
+			return nil
+		}
+		if isStageCallbackError(err) {
+			return unwrapStageCallbackError(err)
+		}
+		if normalizeIngestFailureMode(b.config.ParserFailureMode) == IngestFailureSoft {
+			return nil
+		}
 		return err
 	}
 
@@ -543,7 +586,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 		transformed, ok := registration.FieldTransformer(prepared)
 		if !ok {
 			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == IngestFailureSoft {
-				continue
+				return errSkipDocument
 			}
 			return errors.Errorf("companion transformer %q on %s failed to produce a value", registration.Alias, canonicalPath)
 		}
@@ -558,6 +601,9 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
 	isInt, intVal, floatVal, err := parseJSONNumberLiteral(raw)
 	if err != nil {
+		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+			return errSkipDocument
+		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
 	return b.stageNumericObservation(path, stagedNumericValue{
@@ -589,6 +635,9 @@ func parseJSONNumberLiteral(raw string) (bool, int64, float64, error) {
 func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentBuildState) error {
 	obs, err := stagedNumericFromValue(value)
 	if err != nil {
+		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+			return errSkipDocument
+		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
 	return b.stageNumericObservation(path, obs, state)
@@ -647,6 +696,9 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 		}
 
 		if !canRepresentIntAsExactFloat(pathState.numericSimIntMin) || !canRepresentIntAsExactFloat(pathState.numericSimIntMax) {
+			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+				return errSkipDocument
+			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
 
@@ -660,6 +712,9 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
+			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+				return errSkipDocument
+			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
 		floatVal := float64(observation.intVal)
@@ -713,6 +768,9 @@ func canRepresentIntAsExactFloat(value int64) bool {
 
 func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
 	if err := b.commitStagedPaths(state); err != nil {
+		if isSkipDocument(err) {
+			return nil
+		}
 		return err
 	}
 
@@ -731,6 +789,9 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 
 func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
 	if err := b.validateStagedPaths(state); err != nil {
+		if isSkipDocument(err) || normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+			return errSkipDocument
+		}
 		return err
 	}
 	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {

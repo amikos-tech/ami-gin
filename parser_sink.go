@@ -40,19 +40,19 @@ func (b *GINBuilder) MarkPresent(state *documentBuildState, canonicalPath string
 }
 
 func (b *GINBuilder) StageScalar(state *documentBuildState, canonicalPath string, token any) error {
-	return b.stageScalarToken(canonicalPath, token, state)
+	return tagStageError(b.stageScalarToken(canonicalPath, token, state))
 }
 
 func (b *GINBuilder) StageJSONNumber(state *documentBuildState, canonicalPath, raw string) error {
-	return b.stageJSONNumberLiteral(canonicalPath, raw, state)
+	return tagStageError(b.stageJSONNumberLiteral(canonicalPath, raw, state))
 }
 
 func (b *GINBuilder) StageNativeNumeric(state *documentBuildState, canonicalPath string, v any) error {
-	return b.stageNativeNumeric(canonicalPath, v, state)
+	return tagStageError(b.stageNativeNumeric(canonicalPath, v, state))
 }
 
 func (b *GINBuilder) StageMaterialized(state *documentBuildState, path string, value any, allowTransform bool) error {
-	return b.stageMaterializedValue(path, value, state, allowTransform)
+	return tagStageError(b.stageMaterializedValue(path, value, state, allowTransform))
 }
 
 func (b *GINBuilder) ShouldBufferForTransform(canonicalPath string) bool {
