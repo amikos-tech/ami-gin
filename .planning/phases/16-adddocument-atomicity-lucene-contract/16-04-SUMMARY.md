@@ -30,7 +30,7 @@ key-files:
 key-decisions:
   - "Implemented marker enforcement with POSIX awk in Makefile rather than a custom analyzer or golangci plugin."
   - "Kept the existing golangci-lint GitHub Action path and added a separate marker-check step in the lint job."
-  - "Did not modify unowned gin_test.go lint findings; recorded the blocker as deferred per the plan scope boundary."
+  - "The unowned gin_test.go goconst finding discovered during plan verification was resolved during the Wave 2 integration gate."
 
 patterns-established:
   - "Marker lines must directly precede a function declaration."
@@ -73,7 +73,7 @@ Each task was committed atomically:
 
 - `Makefile` - Added the marker policy target, made `lint` depend on it, and updated lint help text.
 - `.github/workflows/ci.yml` - Added the explicit CI lint-job marker check step.
-- `.planning/phases/16-adddocument-atomicity-lucene-contract/deferred-items.md` - Recorded an out-of-scope lint blocker discovered during verification.
+- `.planning/phases/16-adddocument-atomicity-lucene-contract/deferred-items.md` - Records that the lint blocker discovered during verification was resolved during Wave 2 integration.
 - `.planning/phases/16-adddocument-atomicity-lucene-contract/16-04-SUMMARY.md` - Captures execution results and verification evidence.
 
 ## Decisions Made
@@ -84,24 +84,24 @@ Each task was committed atomically:
 
 ## Deviations from Plan
 
-### Deferred Issues
+### Integration Issues
 
-**1. [Scope Boundary] `make lint` blocked by unowned goconst finding**
+**1. [Resolved] `make lint` initially blocked by goconst finding**
 - **Found during:** Task 1 verification and plan-level verification
 - **Issue:** `make lint` reaches `golangci-lint run` and fails on `gin_test.go:3298` because the string `unsupported mixed numeric promotion at $.score` appears three times.
-- **Handling:** Did not modify `gin_test.go` because plan 16-04 scope owns only `Makefile` and `.github/workflows/ci.yml`, and the prompt explicitly reserves `gin_test.go` for another executor.
-- **Files modified:** `.planning/phases/16-adddocument-atomicity-lucene-contract/deferred-items.md`
-- **Verification:** `make check-validator-markers` passes; the CI workflow contains the required marker-check step.
-- **Committed in:** `a6c047e`
+- **Handling:** The plan executor left `gin_test.go` untouched to respect concurrent file ownership. The orchestrator resolved it after Wave 2 by extracting a shared test constant.
+- **Files modified:** `gin_test.go`, `.planning/phases/16-adddocument-atomicity-lucene-contract/deferred-items.md`
+- **Verification:** `make check-validator-markers` passes; `make lint` passes after the integration fix.
+- **Committed in:** post-plan Wave 2 integration fix
 
 ---
 
-**Total deviations:** 0 auto-fixed; 1 deferred out-of-scope verification blocker.
-**Impact on plan:** Static marker enforcement is implemented locally and in CI. The full `make lint` command remains blocked by unrelated test-file lint debt outside plan 16-04 ownership.
+**Total deviations:** 0 auto-fixed; 1 integration issue resolved after plan completion.
+**Impact on plan:** Static marker enforcement is implemented locally and in CI, and full lint is green after the Wave 2 integration fix.
 
 ## Issues Encountered
 
-- `make lint` did not complete because of the unowned `gin_test.go` goconst issue documented above.
+- `make lint` initially failed on an unowned `gin_test.go` goconst issue; this was resolved during the Wave 2 integration gate.
 - Concurrent plan 16-02 commits landed during execution; plan 16-04 staging was kept limited to its owned files after verifying commit scopes.
 
 ## User Setup Required
@@ -113,7 +113,7 @@ None - no external service configuration required.
 - `make check-validator-markers` - PASS
 - Temp-copy negative checks for a missing marker and an `error` return on a marked function - PASS
 - `rg -n 'Check validator markers|make check-validator-markers' .github/workflows/ci.yml` - PASS
-- `make lint` - FAIL, blocked by the out-of-scope `gin_test.go:3298` goconst finding documented above
+- `make lint` - PASS after the Wave 2 integration fix
 
 ## Known Stubs
 
@@ -121,7 +121,7 @@ None.
 
 ## Next Phase Readiness
 
-The marker/signature policy is active in local lint and the CI lint job. Full lint green status still requires the unowned `gin_test.go` goconst finding to be resolved by its owning work.
+The marker/signature policy is active in local lint and the CI lint job. Wave 3 can rely on `make lint` running both the marker policy and golangci-lint successfully.
 
 ## Self-Check: PASSED
 

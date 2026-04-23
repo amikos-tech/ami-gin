@@ -13,6 +13,8 @@ import (
 	"github.com/amikos-tech/ami-gin/logging"
 )
 
+const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion at $.score"
+
 func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 	t.Helper()
 	builder, err := NewBuilder(config, numRGs)
@@ -3295,7 +3297,7 @@ func TestValidateStagedPathsRejectsLossyPromotionBeforeMerge(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}
-	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
 		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
 	}
 	if builder.numDocs != 1 {
@@ -3319,7 +3321,7 @@ func TestValidateStagedPathsRejectsUnsafeIntIntoFloatPath(t *testing.T) {
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}
-	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
 		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
 	}
 }
@@ -3334,7 +3336,7 @@ func TestMixedNumericPathRejectsLossyPromotionLeavesBuilderUsable(t *testing.T) 
 	if err == nil {
 		t.Fatal("expected lossy mixed numeric promotion to fail")
 	}
-	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
 		t.Fatalf("AddDocument error = %q, want %q", got, want)
 	}
 
