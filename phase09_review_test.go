@@ -249,8 +249,8 @@ func TestPhase09FinalizeOmitsNeverMaterializedRepresentations(t *testing.T) {
 	}()
 
 	before := builder.Finalize()
-	if before.Header.NumDocs != 0 {
-		t.Fatalf("Header.NumDocs = %d, want 0 when all soft transformer failures skip documents", before.Header.NumDocs)
+	if before.Header.NumDocs != 2 {
+		t.Fatalf("Header.NumDocs = %d, want 2 when raw documents survive companion soft failures", before.Header.NumDocs)
 	}
 	if got := before.Representations("$.timestamp"); got != nil {
 		t.Fatalf("Representations($.timestamp) = %v, want nil when no companion values materialize", got)
@@ -258,16 +258,16 @@ func TestPhase09FinalizeOmitsNeverMaterializedRepresentations(t *testing.T) {
 	if len(before.representations) != 0 {
 		t.Fatalf("len(idx.representations) = %d, want 0 when no companion values materialize", len(before.representations))
 	}
-	if _, ok := before.pathLookup["$.timestamp"]; ok {
-		t.Fatal(`pathLookup["$.timestamp"] present, want all soft-rejected documents skipped`)
+	if _, ok := before.pathLookup["$.timestamp"]; !ok {
+		t.Fatal(`pathLookup["$.timestamp"] missing, want raw documents kept when companion soft-fails`)
 	}
 
 	after := mustRoundTripIndex(t, before)
-	if after.Header.NumDocs != 0 {
-		t.Fatalf("round-tripped Header.NumDocs = %d, want 0", after.Header.NumDocs)
+	if after.Header.NumDocs != 2 {
+		t.Fatalf("round-tripped Header.NumDocs = %d, want 2", after.Header.NumDocs)
 	}
-	if _, ok := after.pathLookup["$.timestamp"]; ok {
-		t.Fatal(`round-tripped pathLookup["$.timestamp"] present, want all soft-rejected documents skipped`)
+	if _, ok := after.pathLookup["$.timestamp"]; !ok {
+		t.Fatal(`round-tripped pathLookup["$.timestamp"] missing, want raw documents kept`)
 	}
 }
 

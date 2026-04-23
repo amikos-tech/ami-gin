@@ -88,6 +88,21 @@ func authoredParityFixtures() []parityFixture {
 				[]byte(`{"created_at": "2024-04-10T23:59:59Z", "email": "david@EXAMPLE.COM"}`),
 			},
 		},
+		{
+			Name: "transformers-soft-fail-wire",
+			Config: func() GINConfig {
+				cfg := DefaultConfig()
+				if err := WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft))(&cfg); err != nil {
+					panic(err)
+				}
+				return cfg
+			},
+			NumRGs: 2,
+			JSONDocs: [][]byte{
+				[]byte(`{"email":"Alice@Example.COM"}`),
+				[]byte(`{"email":"Bob@Example.COM"}`),
+			},
+		},
 	}
 }
 

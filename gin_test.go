@@ -537,6 +537,24 @@ func TestRunMergeWithRecoverLogsAllowlistedInternalPanicMessage(t *testing.T) {
 	}
 }
 
+func TestRunMergeWithRecoverLogsRuntimePanicMessage(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+
+	err := runMergeWithRecover(logger, func() {
+		var values []int
+		_ = values[1]
+	})
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+	if value, ok := tragicAttrValue(logger.entries[0].attrs, "panic_message"); !ok || !strings.Contains(value, "index out of range") {
+		t.Fatalf("panic_message attr = %q, %v; want runtime panic detail", value, ok)
+	}
+}
+
 func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	builder.testHooks.mergeStagedPathsPanicHook = func() { panic("simulated merge panic") }
@@ -570,9 +588,35 @@ func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
 		t.Fatalf("AddDocument refusal = %q, want tragic closure context", err.Error())
 	}
 
-	idx := builder.Finalize()
-	if _, err := Encode(idx); err != nil {
-		t.Fatalf("Encode(Finalize() after tragedy) error = %v", err)
+	if idx := builder.Finalize(); idx != nil {
+		t.Fatal("Finalize() after tragedy = non-nil, want nil")
+	}
+}
+
+func TestFinalizeAfterTragedyReturnsNilAndLogs(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+	config, err := NewConfig(WithLogger(logger))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder := mustNewBuilder(t, config, 1)
+	builder.tragicErr = stderrors.New("simulated tragic failure")
+
+	if idx := builder.Finalize(); idx != nil {
+		t.Fatal("Finalize() after tragedy = non-nil, want nil")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.level != logging.LevelError {
+		t.Fatalf("captured log level = %v, want %v", entry.level, logging.LevelError)
+	}
+	if entry.message != "builder finalize refused after tragic failure" {
+		t.Fatalf("captured message = %q, want finalize refusal", entry.message)
+	}
+	if value, ok := tragicAttrValue(entry.attrs, "error.type"); !ok || value != "integrity" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "integrity")
 	}
 }
 

@@ -275,7 +275,9 @@ func As(alias string, value any) RepresentationValue {
 
 // FieldTransformer transforms a value before indexing.
 // Returns (transformedValue, ok). If ok=false, the companion representation
-// follows the registration's configured failure mode. Hard is the default.
+// follows the registration's configured failure mode. Hard rejects the
+// document; soft skips only the derived representation and keeps the source
+// document indexed.
 type FieldTransformer func(value any) (any, bool)
 
 type IngestFailureMode string
@@ -285,7 +287,18 @@ const (
 	IngestFailureSoft IngestFailureMode = "soft"
 )
 
+// TransformerFailureMode is kept as a deprecated source-compatible alias for
+// pre-phase-17 callers.
+//
+// Deprecated: use IngestFailureMode.
+type TransformerFailureMode = IngestFailureMode
+
 const (
+	// Deprecated: use IngestFailureHard.
+	TransformerFailureStrict = IngestFailureHard
+	// Deprecated: use IngestFailureSoft.
+	TransformerFailureSoft = IngestFailureSoft
+
 	transformerFailureWireStrict = IngestFailureMode("strict")
 	transformerFailureWireSoft   = IngestFailureMode("soft_fail")
 )
@@ -352,7 +365,7 @@ func resolveTransformerOptions(opts ...TransformerOption) (transformerRegistrati
 func WithTransformerFailureMode(mode IngestFailureMode) TransformerOption {
 	return func(options *transformerRegistrationOptions) error {
 		if err := validateIngestFailureMode(mode); err != nil {
-			return errors.Errorf("invalid transformer failure mode %q: %v", mode, err)
+			return errors.Wrapf(err, "invalid transformer failure mode %q", mode)
 		}
 		options.failureMode = normalizeIngestFailureMode(mode)
 		return nil

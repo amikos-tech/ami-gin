@@ -738,8 +738,33 @@ func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want invalid transformer failure mode")
 	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
 	if !strings.Contains(err.Error(), "invalid transformer failure mode") {
 		t.Fatalf("readConfig() error = %v, want invalid transformer failure mode", err)
+	}
+}
+
+func TestReadConfigRejectsCorruptJSONAsInvalidFormat(t *testing.T) {
+	var buf bytes.Buffer
+	payload := []byte(`{"transformers":[`)
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(payload); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want corrupt JSON rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "unmarshal config") {
+		t.Fatalf("readConfig() error = %v, want unmarshal config context", err)
 	}
 }
 

@@ -1676,7 +1676,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 
 	var sc SerializedConfig
 	if err := json.Unmarshal(data, &sc); err != nil {
-		return nil, errors.Wrap(err, "unmarshal config")
+		return nil, errors.Wrapf(ErrInvalidFormat, "unmarshal config: %v", err)
 	}
 
 	cfg := &GINConfig{
@@ -1698,7 +1698,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, path := range sc.FTSPaths {
 			canonicalPath, err := canonicalizeSupportedPath(path)
 			if err != nil {
-				return nil, errors.Wrapf(err, "canonicalize FTS path %q", path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize FTS path %q: %v", path, err)
 			}
 			if firstPath, exists := seenFTSPaths[canonicalPath]; exists {
 				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
@@ -1712,7 +1712,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
-				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize transformer path %q: %v", spec.Path, err)
 			}
 			alias := spec.Alias
 			if alias == "" {
@@ -1735,7 +1735,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
-				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
 			}
 			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
 				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
@@ -1744,7 +1744,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, errors.Wrap(err, "validate config")
+		return nil, errors.Wrapf(ErrInvalidFormat, "validate config: %v", err)
 	}
 
 	// Builder-only ingest routing fields are not serialized. Restore their

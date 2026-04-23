@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/pkg/errors"
 )
 
@@ -69,6 +70,22 @@ func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
 		t.Fatal("NewConfig(WithTransformerFailureMode(invalid)) error = nil, want validation failure")
 	} else if !strings.Contains(err.Error(), "invalid transformer failure mode") {
 		t.Fatalf("transformer mode error = %v, want invalid transformer failure mode", err)
+	}
+}
+
+func TestDeprecatedTransformerFailureAliasesRemainAccepted(t *testing.T) {
+	cfg, err := NewConfig(
+		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(TransformerFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() with deprecated transformer aliases error = %v", err)
+	}
+	specs := cfg.representationSpecs["$.email"]
+	if len(specs) != 1 {
+		t.Fatalf("representationSpecs[$.email] len = %d, want 1", len(specs))
+	}
+	if got := specs[0].Transformer.FailureMode; got != IngestFailureSoft {
+		t.Fatalf("Transformer.FailureMode = %q, want %q", got, IngestFailureSoft)
 	}
 }
 
@@ -156,6 +173,38 @@ func softFailureConfig(t *testing.T, opts ...ConfigOption) GINConfig {
 	return config
 }
 
+type softSkipLogEntry struct {
+	level   logging.Level
+	message string
+	attrs   []logging.Attr
+}
+
+type softSkipInfoLogger struct {
+	entries []softSkipLogEntry
+}
+
+func (l *softSkipInfoLogger) Enabled(_ logging.Level) bool { return true }
+
+func (l *softSkipInfoLogger) Log(level logging.Level, message string, attrs ...logging.Attr) {
+	if level != logging.LevelInfo {
+		return
+	}
+	l.entries = append(l.entries, softSkipLogEntry{
+		level:   level,
+		message: message,
+		attrs:   attrs,
+	})
+}
+
+func softSkipAttrValue(attrs []logging.Attr, key string) (string, bool) {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value, true
+		}
+	}
+	return "", false
+}
+
 func TestParserFailureModeHardReturnsParseError(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 	err := builder.AddDocument(DocID(0), []byte("not-json"))
@@ -182,6 +231,38 @@ func TestParserFailureModeSoftSkipsOrdinaryParseError(t *testing.T) {
 		t.Fatalf("Header.NumDocs = %d, want 1", idx.Header.NumDocs)
 	}
 	requireRows(t, idx, EQ("$.name", "kept"), []int{0})
+}
+
+func TestSoftSkippedDocumentsAreObservable(t *testing.T) {
+	logger := &softSkipInfoLogger{}
+	config := softFailureConfig(
+		t,
+		WithParserFailureMode(IngestFailureSoft),
+		WithLogger(logger),
+	)
+	builder := mustNewBuilder(t, config, 2)
+
+	err := builder.AddDocument(DocID(0), []byte("not-json"))
+	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+	if builder.SoftSkippedDocuments() != 1 {
+		t.Fatalf("SoftSkippedDocuments() = %d, want 1", builder.SoftSkippedDocuments())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured info log entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.message != "builder skipped document after soft parser failure" {
+		t.Fatalf("info log message = %q, want parser soft-skip message", entry.message)
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "operation"); !ok || value != "builder.add_document" {
+		t.Fatalf("operation attr = %q, %v; want %q, true", value, ok, "builder.add_document")
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "status"); !ok || value != "skipped" {
+		t.Fatalf("status attr = %q, %v; want %q, true", value, ok, "skipped")
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != "deserialization" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "deserialization")
+	}
 }
 
 func TestParserFailureModeSoftKeepsContractViolationsHard(t *testing.T) {
@@ -457,43 +538,71 @@ func TestTransformerFailureModeHardReturnsError(t *testing.T) {
 	}
 }
 
-func TestTransformerFailureModeSoftSkipsWholeDocument(t *testing.T) {
+func TestTransformerFailureModeSoftKeepsRawDocumentAndSkipsCompanion(t *testing.T) {
 	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
 	builder := mustNewBuilder(t, config, 2)
 
 	err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
-	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
-
-	idx := requireSingleDenseValidDocument(t, builder, DocID(1), `{"email":"ok@example.com"}`)
-	rawPathID := requirePathID(t, idx, "$.email")
-	if _, ok := idx.NumericIndexes[rawPathID]; ok {
-		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	if err != nil {
+		t.Fatalf("AddDocument transformer soft failure = %v, want nil", err)
 	}
-	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0})
+	if builder.SoftSkippedDocuments() != 0 {
+		t.Fatalf("SoftSkippedDocuments() = %d, want 0", builder.SoftSkippedDocuments())
+	}
+	if got := builder.docIDToPos[DocID(0)]; got != 0 {
+		t.Fatalf("docIDToPos[0] = %d, want 0", got)
+	}
+	if builder.numDocs != 1 || builder.nextPos != 1 {
+		t.Fatalf("builder advanced = (numDocs=%d nextPos=%d), want (1,1)", builder.numDocs, builder.nextPos)
+	}
+
+	if err := builder.AddDocument(DocID(1), []byte(`{"email":"ok@example.com"}`)); err != nil {
+		t.Fatalf("valid AddDocument after transformer soft failure: %v", err)
+	}
+	if got := builder.docIDToPos[DocID(1)]; got != 1 {
+		t.Fatalf("docIDToPos[1] = %d, want 1", got)
+	}
+
+	idx := builder.Finalize()
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; !ok {
+		t.Fatal(`NumericIndexes["$.email"] missing, want raw numeric value retained`)
+	}
+	requireRows(t, idx, EQ("$.email", int64(42)), []int{0})
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{1})
 }
 
-func TestTransformerFailureModeSoftDiscardsPartiallyStagedDocument(t *testing.T) {
+func TestTransformerFailureModeSoftKeepsPartiallyStagedDocumentWithoutCompanion(t *testing.T) {
 	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
 	builder := mustNewBuilder(t, config, 2)
 
 	err := builder.AddDocument(DocID(0), []byte(`{"before":"not-finalized","email":42}`))
-	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+	if err != nil {
+		t.Fatalf("AddDocument partial transformer soft failure = %v, want nil", err)
+	}
+	if got := builder.docIDToPos[DocID(0)]; got != 0 {
+		t.Fatalf("docIDToPos[0] = %d, want 0", got)
+	}
+	if builder.numDocs != 1 || builder.nextPos != 1 {
+		t.Fatalf("builder advanced = (numDocs=%d nextPos=%d), want (1,1)", builder.numDocs, builder.nextPos)
+	}
 
 	if err := builder.AddDocument(DocID(1), []byte(`{"before":"kept","email":"ok@example.com"}`)); err != nil {
 		t.Fatalf("valid AddDocument after transformer soft skip: %v", err)
 	}
-	if got := builder.docIDToPos[DocID(1)]; got != 0 {
-		t.Fatalf("docIDToPos[1] = %d, want 0", got)
+	if got := builder.docIDToPos[DocID(1)]; got != 1 {
+		t.Fatalf("docIDToPos[1] = %d, want 1", got)
 	}
 
 	idx := builder.Finalize()
-	requireRows(t, idx, EQ("$.before", "not-finalized"), []int{})
+	requireRows(t, idx, EQ("$.before", "not-finalized"), []int{0})
 	rawPathID := requirePathID(t, idx, "$.email")
-	if _, ok := idx.NumericIndexes[rawPathID]; ok {
-		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	if _, ok := idx.NumericIndexes[rawPathID]; !ok {
+		t.Fatal(`NumericIndexes["$.email"] missing, want raw numeric value retained`)
 	}
-	requireRows(t, idx, EQ("$.before", "kept"), []int{0})
-	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0})
+	requireRows(t, idx, EQ("$.email", int64(42)), []int{0})
+	requireRows(t, idx, EQ("$.before", "kept"), []int{1})
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{1})
 }
 
 func buildSoftAttemptedIndex(t *testing.T, config GINConfig, docs []atomicityDoc, numRGs int) []byte {
@@ -527,6 +636,7 @@ func TestSoftFailureModesMatchCleanCorpus(t *testing.T) {
 	}
 	cleanOnly := []atomicityDoc{
 		{docID: DocID(0), doc: []byte(`{"email":"alice@example.com","score":9007199254740993}`)},
+		{docID: DocID(1), doc: []byte(`{"before":"not-finalized","email":42,"score":9007199254740992}`)},
 		{docID: DocID(4), doc: []byte(`{"email":"carol@example.com","score":9007199254740992}`)},
 	}
 
@@ -537,7 +647,7 @@ func TestSoftFailureModesMatchCleanCorpus(t *testing.T) {
 	}
 }
 
-func TestAllSoftFailureModesSilentlyDropFailures(t *testing.T) {
+func TestAllSoftFailureModesApplyConfiguredScope(t *testing.T) {
 	config := softFailureConfig(
 		t,
 		WithParserFailureMode(IngestFailureSoft),
@@ -550,36 +660,38 @@ func TestAllSoftFailureModesSilentlyDropFailures(t *testing.T) {
 		t.Fatalf("seed AddDocument: %v", err)
 	}
 
-	// This silent-drop behavior is opt-in: callers explicitly configured parser,
-	// transformer, and numeric layers as soft. Phase 18 adds structured reporting.
-	softFailures := []struct {
-		docID DocID
-		doc   []byte
-	}{
-		{docID: DocID(1), doc: []byte(`not-json`)},
-		{docID: DocID(2), doc: []byte(`{"email":42}`)},
-		{docID: DocID(3), doc: []byte(`{"email":"float@example.com","score":1.5}`)},
+	err := builder.AddDocument(DocID(1), []byte(`not-json`))
+	requireSoftSkippedDocument(t, builder, err, DocID(1), 1, 1)
+
+	if err := builder.AddDocument(DocID(2), []byte(`{"email":42}`)); err != nil {
+		t.Fatalf("transformer soft AddDocument: %v", err)
 	}
-	for _, failure := range softFailures {
-		err := builder.AddDocument(failure.docID, failure.doc)
-		requireSoftSkippedDocument(t, builder, err, failure.docID, 1, 1)
+	if got := builder.docIDToPos[DocID(2)]; got != 1 {
+		t.Fatalf("docIDToPos[2] = %d, want 1", got)
 	}
+
+	err = builder.AddDocument(DocID(3), []byte(`{"email":"float@example.com","score":1.5}`))
+	requireSoftSkippedDocument(t, builder, err, DocID(3), 2, 2)
 
 	if err := builder.AddDocument(DocID(4), []byte(`{"email":"final@example.com","score":9007199254740992}`)); err != nil {
 		t.Fatalf("final AddDocument: %v", err)
 	}
-	if got := builder.docIDToPos[DocID(4)]; got != 1 {
-		t.Fatalf("docIDToPos[4] = %d, want 1", got)
+	if builder.SoftSkippedDocuments() != 2 {
+		t.Fatalf("SoftSkippedDocuments() = %d, want 2", builder.SoftSkippedDocuments())
+	}
+	if got := builder.docIDToPos[DocID(4)]; got != 2 {
+		t.Fatalf("docIDToPos[4] = %d, want 2", got)
 	}
 	idx := builder.Finalize()
-	if idx.Header.NumDocs != 2 {
-		t.Fatalf("Header.NumDocs = %d, want 2", idx.Header.NumDocs)
+	if idx.Header.NumDocs != 3 {
+		t.Fatalf("Header.NumDocs = %d, want 3", idx.Header.NumDocs)
 	}
-	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0, 1})
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{0, 2})
 	rawPathID := requirePathID(t, idx, "$.email")
-	if _, ok := idx.NumericIndexes[rawPathID]; ok {
-		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
+	if _, ok := idx.NumericIndexes[rawPathID]; !ok {
+		t.Fatal(`NumericIndexes["$.email"] missing, want transformer-soft raw numeric value retained`)
 	}
+	requireRows(t, idx, EQ("$.email", int64(42)), []int{1})
 	requireRows(t, idx, EQ("$.email", "float@example.com"), []int{})
 }
 

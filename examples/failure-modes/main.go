@@ -25,7 +25,8 @@ var attemptedDocuments = []attemptedDocument{
 
 const (
 	hardStoppedAfterOneDocument = "hard: stopped after 1 indexed document"
-	softIndexedTwoDocuments     = "soft: indexed 2 documents"
+	softSkippedTwoDocuments     = "soft: skipped 2 documents"
+	softIndexedThreeDocuments   = "soft: indexed 3 documents"
 	softDomainRowGroupsPrefix   = "soft: email-domain example.com row groups"
 )
 
@@ -96,18 +97,22 @@ func runSoft() error {
 		}
 	}
 
-	// The soft config accepts only DocID(0) and DocID(4); those original
-	// DocIDs pack densely into row groups [0 1] because soft skips do not
-	// consume positions.
+	// The soft config skips malformed JSON and incompatible numeric promotion,
+	// but companion transformer soft failures keep the raw source document.
+	// DocIDs therefore pack densely into row groups [0 1 2].
 	idx := builder.Finalize()
+	if builder.SoftSkippedDocuments() != 2 {
+		return errors.Errorf("soft skipped %d documents, want 2", builder.SoftSkippedDocuments())
+	}
 	result := idx.Evaluate([]gin.Predicate{
 		gin.EQ("$.email", gin.As("domain", "example.com")),
 	})
-	if idx.Header.NumDocs != 2 {
-		return errors.Errorf("soft indexed %d documents, want 2", idx.Header.NumDocs)
+	if idx.Header.NumDocs != 3 {
+		return errors.Errorf("soft indexed %d documents, want 3", idx.Header.NumDocs)
 	}
 
-	fmt.Println(softIndexedTwoDocuments)
+	fmt.Println(softSkippedTwoDocuments)
+	fmt.Println(softIndexedThreeDocuments)
 	fmt.Printf("%s %v\n", softDomainRowGroupsPrefix, result.ToSlice())
 	return nil
 }
