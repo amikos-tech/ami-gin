@@ -37,7 +37,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 ### 🚧 v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — ACTIVE
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
-- [ ] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs.
+- [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
 - [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes.
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
@@ -134,7 +134,7 @@ Plans:
 - [x] 17-01-PLAN.md — Unified public failure-mode API and parser/numeric config defaults
 - [x] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
 - [x] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
-- [ ] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
+- [x] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
 
 ### Phase 18: Structured `IngestError` + CLI integration
 **Goal**: Make per-document failures actionable by callers. Replace the current opaque wrapped-string error with a structured type that carries enough context to identify, classify, and act on failures programmatically; surface the same structure in the existing CLI summary.
@@ -192,7 +192,7 @@ Plans:
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 17. Failure-Mode Taxonomy Unification | v1.2 | 3/4 | In Progress | - |
+| 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |

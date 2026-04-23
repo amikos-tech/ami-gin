@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: executing
-stopped_at: Phase 17 Plan 17-04 executing
-last_updated: "2026-04-23T16:42:08.000Z"
+status: ready_to_discuss
+stopped_at: Phase 17 complete
+last_updated: "2026-04-23T17:08:48.000Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 15
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 28
-  completed_plans: 26
-  percent: 93
+  completed_plans: 27
+  percent: 96
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 17 — failure-mode-taxonomy-unification
+**Current focus:** Phase 18 — structured-ingesterror-cli-integration
 
 ## Current Position
 
-Phase: 17
-Plan: 17-04 executing
-Status: Phase 17 Wave 3 in progress
+Phase: 18
+Plan: Discuss phase scope
+Status: Phase 17 complete and verified; Phase 18 ready for discuss/planning
 Last activity: 2026-04-23
 
-Progress: [████████--] 75% for Phase 17 (3/4 plans executed; 4/4 plans planned and checker-verified)
+Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
 
 ## Performance Metrics
 
@@ -57,7 +57,7 @@ Progress: [████████--] 75% for Phase 17 (3/4 plans executed; 4/4
 | Phase | Plans | Status |
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
-| 17 | 4 | Executing (3/4 plans complete) |
+| 17 | 4 | Complete (4/4 plans complete) |
 | 18 | TBD | Planned (defining) |
 
 ## Accumulated Context
@@ -82,6 +82,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **16-03 atomicity proof**: `atomicity_test.go` uses a bounded 1000-document full-vs-clean property with deterministic 10% failing slots and encoded-byte equality; the public failure catalog asserts user-input failures leave `tragicErr` nil.
 - **17 planning resolution**: public `IngestFailureMode` string values are planned as `hard` and `soft`, while transformer serialization preserves legacy v9 wire tokens `strict` and `soft_fail` through private mapping.
 - **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
+- **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
 
 ### Roadmap Evolution
 
@@ -93,19 +94,21 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
   - Phase 18: Structured IngestError + CLI integration — IERR-01..03
 - DAG: 16 → 17 → 18 (strict sequence; Phases 17 and 18 only become possible because Phase 16 makes per-document failure first-class).
 - Phase 16 completed 2026-04-23 with ATOMIC-01, ATOMIC-02, and ATOMIC-03 fully covered.
-- Phase 17 planned 2026-04-23 with 4 plans across 3 waves; plan checker passed after resolving research open questions.
+- Phase 17 completed 2026-04-23 with 4/4 plans complete, verification passed, and FAIL-01/FAIL-02 satisfied.
 - v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Execute Phase 17 failure-mode taxonomy unification
+- Discuss and plan Phase 18 structured `IngestError` + CLI integration
+- Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
 ### Blockers/Concerns
 
 - The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation is captured in Phase 16 plans: `// MUST_BE_CHECKED_BY_VALIDATOR` markers plus local and CI checks for merge-layer error returns.
 - Phase 16 integration gate is green: `make test`, `make lint`, and `go build ./...` passed after all four plans.
+- Phase 17 integration gate is green: `go test ./...`, `make test`, `make lint`, and `go build ./...` passed. Advisory review warnings are documented in `17-REVIEW.md` and residual risks in `17-VERIFICATION.md`.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
 
@@ -136,8 +139,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-23T16:41:37.000Z
-Stopped at: Phase 17 Wave 3 ready
-Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-04-PLAN.md
+Last session: 2026-04-23T17:08:48.000Z
+Stopped at: Phase 17 complete
+Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-VERIFICATION.md
 
-**Next step:** Execute Phase 17 Wave 3 plan 17-04.
+**Next step:** Discuss Phase 18 structured `IngestError` + CLI integration.

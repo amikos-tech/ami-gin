@@ -7,7 +7,7 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phase 16 complete; Phases 17-18 planned
+- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phases 16-17 complete; Phase 18 ready to discuss/plan
 
 ## Current Milestone: v1.2 Ingest Correctness & Per-Document Isolation
 
@@ -15,7 +15,7 @@
 
 **Target themes:**
 - **AddDocument atomicity (Lucene contract)** — extend the existing two-phase `validateStagedPaths` / `mergeStagedPaths` pattern so the merge step becomes infallible by construction. Rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations only. `recover()` belt-and-suspenders converts any reachable panic to `tragicErr`. Verified by an atomicity property test that interleaves guaranteed-failing documents with a clean corpus and asserts byte-identical encoded output.
-- **Failure-mode taxonomy unification** — replace the existing `TransformerFailureMode` (deliberate breaking rename) with a unified `IngestFailureMode` (`Hard`/`Soft`) that extends to parser and numeric-promotion layers. New `WithParserFailureMode` and `WithNumericFailureMode` config knobs, default `Hard` (preserves current behavior).
+- **Failure-mode taxonomy unification** — complete in Phase 17. The existing `TransformerFailureMode` public symbols were replaced by unified `IngestFailureMode` (`Hard`/`Soft`) across parser, transformer, and numeric-promotion layers. New `WithParserFailureMode` and `WithNumericFailureMode` config knobs default `Hard` and opt-in `Soft` skips whole failed documents.
 - **Structured `IngestError` + CLI integration** — exported error type carrying `Path`, `Layer`, `Cause`, `Value`; `errors.As`-friendly. The `gin-index experiment --on-error continue` summary reports failures grouped by `Layer` with a structured sample, in both text and `--json` modes.
 
 **Architectural strategy:** validate-before-mutate (Strategy C from brainstorming), with Lucene's per-document contract as the target. Industry precedents reviewed: Lucene IndexWriter (closest analog), Tantivy, Bleve, RocksDB WriteBatch, PostgreSQL GIN.
@@ -63,10 +63,11 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - ✓ Observability seams (Logger/Telemetry/Signals, slog/stdlib adapters, frozen attribute vocabulary, `EvaluateContext`/`BuildFromParquetContext`) — validated in Phase 14
 - ✓ Streaming JSONL `experiment` CLI subcommand with summary, predicate test, JSON mode, sample/error-tolerant flags — validated in Phase 15
 - ✓ AddDocument atomicity with validator-backed infallible merge, `tragicErr` recovery, marker enforcement, and full-vs-clean encoded property coverage — validated in Phase 16
+- ✓ Unified ingest failure-mode taxonomy with `IngestFailureMode`, parser/numeric config knobs, v9 transformer metadata compatibility, whole-document soft skips, changelog migration note, and deterministic failure-modes example — validated in Phase 17
 
 ### Active
 
-- **v1.2 remaining — FAIL-01..02 and IERR-01..03.** See `.planning/REQUIREMENTS.md` for the full list and current status across phases 17–18.
+- **v1.2 remaining — IERR-01..03.** FAIL-01 and FAIL-02 were validated in Phase 17; see `.planning/REQUIREMENTS.md` for the current status.
 
 ### Out of Scope
 
@@ -93,6 +94,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - v1.1 functionally complete 2026-04-22 (PRs #29 and #30); not formally closed via `/gsd-complete-milestone` but advanced into v1.2
 - v1.2 opened 2026-04-23 with brainstorming-locked design: validate-before-mutate atomicity strategy, Lucene per-document contract target, deliberate `TransformerFailureMode` → `IngestFailureMode` rename, `IngestError.Value` not redacted by library
 - Phase 16 completed AddDocument atomicity on 2026-04-23: ordinary public failures are non-tragic, failed documents are isolated by encoded-byte property tests, and marker checks enforce the validator/merge contract locally and in CI
+- Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -116,7 +118,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 | Leave serialization compaction until last | Compaction should follow functional changes so the encoded layout stabilizes once | Done |
 | Extract parser seam as a pure refactor before SIMD work | Land the seam in v1.1; allow SIMD to land in a later milestone without touching builder internals | Done |
 | Adopt validate-before-mutate atomicity (Strategy C) for v1.2 | Smallest diff that delivers the Lucene per-document contract; leverages existing two-phase architecture | Done in Phase 16 |
-| Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Pending v1.2 |
+| Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Done in Phase 17 |
 | Renumber SIMD work to v1.3 phases 19–20 | v1.3 SIMD remains blocked on upstream; preserve chronological phase numbering for v1.2 ship-order | Done |
 
 ## Evolution
@@ -135,4 +137,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-23 — Phase 16 AddDocument atomicity complete and verified; v1.2 continues with failure-mode taxonomy and structured IngestError work.*
+*Last updated: 2026-04-23 — Phase 17 failure-mode taxonomy complete and verified; v1.2 continues with structured IngestError work.*
