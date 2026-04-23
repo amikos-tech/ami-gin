@@ -128,7 +128,13 @@ Plans:
   2. New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` thread through to the parser and numeric layers; default `Hard` for both, preserving current behavior.
   3. `Soft` mode at any layer skips the failing document silently and returns no error to the caller; per-layer test coverage matches the existing transformer-failure-mode tests.
   4. An `examples/failure-modes/main.go` demonstrates one config that rejects on any failure and one that skips on any failure, with predictable output for both.
-**Plans**: TBD (planned during `/gsd-discuss-phase 17` and `/gsd-plan-phase 17`)
+**Plans**: 4 plans
+
+Plans:
+- [ ] 17-01-PLAN.md — Unified public failure-mode API and parser/numeric config defaults
+- [ ] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
+- [ ] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
+- [ ] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
 
 ### Phase 18: Structured `IngestError` + CLI integration
 **Goal**: Make per-document failures actionable by callers. Replace the current opaque wrapped-string error with a structured type that carries enough context to identify, classify, and act on failures programmatically; surface the same structure in the existing CLI summary.
