@@ -506,6 +506,28 @@ func TestInvalidRegexParams(t *testing.T) {
 	}
 }
 
+func TestRejectsNegativeRegexGroup(t *testing.T) {
+	tests := []struct {
+		name string
+		id   TransformerID
+	}{
+		{name: "RegexExtract", id: TransformerRegexExtract},
+		{name: "RegexExtractInt", id: TransformerRegexExtractInt},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReconstructTransformer(tt.id, json.RawMessage(`{"pattern":"(\\w+)","group":-1}`))
+			if err == nil {
+				t.Fatal("expected error for negative regex group")
+			}
+			if err.Error() != "regex group must be non-negative" {
+				t.Fatalf("unexpected error = %v", err)
+			}
+		})
+	}
+}
+
 func TestMissingCustomDateLayout(t *testing.T) {
 	_, err := ReconstructTransformer(TransformerCustomDateToEpochMs, json.RawMessage(`{}`))
 	if err == nil {

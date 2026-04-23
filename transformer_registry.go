@@ -113,6 +113,9 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
 		}
+		if p.Group < 0 {
+			return nil, errors.New("regex group must be non-negative")
+		}
 		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
 		if err != nil {
 			return nil, errors.Wrap(err, "compile regex pattern")
@@ -123,7 +126,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 				return nil, false
 			}
 			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
+			if p.Group < 0 || len(matches) <= p.Group {
 				return nil, false
 			}
 			return matches[p.Group], true
@@ -133,6 +136,9 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
 		}
+		if p.Group < 0 {
+			return nil, errors.New("regex group must be non-negative")
+		}
 		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
 		if err != nil {
 			return nil, errors.Wrap(err, "compile regex pattern")
@@ -143,7 +149,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 				return nil, false
 			}
 			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
+			if p.Group < 0 || len(matches) <= p.Group {
 				return nil, false
 			}
 			n, err := parseFloat(matches[p.Group])
