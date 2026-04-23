@@ -422,26 +422,25 @@ func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
 	}
 }
 
-func TestAddDocumentRefusesAfterMergeFailurePoisonsBuilder(t *testing.T) {
+func TestAddDocumentRefusesAfterTragicFailure(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
 		t.Fatalf("AddDocument(seed) failed: %v", err)
 	}
 
-	// Simulate a mid-loop mergeStagedPaths failure by poisoning the builder
-	// directly. The natural trigger path (mixed numeric promotion) is caught
-	// by validateStagedPaths' preview before mergeStagedPaths runs, so poison
-	// is defensive; we still need to prove the refusal contract.
-	builder.poisonErr = stderrors.New("simulated merge failure")
+	// Simulate an internal-invariant tragedy directly. The natural
+	// user-input trigger path is caught before mergeStagedPaths runs, so
+	// tragic failure is defensive; we still need to prove the refusal contract.
+	builder.tragicErr = stderrors.New("simulated tragic failure")
 
 	err := builder.AddDocument(1, []byte(`{"name":"bob"}`))
 	if err == nil {
-		t.Fatal("AddDocument after poison = nil, want wrapped poison error")
+		t.Fatal("AddDocument after tragedy = nil, want wrapped tragic error")
 	}
-	if !strings.Contains(err.Error(), "builder poisoned") {
-		t.Fatalf("AddDocument error = %q, want 'builder poisoned' context", err.Error())
+	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
+		t.Fatalf("AddDocument error = %q, want tragic closure context", err.Error())
 	}
-	if !strings.Contains(err.Error(), "simulated merge failure") {
+	if !strings.Contains(err.Error(), "simulated tragic failure") {
 		t.Fatalf("AddDocument error = %q, want original cause preserved", err.Error())
 	}
 }
