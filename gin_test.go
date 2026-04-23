@@ -522,7 +522,7 @@ func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
 
 func TestRunMergeWithRecoverLogsAllowlistedInternalPanicMessage(t *testing.T) {
 	logger := &tragicCaptureLogger{}
-	message := "validator missed unsupported mixed numeric promotion at $.score"
+	message := "validator missed future invariant at $.score"
 
 	err := runMergeWithRecover(logger, func() { panic(pkgerrors.New(message)) })
 	if err == nil {

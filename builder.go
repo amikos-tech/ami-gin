@@ -17,6 +17,8 @@ import (
 
 const maxExactFloatInt = int64(1 << 53)
 const maxInt64AsFloat64 = float64(1 << 63) // upper bound for float64→int64; math.MaxInt64 rounds up to this
+const validatorMissedPanicPrefix = "validator missed "
+const validatorMissedMixedNumericPromotion = validatorMissedPanicPrefix + "unsupported mixed numeric promotion"
 
 type GINBuilder struct {
 	config     GINConfig
@@ -373,14 +375,7 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
 	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
 		return err
 	}
-	if err := b.validateStagedPaths(state); err != nil {
-		return err
-	}
-	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
-		b.tragicErr = err
-		return err
-	}
-	return nil
+	return b.commitStagedPaths(state)
 }
 
 func ensureDecoderEOF(decoder *json.Decoder) error {
@@ -715,11 +710,7 @@ func canRepresentIntAsExactFloat(value int64) bool {
 }
 
 func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
-	if err := b.validateStagedPaths(state); err != nil {
-		return err
-	}
-	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
-		b.tragicErr = err
+	if err := b.commitStagedPaths(state); err != nil {
 		return err
 	}
 
@@ -733,6 +724,17 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		b.maxRGID = pos
 	}
 	b.numDocs++
+	return nil
+}
+
+func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
+	if err := b.validateStagedPaths(state); err != nil {
+		return err
+	}
+	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
+		b.tragicErr = err
+		return err
+	}
 	return nil
 }
 
@@ -764,7 +766,7 @@ func safeMergePanicMessage(recovered any) (string, bool) {
 		return "", false
 	}
 	message := e.Error()
-	if strings.HasPrefix(message, "validator missed unsupported mixed numeric promotion") {
+	if strings.HasPrefix(message, validatorMissedPanicPrefix) {
 		return message, true
 	}
 	return "", false
@@ -885,7 +887,7 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 	floatVal := observation.floatVal
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
-			panic(errors.Errorf("validator missed unsupported mixed numeric promotion at %s", path))
+			panic(errors.Errorf("%s at %s", validatorMissedMixedNumericPromotion, path))
 		}
 		floatVal = float64(observation.intVal)
 	}
@@ -906,14 +908,14 @@ func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
 		return
 	}
 	if !canRepresentIntAsExactFloat(pd.intGlobalMin) || !canRepresentIntAsExactFloat(pd.intGlobalMax) {
-		panic(errors.New("validator missed unsupported mixed numeric promotion"))
+		panic(errors.New(validatorMissedMixedNumericPromotion))
 	}
 	for _, stat := range pd.numericStats {
 		if !stat.HasValue {
 			continue
 		}
 		if !canRepresentIntAsExactFloat(stat.IntMin) || !canRepresentIntAsExactFloat(stat.IntMax) {
-			panic(errors.New("validator missed unsupported mixed numeric promotion"))
+			panic(errors.New(validatorMissedMixedNumericPromotion))
 		}
 	}
 	pd.numericValueType = NumericValueTypeFloatMixed
