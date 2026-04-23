@@ -1663,7 +1663,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if configLen > maxConfigSize {
-		return nil, errors.Errorf("config size %d exceeds max %d", configLen, maxConfigSize)
+		return nil, errors.Wrapf(ErrInvalidFormat, "config size %d exceeds max %d", configLen, maxConfigSize)
 	}
 
 	data := make([]byte, configLen)

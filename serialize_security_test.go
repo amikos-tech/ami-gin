@@ -2447,6 +2447,21 @@ func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
 	}
 }
 
+func TestReadConfigRejectsOversizedConfigLength(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(maxConfigSize+1)); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected oversized config length error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
 func TestReadConfigRejectsDuplicateTransformerAlias(t *testing.T) {
 	lower := NewTransformerSpec("$.foo", TransformerToLower, nil)
 	lower.Alias = "lower"
