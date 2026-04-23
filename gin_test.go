@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amikos-tech/ami-gin/logging"
 	pkgerrors "github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion at $.score"
@@ -474,7 +475,7 @@ func TestRunMergeWithRecoverPreservesErrorPanicCauseAndStack(t *testing.T) {
 	if err == nil {
 		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
 	}
-	if pkgerrors.Cause(err) != original {
+	if !stderrors.Is(err, original) {
 		t.Fatalf("Cause(runMergeWithRecover()) = %#v, want original panic error", pkgerrors.Cause(err))
 	}
 	if stack := fmt.Sprintf("%+v", err); !strings.Contains(stack, "newPkgErrorsPanicForTest") {
