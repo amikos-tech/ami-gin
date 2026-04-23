@@ -115,7 +115,7 @@ Plans:
 
 Plans:
 - [x] 16-01-PLAN.md — Validator-complete numeric promotion hoisting and no-error merge signatures
-- [ ] 16-02-PLAN.md — Tragic terminal state rename, merge recovery, and safe recovery logging
+- [x] 16-02-PLAN.md — Tragic terminal state rename, merge recovery, and safe recovery logging
 - [ ] 16-03-PLAN.md — Public failure catalog and AddDocument atomicity property tests
 - [x] 16-04-PLAN.md — Local lint and CI marker/signature enforcement
 
@@ -180,7 +180,7 @@ Plans:
 | 13. Parser Seam Extraction | v1.1 | 3/3 | Complete | 2026-04-21 |
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
-| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 2/4 | In Progress | - |
+| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 3/4 | In Progress | - |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 0/- | Planned | - |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |

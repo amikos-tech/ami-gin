@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: executing
-stopped_at: Completed 16-04-PLAN.md; 16-02 and 16-03 still pending
-last_updated: "2026-04-23T09:52:59Z"
-last_activity: 2026-04-23 -- Phase 16 plan 16-04 completed
+stopped_at: Completed 16-02-PLAN.md and 16-04-PLAN.md; ready for 16-03
+last_updated: "2026-04-23T09:55:36Z"
+last_activity: 2026-04-23 -- Phase 16 plan 16-02 completed; plan 16-04 completed concurrently
 progress:
   total_phases: 15
   completed_phases: 7
   total_plans: 24
-  completed_plans: 20
-  percent: 83
+  completed_plans: 21
+  percent: 88
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 16 (adddocument-atomicity-lucene-contract) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Executing Phase 16
-Last activity: 2026-04-23 -- Phase 16 plan 16-04 completed
+Last activity: 2026-04-23 -- Phase 16 plan 16-02 completed; plan 16-04 completed concurrently
 
-Progress: [#####.....] 50% (0/3 phases, 1/8 requirements, 2/4 Phase 16 plans executed)
+Progress: [#######...] 75% (0/3 phases, 1/8 requirements fully complete, 3/4 Phase 16 plans executed)
 
 ## Performance Metrics
 
@@ -56,7 +56,7 @@ Progress: [#####.....] 50% (0/3 phases, 1/8 requirements, 2/4 Phase 16 plans exe
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 16 | 4 | In Progress (2/4 plans complete) |
+| 16 | 4 | In Progress (3/4 plans complete) |
 | 17 | TBD | Planned (defining) |
 | 18 | TBD | Planned (defining) |
 
@@ -77,6 +77,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **Numbering = Option B**: v1.2 takes phases 16–18 (chronological); SIMD renumbered to v1.3 phases 19–20.
 - **16-01 pre-check result**: `validateStagedPaths` already covered both lossy mixed numeric promotion directions before merge signature edits; `builder.go` validator logic was left unchanged.
 - **16-01 test isolation**: focused validator tests seed staged numeric observations directly because `stageJSONNumberLiteral` already rejects these lossy promotions before `validateStagedPaths` can be isolated.
+- **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
+- **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; full `make lint` remains blocked by a deferred unowned `gin_test.go` goconst finding.
 
 ### Roadmap Evolution
 
@@ -92,7 +94,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Continue Phase 16 execution with remaining plans 16-02 and 16-03
+- Continue Phase 16 execution with plan 16-03
 - Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -130,8 +132,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: Phase 16 plan 16-04 execution
-Stopped at: Completed 16-04-PLAN.md; 16-02 and 16-03 still pending
+Last session: Phase 16 plan 16-02 execution
+Stopped at: Completed 16-02-PLAN.md and 16-04-PLAN.md; ready for 16-03
 Resume file: None
 
-**Next step:** Continue Phase 16 execution with remaining plans 16-02 and 16-03.
+**Next step:** Continue Phase 16 execution with plan 16-03.
