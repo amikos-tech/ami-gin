@@ -69,6 +69,17 @@ func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
 func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpec, int) {
 	t.Helper()
 
+	_, representationJSON, offset := encodedConfigAndRepresentationJSON(t, data)
+	representations, err := readRepresentations(bytes.NewReader(appendLengthPrefix(representationJSON)))
+	if err != nil {
+		t.Fatalf("readRepresentations() error = %v", err)
+	}
+	return representations, offset
+}
+
+func encodedConfigAndRepresentationJSON(t *testing.T, data []byte) ([]byte, []byte, int) {
+	t.Helper()
+
 	if len(data) < 4 {
 		t.Fatalf("encoded data too short: %d", len(data))
 	}
@@ -112,16 +123,74 @@ func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpe
 			t.Fatalf("readDocIDMapping() error = %v", err)
 		}
 	}
-	if _, err := readConfig(buf); err != nil {
-		t.Fatalf("readConfig() error = %v", err)
+
+	var configLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &configLen); err != nil {
+		t.Fatalf("read config length error = %v", err)
+	}
+	configJSON := make([]byte, configLen)
+	if _, err := io.ReadFull(buf, configJSON); err != nil {
+		t.Fatalf("read config payload error = %v", err)
 	}
 
 	offset := len(data) - buf.Len()
-	representations, err := readRepresentations(buf)
-	if err != nil {
-		t.Fatalf("readRepresentations() error = %v", err)
+
+	var representationLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &representationLen); err != nil {
+		t.Fatalf("read representation metadata length error = %v", err)
 	}
-	return representations, offset
+	representationJSON := make([]byte, representationLen)
+	if _, err := io.ReadFull(buf, representationJSON); err != nil {
+		t.Fatalf("read representation metadata payload error = %v", err)
+	}
+
+	return configJSON, representationJSON, offset
+}
+
+func appendLengthPrefix(data []byte) []byte {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(data)))
+	_, _ = buf.Write(data)
+	return buf.Bytes()
+}
+
+func mustMarshalLengthPrefixedConfig(t *testing.T, sc SerializedConfig) bytes.Buffer {
+	t.Helper()
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+	return buf
+}
+
+func jsonContainsKey(v any, key string) bool {
+	switch typed := v.(type) {
+	case map[string]any:
+		if _, ok := typed[key]; ok {
+			return true
+		}
+		for _, child := range typed {
+			if jsonContainsKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonContainsKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func legacyV5HeaderOnlyPayload(t *testing.T) []byte {
@@ -613,6 +682,65 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestDecodeLegacyTransformerFailureModeTokens(t *testing.T) {
+	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
+	lower.Alias = "lower"
+	lower.TargetPath = representationTargetPath("$.email", "lower")
+	lower.FailureMode = IngestFailureMode("strict")
+
+	host := NewTransformerSpec("$.url", TransformerURLHost, nil)
+	host.Alias = "host"
+	host.TargetPath = representationTargetPath("$.url", "host")
+	host.FailureMode = IngestFailureMode("soft_fail")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{
+			lower,
+			host,
+		},
+	})
+
+	cfg, err := readConfig(&buf)
+	if err != nil {
+		t.Fatalf("readConfig() error = %v", err)
+	}
+
+	lowerSpecs := cfg.representationSpecs["$.email"]
+	if len(lowerSpecs) != 1 {
+		t.Fatalf("len($.email specs) = %d, want 1", len(lowerSpecs))
+	}
+	if got := lowerSpecs[0].Transformer.FailureMode; got != IngestFailureHard {
+		t.Fatalf("legacy strict decoded as %q, want %q", got, IngestFailureHard)
+	}
+
+	hostSpecs := cfg.representationSpecs["$.url"]
+	if len(hostSpecs) != 1 {
+		t.Fatalf("len($.url specs) = %d, want 1", len(hostSpecs))
+	}
+	if got := hostSpecs[0].Transformer.FailureMode; got != IngestFailureSoft {
+		t.Fatalf("legacy soft_fail decoded as %q, want %q", got, IngestFailureSoft)
+	}
+}
+
+func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
+	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
+	lower.Alias = "lower"
+	lower.TargetPath = representationTargetPath("$.email", "lower")
+	lower.FailureMode = IngestFailureMode("panic")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{lower},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid transformer failure mode")
+	}
+	if !strings.Contains(err.Error(), "invalid transformer failure mode") {
+		t.Fatalf("readConfig() error = %v, want invalid transformer failure mode", err)
+	}
+}
+
 func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
 	config, err := NewConfig(
 		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft)),
@@ -631,80 +759,61 @@ func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
 		t.Fatalf("EncodeWithLevel() error = %v", err)
 	}
 
-	if len(data) < 4 {
-		t.Fatalf("encoded data too short: %d", len(data))
-	}
-
-	buf := bytes.NewReader(data[4:])
-	idx := NewGINIndex()
-	if err := readHeader(buf, idx); err != nil {
-		t.Fatalf("readHeader() error = %v", err)
-	}
-	if idx.Header.Version != Version {
-		t.Fatalf("encoded version = %d, want %d", idx.Header.Version, Version)
-	}
 	if Version != 9 {
 		t.Fatalf("Version = %d, want 9", Version)
 	}
-	if err := readPathDirectory(buf, idx); err != nil {
-		t.Fatalf("readPathDirectory() error = %v", err)
-	}
-	if _, err := readBloomFilter(buf); err != nil {
-		t.Fatalf("readBloomFilter() error = %v", err)
-	}
-	if err := readStringIndexes(buf, idx); err != nil {
-		t.Fatalf("readStringIndexes() error = %v", err)
-	}
-	if err := readAdaptiveStringIndexes(buf, idx); err != nil {
-		t.Fatalf("readAdaptiveStringIndexes() error = %v", err)
-	}
-	if err := readStringLengthIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
-		t.Fatalf("readStringLengthIndexes() error = %v", err)
-	}
-	if err := readNumericIndexes(buf, idx, idx.Header.NumRowGroups); err != nil {
-		t.Fatalf("readNumericIndexes() error = %v", err)
-	}
-	if err := readNullIndexes(buf, idx); err != nil {
-		t.Fatalf("readNullIndexes() error = %v", err)
-	}
-	if err := readTrigramIndexes(buf, idx); err != nil {
-		t.Fatalf("readTrigramIndexes() error = %v", err)
-	}
-	if err := readHyperLogLogs(buf, idx); err != nil {
-		t.Fatalf("readHyperLogLogs() error = %v", err)
-	}
-	if idx.Header.Flags&FlagHasDocIDMap != 0 {
-		if _, err := readDocIDMapping(buf, idx.Header.NumDocs); err != nil {
-			t.Fatalf("readDocIDMapping() error = %v", err)
-		}
-	}
 
-	var configLen uint32
-	if err := binary.Read(buf, binary.LittleEndian, &configLen); err != nil {
-		t.Fatalf("read config length error = %v", err)
+	configJSON, representationJSON, _ := encodedConfigAndRepresentationJSON(t, data)
+	var configPayload struct {
+		Transformers []struct {
+			FailureMode IngestFailureMode `json:"failure_mode"`
+		} `json:"transformers"`
 	}
-	configJSON := make([]byte, configLen)
-	if _, err := io.ReadFull(buf, configJSON); err != nil {
-		t.Fatalf("read config payload error = %v", err)
-	}
-
-	var sc SerializedConfig
-	if err := json.Unmarshal(configJSON, &sc); err != nil {
+	if err := json.Unmarshal(configJSON, &configPayload); err != nil {
 		t.Fatalf("json.Unmarshal(config) error = %v", err)
 	}
-	if len(sc.Transformers) != 1 {
-		t.Fatalf("len(config transformers) = %d, want 1", len(sc.Transformers))
+	if len(configPayload.Transformers) != 1 {
+		t.Fatalf("len(config transformers) = %d, want 1", len(configPayload.Transformers))
 	}
-	if got := sc.Transformers[0].FailureMode; got != transformerFailureWireSoft {
+	if got := configPayload.Transformers[0].FailureMode; got != transformerFailureWireSoft {
 		t.Fatalf("config transformer failure_mode = %q, want %q", got, transformerFailureWireSoft)
 	}
 
-	representations, _ := locateRepresentationSection(t, data)
-	if len(representations) != 1 {
-		t.Fatalf("len(representations) = %d, want 1", len(representations))
+	var representationPayload []struct {
+		Transformer struct {
+			FailureMode IngestFailureMode `json:"failure_mode"`
+		} `json:"transformer"`
 	}
-	if got := representations[0].Transformer.FailureMode; got != IngestFailureSoft {
-		t.Fatalf("decoded representation failure mode = %q, want %q", got, IngestFailureSoft)
+	if err := json.Unmarshal(representationJSON, &representationPayload); err != nil {
+		t.Fatalf("json.Unmarshal(representations) error = %v", err)
+	}
+	if len(representationPayload) != 1 {
+		t.Fatalf("len(representations) = %d, want 1", len(representationPayload))
+	}
+	if got := representationPayload[0].Transformer.FailureMode; got != transformerFailureWireSoft {
+		t.Fatalf("representation transformer failure_mode = %q, want %q", got, transformerFailureWireSoft)
+	}
+
+	var configMap map[string]any
+	if err := json.Unmarshal(configJSON, &configMap); err != nil {
+		t.Fatalf("json.Unmarshal(config map) error = %v", err)
+	}
+	if jsonContainsKey(configMap, "parser_failure_mode") {
+		t.Fatal("config JSON contains parser_failure_mode")
+	}
+	if jsonContainsKey(configMap, "numeric_failure_mode") {
+		t.Fatal("config JSON contains numeric_failure_mode")
+	}
+
+	var representationAny any
+	if err := json.Unmarshal(representationJSON, &representationAny); err != nil {
+		t.Fatalf("json.Unmarshal(representation any) error = %v", err)
+	}
+	if jsonContainsKey(representationAny, "parser_failure_mode") {
+		t.Fatal("representation metadata JSON contains parser_failure_mode")
+	}
+	if jsonContainsKey(representationAny, "numeric_failure_mode") {
+		t.Fatal("representation metadata JSON contains numeric_failure_mode")
 	}
 }
 
