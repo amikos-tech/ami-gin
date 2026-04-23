@@ -16,7 +16,15 @@ import (
 	gin "github.com/amikos-tech/ami-gin"
 )
 
-const defaultLocalArtifactMode os.FileMode = 0o600
+const (
+	defaultLocalArtifactMode os.FileMode = 0o600
+
+	commandBuild      = "build"
+	commandQuery      = "query"
+	commandInfo       = "info"
+	commandExtract    = "extract"
+	commandExperiment = "experiment"
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -28,14 +36,16 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
-	case "build":
+	case commandBuild:
 		cmdBuild(args)
-	case "query":
+	case commandQuery:
 		cmdQuery(args)
-	case "info":
+	case commandInfo:
 		cmdInfo(args)
-	case "extract":
+	case commandExtract:
 		cmdExtract(args)
+	case commandExperiment:
+		cmdExperiment(args)
 	case "help", "-h", "--help":
 		printUsage()
 	default:
@@ -56,6 +66,7 @@ Commands:
   query     Query index with a predicate
   info      Show information about index(es)
   extract   Extract embedded index to sidecar file
+  experiment Build a GIN index from JSONL for experimentation
 
 Single File Examples:
   gin-index build -c attributes data.parquet
@@ -63,6 +74,8 @@ Single File Examples:
   gin-index query data.parquet.gin '$.status = "error"'
   gin-index info data.parquet.gin
   gin-index extract -o data.parquet.gin data.parquet
+  gin-index experiment path/to/docs.jsonl
+  cat docs.jsonl | gin-index experiment -
 
 Batch Processing (Directory/S3 Prefix):
   # Build index for all .parquet files in directory
@@ -870,23 +883,28 @@ func parseValueList(s string) []any {
 	return values
 }
 
-func describeTypes(types uint8) string {
-	var parts []string
+func typeNames(types uint8) []string {
+	out := make([]string, 0, 5)
 	if types&gin.TypeString != 0 {
-		parts = append(parts, "string")
+		out = append(out, "string")
 	}
 	if types&gin.TypeInt != 0 {
-		parts = append(parts, "int")
+		out = append(out, "int")
 	}
 	if types&gin.TypeFloat != 0 {
-		parts = append(parts, "float")
+		out = append(out, "float")
 	}
 	if types&gin.TypeBool != 0 {
-		parts = append(parts, "bool")
+		out = append(out, "bool")
 	}
 	if types&gin.TypeNull != 0 {
-		parts = append(parts, "null")
+		out = append(out, "null")
 	}
+	return out
+}
+
+func describeTypes(types uint8) string {
+	parts := typeNames(types)
 	if len(parts) == 0 {
 		return "none"
 	}

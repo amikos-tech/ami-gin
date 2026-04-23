@@ -56,14 +56,16 @@ func TestRunParseErrorHelper(t *testing.T) {
 
 	var code int
 	switch helper {
-	case "build":
+	case commandBuild:
 		code = runBuild(args, &stdout, &stderr)
-	case "query":
+	case commandQuery:
 		code = runQuery(args, &stdout, &stderr)
-	case "info":
+	case commandInfo:
 		code = runInfo(args, &stdout, &stderr)
-	case "extract":
+	case commandExtract:
 		code = runExtract(args, &stdout, &stderr)
+	case commandExperiment:
+		code = runExperiment(args, bytes.NewReader(nil), &stdout, &stderr)
 	default:
 		t.Fatalf("unknown helper command %q", helper)
 	}
@@ -456,7 +458,7 @@ func TestRunInfoReturnsNonZeroOnDecodeFailure(t *testing.T) {
 func TestRunCommandsReturnParseFailureCode(t *testing.T) {
 	t.Parallel()
 
-	for _, helper := range []string{"build", "query", "info", "extract"} {
+	for _, helper := range []string{commandBuild, commandQuery, commandInfo, commandExtract, commandExperiment} {
 		helper := helper
 		t.Run(helper, func(t *testing.T) {
 			t.Parallel()

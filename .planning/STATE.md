@@ -2,20 +2,20 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Performance, Observability & Experimentation
-status: "Phase 14 shipped - PR #29"
-stopped_at: Phase 14 shipped - PR #29
-last_updated: "2026-04-22T11:42:12Z"
+status: "Phase 15 shipped — PR #30"
+stopped_at: Phase 15 shipped — PR #30
+last_updated: "2026-04-22T18:36:18Z"
 last_activity: 2026-04-22
 last_learnings_extraction:
-  phase: 11
+  phase: 14
   on: 2026-04-22
 
 progress:
   total_phases: 8
-  completed_phases: 2
-  total_plans: 11
-  completed_plans: 7
-  percent: 56
+  completed_phases: 3
+  total_plans: 14
+  completed_plans: 10
+  percent: 71
 ---
 
 # Project State
@@ -25,16 +25,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-21)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 15 — experimentation-cli (next)
+**Current focus:** Phase 15 — experimentation-cli shipped (PR #30)
 
 ## Current Position
 
-Phase: 14 (observability-seams) — COMPLETE
-Plan: 4/4 plans complete (waves: 1 -> 2 -> 3)
-Status: Phase 14 shipped - PR #29
-Last activity: 2026-04-22
+Phase: 15 (experimentation-cli) — COMPLETE
+Plan: 3/3 plans complete (waves: 1 -> 2 -> 3)
+Status: Phase 15 shipped — PR #30
+Last activity: 2026-04-22 - Created PR #30 for Phase 15 after full current-tree verification
 
-Progress: [######....] 56% (2/3 phases, 9/17 requirements)
+Progress: [#######...] 71% (3/3 phases, 17/17 requirements)
 
 ## Performance Metrics
 
@@ -61,7 +61,7 @@ Progress: [######....] 56% (2/3 phases, 9/17 requirements)
 |-------|-------|--------|
 | 13 | 3 | Complete |
 | 14 | 4 | Shipped (PR #29) |
-| 15 | TBD | Not started |
+| 15 | 3 | Shipped (PR #30) |
 
 ## Accumulated Context
 
@@ -94,13 +94,18 @@ Key decisions shaping v1.1:
 
 ### Pending Todos
 
-- Plan and execute Phase 15 (Experimentation CLI, CLI-01..08)
 - Watch for v1.2 planning when SIMD upstream blockers are resolved (`pure-simdjson` LICENSE + tag + distribution decision)
 
 ### Blockers/Concerns
 
 - Phase 13's benchmark noise was accepted as residual risk in `.planning/phases/13-parser-seam-extraction/13-SECURITY.md`; preserve that evidence if a future performance follow-up revisits the transformer-heavy explicit-number path.
 - The pure-simdjson blockers (LICENSE, tag, distribution mechanism) remain deferred to v1.2 and do not gate Phases 13-15.
+
+### Quick Tasks Completed (v1.1)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260422-lv1 | PR #29 review feedback: predicate_op attr fix, telemetry.ErrorTypeOther promotion + go mod tidy, allocs test rename, parser-name info-leak test wiring | 2026-04-22 | 8679f64 | [260422-lv1-address-pr-29-feedback-fix-attr-vocab-ti](./quick/260422-lv1-address-pr-29-feedback-fix-attr-vocab-ti/) |
 
 ### Quick Tasks Completed (v1.0 era — retained for reference)
 
@@ -134,10 +139,10 @@ Items acknowledged and deferred at v1.0 milestone close (retained for audit):
 
 ## Session Continuity
 
-Last session: Phase 14 shipped
-Stopped at: Phase 14 shipped - PR #29 opened
+Last session: Phase 15 execution
+Stopped at: Phase 15 shipped — PR #30
 
-**Next step:** Plan Phase 15 (Experimentation CLI). `/gsd-discuss-phase 15` to discuss, then `/gsd-plan-phase 15`.
+**Next step:** Review and merge PR #30, then run milestone wrap-up or defer to v1.2 planning when SIMD blockers clear.
 
 **v1.1 projection update:**
 
@@ -145,4 +150,4 @@ Stopped at: Phase 14 shipped - PR #29 opened
 |-------|-------|--------|
 | 13 | 3 | Complete |
 | 14 | 4 | Complete 2026-04-22 |
-| 15 | TBD | Not started |
+| 15 | 3 | Shipped (PR #30) |
