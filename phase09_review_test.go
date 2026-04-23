@@ -249,16 +249,26 @@ func TestPhase09FinalizeOmitsNeverMaterializedRepresentations(t *testing.T) {
 	}()
 
 	before := builder.Finalize()
+	if before.Header.NumDocs != 0 {
+		t.Fatalf("Header.NumDocs = %d, want 0 when all soft transformer failures skip documents", before.Header.NumDocs)
+	}
 	if got := before.Representations("$.timestamp"); got != nil {
 		t.Fatalf("Representations($.timestamp) = %v, want nil when no companion values materialize", got)
 	}
 	if len(before.representations) != 0 {
 		t.Fatalf("len(idx.representations) = %d, want 0 when no companion values materialize", len(before.representations))
 	}
+	if _, ok := before.pathLookup["$.timestamp"]; ok {
+		t.Fatal(`pathLookup["$.timestamp"] present, want all soft-rejected documents skipped`)
+	}
 
 	after := mustRoundTripIndex(t, before)
-	requirePredicateResult(t, before, []Predicate{EQ("$.timestamp", "not-a-date")}, []int{0}, `before raw EQ("$.timestamp", "not-a-date")`)
-	requirePredicateResult(t, after, []Predicate{EQ("$.timestamp", "also-not-a-date")}, []int{1}, `after raw EQ("$.timestamp", "also-not-a-date")`)
+	if after.Header.NumDocs != 0 {
+		t.Fatalf("round-tripped Header.NumDocs = %d, want 0", after.Header.NumDocs)
+	}
+	if _, ok := after.pathLookup["$.timestamp"]; ok {
+		t.Fatal(`round-tripped pathLookup["$.timestamp"] present, want all soft-rejected documents skipped`)
+	}
 }
 
 func TestPhase09RejectsInvalidAliases(t *testing.T) {
