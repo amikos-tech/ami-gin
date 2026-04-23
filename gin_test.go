@@ -3165,6 +3165,79 @@ func TestMixedNumericPathRejectsLossyPromotion(t *testing.T) {
 	}
 }
 
+func TestValidateStagedPathsRejectsLossyPromotionBeforeMerge(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	state := newDocumentBuildState(1)
+	state.getOrCreatePath("$.score").numericValues = append(
+		state.getOrCreatePath("$.score").numericValues,
+		stagedNumericValue{floatVal: 1.5},
+	)
+
+	err := builder.validateStagedPaths(state)
+	if err == nil {
+		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
+	}
+	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
+	}
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+}
+
+func TestValidateStagedPathsRejectsUnsafeIntIntoFloatPath(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":1.5}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	state := newDocumentBuildState(1)
+	state.getOrCreatePath("$.score").numericValues = append(
+		state.getOrCreatePath("$.score").numericValues,
+		stagedNumericValue{isInt: true, intVal: 9007199254740993},
+	)
+
+	err := builder.validateStagedPaths(state)
+	if err == nil {
+		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
+	}
+	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
+	}
+}
+
+func TestMixedNumericPathRejectsLossyPromotionLeavesBuilderUsable(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"score":1.5}`))
+	if err == nil {
+		t.Fatal("expected lossy mixed numeric promotion to fail")
+	}
+	if got, want := err.Error(), "unsupported mixed numeric promotion at $.score"; !strings.Contains(got, want) {
+		t.Fatalf("AddDocument error = %q, want %q", got, want)
+	}
+
+	if err := builder.AddDocument(1, []byte(`{"status":"ok"}`)); err != nil {
+		t.Fatalf("AddDocument(valid after rejection) failed: %v", err)
+	}
+	if builder.numDocs != 2 {
+		t.Fatalf("numDocs = %d, want 2", builder.numDocs)
+	}
+
+	idx := builder.Finalize()
+	result := idx.Evaluate([]Predicate{EQ("$.status", "ok")})
+	if result.Count() != 1 || !result.IsSet(1) || result.IsSet(0) {
+		t.Fatalf(`EQ("$.status", "ok") after rejected promotion = %v, want [1]`, result.ToSlice())
+	}
+}
+
 func TestIntOnlyNumericDecodeParity(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 
