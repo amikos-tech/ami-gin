@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: executing
-stopped_at: Completed 16-02-PLAN.md and 16-04-PLAN.md; ready for 16-03
-last_updated: "2026-04-23T09:55:36Z"
-last_activity: 2026-04-23 -- Phase 16 plan 16-02 completed; plan 16-04 completed concurrently
+stopped_at: Completed 16-03-PLAN.md; Phase 16 complete and ready for Phase 17 planning
+last_updated: "2026-04-23T10:15:34Z"
+last_activity: 2026-04-23 -- Phase 16 plan 16-03 completed; Phase 16 integration gate passed
 progress:
   total_phases: 15
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 24
-  completed_plans: 21
-  percent: 88
+  completed_plans: 22
+  percent: 92
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 ## Current Position
 
-Phase: 16 (adddocument-atomicity-lucene-contract) — EXECUTING
-Plan: 3 of 4
-Status: Executing Phase 16
-Last activity: 2026-04-23 -- Phase 16 plan 16-02 completed; plan 16-04 completed concurrently
+Phase: 16 (adddocument-atomicity-lucene-contract) — COMPLETE
+Plan: 4 of 4
+Status: Phase 16 complete; ready for Phase 17 planning
+Last activity: 2026-04-23 -- Phase 16 plan 16-03 completed; phase integration gate passed
 
-Progress: [#######...] 75% (0/3 phases, 1/8 requirements fully complete, 3/4 Phase 16 plans executed)
+Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements fully complete, 4/4 Phase 16 plans executed)
 
 ## Performance Metrics
 
@@ -56,7 +56,7 @@ Progress: [#######...] 75% (0/3 phases, 1/8 requirements fully complete, 3/4 Pha
 
 | Phase | Plans | Status |
 |-------|-------|--------|
-| 16 | 4 | In Progress (3/4 plans complete) |
+| 16 | 4 | Complete (4/4 plans complete) |
 | 17 | TBD | Planned (defining) |
 | 18 | TBD | Planned (defining) |
 
@@ -79,6 +79,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **16-01 test isolation**: focused validator tests seed staged numeric observations directly because `stageJSONNumberLiteral` already rejects these lossy promotions before `validateStagedPaths` can be isolated.
 - **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
 - **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; the Wave 2 integration fix resolved the `gin_test.go` goconst finding and `make lint` is green.
+- **16-03 atomicity proof**: `atomicity_test.go` uses a bounded 1000-document full-vs-clean property with deterministic 10% failing slots and encoded-byte equality; the public failure catalog asserts user-input failures leave `tragicErr` nil.
 
 ### Roadmap Evolution
 
@@ -89,19 +90,20 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
   - Phase 17: Failure-Mode Taxonomy Unification — FAIL-01..02
   - Phase 18: Structured IngestError + CLI integration — IERR-01..03
 - DAG: 16 → 17 → 18 (strict sequence; Phases 17 and 18 only become possible because Phase 16 makes per-document failure first-class).
+- Phase 16 completed 2026-04-23 with ATOMIC-01, ATOMIC-02, and ATOMIC-03 fully covered.
 - v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Continue Phase 16 execution with plan 16-03
+- Plan Phase 17 failure-mode taxonomy unification
 - Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
 ### Blockers/Concerns
 
 - The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation is captured in Phase 16 plans: `// MUST_BE_CHECKED_BY_VALIDATOR` markers plus local and CI checks for merge-layer error returns.
-- `make lint` is green after the Wave 2 integration fix; `make check-validator-markers` is green and CI now runs it explicitly.
+- Phase 16 integration gate is green: `make test`, `make lint`, and `go build ./...` passed after all four plans.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
 
@@ -132,8 +134,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: Phase 16 plan 16-02 execution
-Stopped at: Completed 16-02-PLAN.md and 16-04-PLAN.md; ready for 16-03
+Last session: Phase 16 plan 16-03 execution
+Stopped at: Completed 16-03-PLAN.md; Phase 16 complete
 Resume file: None
 
-**Next step:** Continue Phase 16 execution with plan 16-03.
+**Next step:** Plan Phase 17 failure-mode taxonomy unification.

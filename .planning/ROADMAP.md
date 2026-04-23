@@ -36,7 +36,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 ### 🚧 v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — ACTIVE
 
-- [ ] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate.
+- [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
 - [ ] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs.
 - [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes.
 
@@ -116,7 +116,7 @@ Plans:
 Plans:
 - [x] 16-01-PLAN.md — Validator-complete numeric promotion hoisting and no-error merge signatures
 - [x] 16-02-PLAN.md — Tragic terminal state rename, merge recovery, and safe recovery logging
-- [ ] 16-03-PLAN.md — Public failure catalog and AddDocument atomicity property tests
+- [x] 16-03-PLAN.md — Public failure catalog and AddDocument atomicity property tests
 - [x] 16-04-PLAN.md — Local lint and CI marker/signature enforcement
 
 ### Phase 17: Failure-Mode Taxonomy Unification
@@ -180,7 +180,7 @@ Plans:
 | 13. Parser Seam Extraction | v1.1 | 3/3 | Complete | 2026-04-21 |
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
-| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 3/4 | In Progress | - |
+| 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 0/- | Planned | - |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
