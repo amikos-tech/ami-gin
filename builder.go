@@ -11,6 +11,8 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 const maxExactFloatInt = int64(1 << 53)
@@ -699,7 +701,10 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 	if err := b.validateStagedPaths(state); err != nil {
 		return err
 	}
-	b.mergeStagedPaths(state)
+	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
+		b.tragicErr = err
+		return err
+	}
 
 	if !exists {
 		b.docIDToPos[docID] = pos
@@ -711,6 +716,20 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		b.maxRGID = pos
 	}
 	b.numDocs++
+	return nil
+}
+
+func runMergeWithRecover(logger logging.Logger, fn func()) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logging.Error(logger, "builder tragic: recovered panic in merge",
+				logging.AttrErrorType("other"),
+				logging.Attr{Key: "panic_type", Value: fmt.Sprintf("%T", recovered)},
+			)
+			err = errors.Errorf("builder tragic: recovered panic in merge: %v", recovered)
+		}
+	}()
+	fn()
 	return nil
 }
 
@@ -733,6 +752,10 @@ func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	return nil
 }
 
+// mergeStagedPathsPanicHookForTest exists only for package tests that need to
+// exercise the real AddDocument recovery path.
+var mergeStagedPathsPanicHookForTest func()
+
 // MUST_BE_CHECKED_BY_VALIDATOR
 func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 	paths := make([]string, 0, len(state.paths))
@@ -743,6 +766,9 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 
 	for _, path := range paths {
 		staged := state.paths[path]
+		if mergeStagedPathsPanicHookForTest != nil {
+			mergeStagedPathsPanicHookForTest()
+		}
 		pd := b.getOrCreatePath(path)
 		pd.observedTypes |= staged.observedTypes
 		if staged.present {
