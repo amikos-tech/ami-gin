@@ -203,6 +203,7 @@ func parseFloatSimple(s string) (float64, error) {
 	}
 	var intPart, fracPart float64
 	var fracDiv float64 = 1
+	digits := 0
 	seenDot := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -216,12 +217,16 @@ func parseFloatSimple(s string) (float64, error) {
 		if c < '0' || c > '9' {
 			return 0, errors.New("invalid number")
 		}
+		digits++
 		if seenDot {
 			fracPart = fracPart*10 + float64(c-'0')
 			fracDiv *= 10
 		} else {
 			intPart = intPart*10 + float64(c-'0')
 		}
+	}
+	if digits == 0 {
+		return 0, errors.New("invalid number")
 	}
 	result := intPart + fracPart/fracDiv
 	if negative {

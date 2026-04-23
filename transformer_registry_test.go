@@ -528,6 +528,33 @@ func TestRejectsNegativeRegexGroup(t *testing.T) {
 	}
 }
 
+func TestReconstructedRegexExtractIntRejectsMissingDigits(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "empty capture", input: "value:"},
+		{name: "sign only capture", input: "value:-"},
+		{name: "dot only capture", input: "value:."},
+	}
+
+	fn, err := ReconstructTransformer(
+		TransformerRegexExtractInt,
+		json.RawMessage(`{"pattern":"value:([-.0-9]*)","group":1}`),
+	)
+	if err != nil {
+		t.Fatalf("ReconstructTransformer() error = %v", err)
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, ok := fn(tt.input); ok {
+				t.Fatalf("transformer() = %v, want failure", got)
+			}
+		})
+	}
+}
+
 func TestMissingCustomDateLayout(t *testing.T) {
 	_, err := ReconstructTransformer(TransformerCustomDateToEpochMs, json.RawMessage(`{}`))
 	if err == nil {
