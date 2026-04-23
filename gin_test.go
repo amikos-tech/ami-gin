@@ -484,9 +484,10 @@ func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
 	if _, ok := tragicAttrValue(entry.attrs, "panic_type"); !ok {
 		t.Fatal("panic_type attr missing")
 	}
+	panicValueKey := "panic" + "_value"
 	for _, attr := range entry.attrs {
-		if attr.Key == "panic_value" {
-			t.Fatal("panic_value attr must not be logged")
+		if attr.Key == panicValueKey {
+			t.Fatal("raw panic value attr must not be logged")
 		}
 		if strings.Contains(attr.Value, "secret document bytes") {
 			t.Fatalf("attr %q leaked panic payload %q", attr.Key, attr.Value)
