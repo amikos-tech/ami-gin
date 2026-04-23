@@ -11,10 +11,14 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 const maxExactFloatInt = int64(1 << 53)
 const maxInt64AsFloat64 = float64(1 << 63) // upper bound for float64→int64; math.MaxInt64 rounds up to this
+const validatorMissedPanicPrefix = "validator missed "
+const validatorMissedMixedNumericPromotion = validatorMissedPanicPrefix + "unsupported mixed numeric promotion"
 
 type GINBuilder struct {
 	config     GINConfig
@@ -27,11 +31,13 @@ type GINBuilder struct {
 	docIDToPos map[DocID]int
 	posToDocID []DocID
 	nextPos    int
-	// poisonErr is non-nil once a merge step has failed partway through
-	// mutating shared state. Subsequent AddDocument calls refuse to compound
-	// corruption; Finalize remains callable so callers can discard the
-	// builder gracefully.
-	poisonErr error
+	// tragicErr is non-nil once an internal invariant violation or recovered
+	// merge panic has closed the builder. Subsequent AddDocument calls refuse
+	// to compound corruption; Finalize remains callable so callers can discard
+	// the builder gracefully. Partial merges committed before a tragic panic are
+	// not rolled back; Finalize after tragedy reflects an undefined subset of the
+	// failing document's paths.
+	tragicErr error
 
 	// parser defaults to stdlibParser{} at NewBuilder; parserName is the
 	// cached Parser.Name() result. During AddDocument, parserSink.BeginDocument
@@ -42,6 +48,11 @@ type GINBuilder struct {
 	parserName         string
 	currentDocState    *documentBuildState
 	beginDocumentCalls int
+	testHooks          builderTestHooks
+}
+
+type builderTestHooks struct {
+	mergeStagedPathsPanicHook func()
 }
 
 type pathBuildData struct {
@@ -302,8 +313,8 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 }
 
 func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
-	if b.poisonErr != nil {
-		return errors.Wrap(b.poisonErr, "builder poisoned by prior merge failure; discard and rebuild")
+	if b.tragicErr != nil {
+		return errors.Wrap(b.tragicErr, "builder closed by prior tragic failure; discard and rebuild")
 	}
 	pos, exists := b.docIDToPos[docID]
 	if !exists {
@@ -356,11 +367,15 @@ func normalizeWalkPath(path string) string {
 }
 
 func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
+	if b.tragicErr != nil {
+		return errors.Wrap(b.tragicErr, "builder closed by prior tragic failure; discard and rebuild")
+	}
+
 	state := newDocumentBuildState(rgID)
 	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
 		return err
 	}
-	return b.mergeStagedPaths(state)
+	return b.commitStagedPaths(state)
 }
 
 func ensureDecoderEOF(decoder *json.Decoder) error {
@@ -695,16 +710,7 @@ func canRepresentIntAsExactFloat(value int64) bool {
 }
 
 func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
-	if err := b.validateStagedPaths(state); err != nil {
-		return err
-	}
-	if err := b.mergeStagedPaths(state); err != nil {
-		// mergeStagedPaths mutates pathData, bloom, and presentRGs path-by-path
-		// in a sorted loop. A mid-loop failure leaves earlier paths merged for
-		// this document while later ones are untouched, so the builder's state
-		// no longer reflects any single consistent document set. Flag it so
-		// subsequent AddDocument calls can't compound the corruption.
-		b.poisonErr = err
+	if err := b.commitStagedPaths(state); err != nil {
 		return err
 	}
 
@@ -719,6 +725,51 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 	}
 	b.numDocs++
 	return nil
+}
+
+func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
+	if err := b.validateStagedPaths(state); err != nil {
+		return err
+	}
+	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
+		b.tragicErr = err
+		return err
+	}
+	return nil
+}
+
+func runMergeWithRecover(logger logging.Logger, fn func()) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			attrs := []logging.Attr{
+				logging.AttrErrorType("other"),
+				logging.Attr{Key: "panic_type", Value: fmt.Sprintf("%T", recovered)},
+			}
+			if message, ok := safeMergePanicMessage(recovered); ok {
+				attrs = append(attrs, logging.Attr{Key: "panic_message", Value: message})
+			}
+			logging.Error(logger, "builder tragic: recovered panic in merge", attrs...)
+			if e, ok := recovered.(error); ok {
+				err = errors.Wrap(e, "builder tragic: recovered panic in merge")
+				return
+			}
+			err = errors.Errorf("builder tragic: recovered panic in merge: %v", recovered)
+		}
+	}()
+	fn()
+	return nil
+}
+
+func safeMergePanicMessage(recovered any) (string, bool) {
+	e, ok := recovered.(error)
+	if !ok {
+		return "", false
+	}
+	message := e.Error()
+	if strings.HasPrefix(message, validatorMissedPanicPrefix) {
+		return message, true
+	}
+	return "", false
 }
 
 func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
@@ -740,7 +791,8 @@ func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	return nil
 }
 
-func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 	paths := make([]string, 0, len(state.paths))
 	for path := range state.paths {
 		paths = append(paths, path)
@@ -749,6 +801,9 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
 
 	for _, path := range paths {
 		staged := state.paths[path]
+		if b.testHooks.mergeStagedPathsPanicHook != nil {
+			b.testHooks.mergeStagedPathsPanicHook()
+		}
 		pd := b.getOrCreatePath(path)
 		pd.observedTypes |= staged.observedTypes
 		if staged.present {
@@ -770,12 +825,9 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
 		}
 
 		for _, observation := range staged.numericValues {
-			if err := b.mergeNumericObservation(pd, observation, state.rgID, path); err != nil {
-				return err
-			}
+			b.mergeNumericObservation(pd, observation, state.rgID, path)
 		}
 	}
-	return nil
 }
 
 func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, path string) {
@@ -796,7 +848,8 @@ func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, pat
 	}
 }
 
-func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) {
 	if !pd.hasNumericValues {
 		pd.hasNumericValues = true
 		if observation.isInt {
@@ -805,20 +858,18 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 			pd.intGlobalMax = observation.intVal
 			b.addIntNumericValue(pd, observation.intVal, rgID)
 			b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-			return nil
+			return
 		}
 		pd.numericValueType = NumericValueTypeFloatMixed
 		pd.floatGlobalMin = observation.floatVal
 		pd.floatGlobalMax = observation.floatVal
 		b.addFloatNumericValue(pd, observation.floatVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatFloat(observation.floatVal, 'f', -1, 64))
-		return nil
+		return
 	}
 
 	if pd.numericValueType == NumericValueTypeIntOnly && !observation.isInt {
-		if err := b.promoteNumericPathToFloat(pd); err != nil {
-			return errors.Wrapf(err, "promote numeric path %s", path)
-		}
+		b.promoteNumericPathToFloat(pd)
 	}
 
 	if pd.numericValueType == NumericValueTypeIntOnly {
@@ -830,13 +881,13 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 		}
 		b.addIntNumericValue(pd, observation.intVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-		return nil
+		return
 	}
 
 	floatVal := observation.floatVal
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			panic(errors.Errorf("%s at %s", validatorMissedMixedNumericPromotion, path))
 		}
 		floatVal = float64(observation.intVal)
 	}
@@ -849,22 +900,22 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 	}
 	b.addFloatNumericValue(pd, floatVal, rgID)
 	b.bloom.AddString(path + "=" + strconv.FormatFloat(floatVal, 'f', -1, 64))
-	return nil
 }
 
-func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
 	if pd.numericValueType == NumericValueTypeFloatMixed {
-		return nil
+		return
 	}
 	if !canRepresentIntAsExactFloat(pd.intGlobalMin) || !canRepresentIntAsExactFloat(pd.intGlobalMax) {
-		return errors.New("unsupported mixed numeric promotion")
+		panic(errors.New(validatorMissedMixedNumericPromotion))
 	}
 	for _, stat := range pd.numericStats {
 		if !stat.HasValue {
 			continue
 		}
 		if !canRepresentIntAsExactFloat(stat.IntMin) || !canRepresentIntAsExactFloat(stat.IntMax) {
-			return errors.New("unsupported mixed numeric promotion")
+			panic(errors.New(validatorMissedMixedNumericPromotion))
 		}
 	}
 	pd.numericValueType = NumericValueTypeFloatMixed
@@ -877,7 +928,6 @@ func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) error {
 		stat.Min = float64(stat.IntMin)
 		stat.Max = float64(stat.IntMax)
 	}
-	return nil
 }
 
 func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) {

@@ -9,7 +9,13 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	pkgerrors "github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
+
+const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion at $.score"
 
 func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 	t.Helper()
@@ -422,28 +428,182 @@ func TestAddDocumentDoesNotLeakStagedPathsOnMergeError(t *testing.T) {
 	}
 }
 
-func TestAddDocumentRefusesAfterMergeFailurePoisonsBuilder(t *testing.T) {
+func TestAddDocumentRefusesAfterTragicFailure(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 3)
 	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
 		t.Fatalf("AddDocument(seed) failed: %v", err)
 	}
 
-	// Simulate a mid-loop mergeStagedPaths failure by poisoning the builder
-	// directly. The natural trigger path (mixed numeric promotion) is caught
-	// by validateStagedPaths' preview before mergeStagedPaths runs, so poison
-	// is defensive; we still need to prove the refusal contract.
-	builder.poisonErr = stderrors.New("simulated merge failure")
+	// Simulate an internal-invariant tragedy directly. The natural
+	// user-input trigger path is caught before mergeStagedPaths runs, so
+	// tragic failure is defensive; we still need to prove the refusal contract.
+	builder.tragicErr = stderrors.New("simulated tragic failure")
 
 	err := builder.AddDocument(1, []byte(`{"name":"bob"}`))
 	if err == nil {
-		t.Fatal("AddDocument after poison = nil, want wrapped poison error")
+		t.Fatal("AddDocument after tragedy = nil, want wrapped tragic error")
 	}
-	if !strings.Contains(err.Error(), "builder poisoned") {
-		t.Fatalf("AddDocument error = %q, want 'builder poisoned' context", err.Error())
+	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
+		t.Fatalf("AddDocument error = %q, want tragic closure context", err.Error())
 	}
-	if !strings.Contains(err.Error(), "simulated merge failure") {
+	if !strings.Contains(err.Error(), "simulated tragic failure") {
 		t.Fatalf("AddDocument error = %q, want original cause preserved", err.Error())
 	}
+}
+
+func TestRunMergeWithRecoverConvertsPanicToTragicError(t *testing.T) {
+	err := runMergeWithRecover(nil, func() { panic("simulated") })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
+		t.Fatalf("runMergeWithRecover() error = %q, want tragic context", err.Error())
+	}
+	if !strings.Contains(err.Error(), "simulated") {
+		t.Fatalf("runMergeWithRecover() error = %q, want panic cause", err.Error())
+	}
+}
+
+func newPkgErrorsPanicForTest() error {
+	return pkgerrors.New("stacked merge panic")
+}
+
+func TestRunMergeWithRecoverPreservesErrorPanicCauseAndStack(t *testing.T) {
+	original := newPkgErrorsPanicForTest()
+
+	err := runMergeWithRecover(nil, func() { panic(original) })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if !stderrors.Is(err, original) {
+		t.Fatalf("Cause(runMergeWithRecover()) = %#v, want original panic error", pkgerrors.Cause(err))
+	}
+	if stack := fmt.Sprintf("%+v", err); !strings.Contains(stack, "newPkgErrorsPanicForTest") {
+		t.Fatalf("formatted error stack did not include original panic site:\n%s", stack)
+	}
+}
+
+func TestRunMergeWithRecoverLogsThroughLoggerWithoutPanicValue(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+
+	err := runMergeWithRecover(logger, func() { panic(pkgerrors.New("secret document bytes")) })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+
+	entry := logger.entries[0]
+	if entry.level != logging.LevelError {
+		t.Fatalf("captured log level = %v, want %v", entry.level, logging.LevelError)
+	}
+	if entry.message != "builder tragic: recovered panic in merge" {
+		t.Fatalf("captured message = %q, want tragic recovery message", entry.message)
+	}
+	if value, ok := tragicAttrValue(entry.attrs, "error.type"); !ok || value != "other" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "other")
+	}
+	if _, ok := tragicAttrValue(entry.attrs, "panic_type"); !ok {
+		t.Fatal("panic_type attr missing")
+	}
+	panicValueKey := "panic" + "_value"
+	for _, attr := range entry.attrs {
+		if attr.Key == panicValueKey {
+			t.Fatal("raw panic value attr must not be logged")
+		}
+		if attr.Key == "panic_message" {
+			t.Fatal("non-allowlisted error panic message must not be logged")
+		}
+		if strings.Contains(attr.Value, "secret document bytes") {
+			t.Fatalf("attr %q leaked panic payload %q", attr.Key, attr.Value)
+		}
+	}
+}
+
+func TestRunMergeWithRecoverLogsAllowlistedInternalPanicMessage(t *testing.T) {
+	logger := &tragicCaptureLogger{}
+	message := "validator missed future invariant at $.score"
+
+	err := runMergeWithRecover(logger, func() { panic(pkgerrors.New(message)) })
+	if err == nil {
+		t.Fatal("runMergeWithRecover() error = nil, want tragic error")
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+	if value, ok := tragicAttrValue(logger.entries[0].attrs, "panic_message"); !ok || value != message {
+		t.Fatalf("panic_message attr = %q, %v; want %q, true", value, ok, message)
+	}
+}
+
+func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	builder.testHooks.mergeStagedPathsPanicHook = func() { panic("simulated merge panic") }
+
+	err := builder.AddDocument(0, []byte(`{"name":"alice"}`))
+	if err == nil {
+		t.Fatal("AddDocument() error = nil, want recovered merge panic")
+	}
+	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
+		t.Fatalf("AddDocument() error = %q, want recovered merge panic context", err.Error())
+	}
+	if builder.tragicErr == nil {
+		t.Fatal("builder.tragicErr = nil, want recovered merge panic error")
+	}
+	if builder.numDocs != 0 {
+		t.Fatalf("numDocs = %d, want 0", builder.numDocs)
+	}
+	if builder.nextPos != 0 {
+		t.Fatalf("nextPos = %d, want 0", builder.nextPos)
+	}
+	if _, exists := builder.docIDToPos[DocID(0)]; exists {
+		t.Fatal("docIDToPos contains rejected document")
+	}
+
+	builder.testHooks.mergeStagedPathsPanicHook = nil
+	err = builder.AddDocument(1, []byte(`{"name":"bob"}`))
+	if err == nil {
+		t.Fatal("AddDocument after tragedy = nil, want refusal")
+	}
+	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
+		t.Fatalf("AddDocument refusal = %q, want tragic closure context", err.Error())
+	}
+
+	idx := builder.Finalize()
+	if _, err := Encode(idx); err != nil {
+		t.Fatalf("Encode(Finalize() after tragedy) error = %v", err)
+	}
+}
+
+type tragicLogEntry struct {
+	level   logging.Level
+	message string
+	attrs   []logging.Attr
+}
+
+type tragicCaptureLogger struct {
+	entries []tragicLogEntry
+}
+
+func (l *tragicCaptureLogger) Enabled(_ logging.Level) bool { return true }
+
+func (l *tragicCaptureLogger) Log(level logging.Level, message string, attrs ...logging.Attr) {
+	copied := append([]logging.Attr(nil), attrs...)
+	l.entries = append(l.entries, tragicLogEntry{
+		level:   level,
+		message: message,
+		attrs:   copied,
+	})
+}
+
+func tragicAttrValue(attrs []logging.Attr, key string) (string, bool) {
+	for _, attr := range attrs {
+		if attr.Key == key {
+			return attr.Value, true
+		}
+	}
+	return "", false
 }
 
 func TestAdaptiveFallbackHasNoFalseNegatives(t *testing.T) {
@@ -3162,6 +3322,79 @@ func TestMixedNumericPathRejectsLossyPromotion(t *testing.T) {
 	result := idx.Evaluate([]Predicate{EQ("$.score", int64(9007199254740993))})
 	if result.Count() != 1 || !result.IsSet(0) || result.IsSet(1) {
 		t.Fatalf("exact int64 EQ after rejected promotion = %v, want [0]", result.ToSlice())
+	}
+}
+
+func TestValidateStagedPathsRejectsLossyPromotionBeforeMerge(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	state := newDocumentBuildState(1)
+	state.getOrCreatePath("$.score").numericValues = append(
+		state.getOrCreatePath("$.score").numericValues,
+		stagedNumericValue{floatVal: 1.5},
+	)
+
+	err := builder.validateStagedPaths(state)
+	if err == nil {
+		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
+	}
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
+		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
+	}
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1", builder.numDocs)
+	}
+}
+
+func TestValidateStagedPathsRejectsUnsafeIntIntoFloatPath(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":1.5}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	state := newDocumentBuildState(1)
+	state.getOrCreatePath("$.score").numericValues = append(
+		state.getOrCreatePath("$.score").numericValues,
+		stagedNumericValue{isInt: true, intVal: 9007199254740993},
+	)
+
+	err := builder.validateStagedPaths(state)
+	if err == nil {
+		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
+	}
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
+		t.Fatalf("validateStagedPaths() error = %q, want %q", got, want)
+	}
+}
+
+func TestMixedNumericPathRejectsLossyPromotionLeavesBuilderUsable(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 3)
+	if err := builder.AddDocument(0, []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument failed: %v", err)
+	}
+
+	err := builder.AddDocument(1, []byte(`{"score":1.5}`))
+	if err == nil {
+		t.Fatal("expected lossy mixed numeric promotion to fail")
+	}
+	if got, want := err.Error(), mixedNumericPromotionScoreErr; !strings.Contains(got, want) {
+		t.Fatalf("AddDocument error = %q, want %q", got, want)
+	}
+
+	if err := builder.AddDocument(1, []byte(`{"status":"ok"}`)); err != nil {
+		t.Fatalf("AddDocument(valid after rejection) failed: %v", err)
+	}
+	if builder.numDocs != 2 {
+		t.Fatalf("numDocs = %d, want 2", builder.numDocs)
+	}
+
+	idx := builder.Finalize()
+	result := idx.Evaluate([]Predicate{EQ("$.status", "ok")})
+	if result.Count() != 1 || !result.IsSet(1) || result.IsSet(0) {
+		t.Fatalf(`EQ("$.status", "ok") after rejected promotion = %v, want [1]`, result.ToSlice())
 	}
 }
 
