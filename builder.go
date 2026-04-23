@@ -27,11 +27,11 @@ type GINBuilder struct {
 	docIDToPos map[DocID]int
 	posToDocID []DocID
 	nextPos    int
-	// poisonErr is non-nil once a merge step has failed partway through
-	// mutating shared state. Subsequent AddDocument calls refuse to compound
-	// corruption; Finalize remains callable so callers can discard the
-	// builder gracefully.
-	poisonErr error
+	// tragicErr is non-nil once an internal invariant violation or recovered
+	// merge panic has closed the builder. Subsequent AddDocument calls refuse
+	// to compound corruption; Finalize remains callable so callers can discard
+	// the builder gracefully.
+	tragicErr error
 
 	// parser defaults to stdlibParser{} at NewBuilder; parserName is the
 	// cached Parser.Name() result. During AddDocument, parserSink.BeginDocument
@@ -302,8 +302,8 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 }
 
 func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
-	if b.poisonErr != nil {
-		return errors.Wrap(b.poisonErr, "builder poisoned by prior merge failure; discard and rebuild")
+	if b.tragicErr != nil {
+		return errors.Wrap(b.tragicErr, "builder closed by prior tragic failure; discard and rebuild")
 	}
 	pos, exists := b.docIDToPos[docID]
 	if !exists {
