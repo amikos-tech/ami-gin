@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: executing
-stopped_at: Phase 17 Wave 1 executing
-last_updated: "2026-04-23T16:01:54.000Z"
+stopped_at: Phase 17 Wave 2 ready
+last_updated: "2026-04-23T16:12:42.000Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 15
   completed_phases: 8
   total_plans: 28
-  completed_plans: 23
-  percent: 82
+  completed_plans: 24
+  percent: 86
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 17
-Plan: 17-01 executing
-Status: Phase 17 execution in progress; 4 plans across 3 waves
+Plan: 17-02 ready, 17-03 ready
+Status: Phase 17 Wave 1 complete; Wave 2 ready
 Last activity: 2026-04-23
 
-Progress: [----------] 0% for Phase 17 (0/4 plans executed; 4/4 plans planned and checker-verified)
+Progress: [███-------] 25% for Phase 17 (1/4 plans executed; 4/4 plans planned and checker-verified)
 
 ## Performance Metrics
 
@@ -57,7 +57,7 @@ Progress: [----------] 0% for Phase 17 (0/4 plans executed; 4/4 plans planned an
 | Phase | Plans | Status |
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
-| 17 | 4 | Ready to execute (0/4 plans complete) |
+| 17 | 4 | Executing (1/4 plans complete) |
 | 18 | TBD | Planned (defining) |
 
 ## Accumulated Context
@@ -136,8 +136,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-23T15:02:00.000Z
-Stopped at: Phase 17 planned
-Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-01-PLAN.md
+Last session: 2026-04-23T16:12:42.000Z
+Stopped at: Phase 17 Wave 2 ready
+Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-02-PLAN.md
 
-**Next step:** Execute Phase 17 failure-mode taxonomy unification.
+**Next step:** Execute Phase 17 Wave 2 plans 17-02 and 17-03.
