@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: ready_to_execute
-stopped_at: Phase 17 planned
-last_updated: "2026-04-23T15:02:00.000Z"
+status: executing
+stopped_at: Phase 17 Wave 1 executing
+last_updated: "2026-04-23T16:01:54.000Z"
 last_activity: 2026-04-23
 progress:
   total_phases: 15
@@ -26,8 +26,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 17
-Plan: 17-01 ready
-Status: Phase 17 planned and verified; ready to execute 4 plans across 3 waves
+Plan: 17-01 executing
+Status: Phase 17 execution in progress; 4 plans across 3 waves
 Last activity: 2026-04-23
 
 Progress: [----------] 0% for Phase 17 (0/4 plans executed; 4/4 plans planned and checker-verified)
