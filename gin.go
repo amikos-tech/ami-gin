@@ -28,7 +28,7 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(9)
+	Version = 9
 )
 
 const (

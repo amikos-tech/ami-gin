@@ -124,6 +124,17 @@ type SerializedConfig struct {
 	Transformers            []TransformerSpec `json:"transformers,omitempty"`
 }
 
+func transformerFailureModeWireToken(mode IngestFailureMode) IngestFailureMode {
+	switch normalizeTransformerFailureMode(mode) {
+	case IngestFailureHard:
+		return transformerFailureWireStrict
+	case IngestFailureSoft:
+		return transformerFailureWireSoft
+	default:
+		return mode
+	}
+}
+
 func writeRGSet(w io.Writer, rs *RGSet) error {
 	if err := binary.Write(w, binary.LittleEndian, uint32(rs.NumRGs)); err != nil {
 		return err
@@ -1621,7 +1632,7 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 				continue
 			}
 			transformer := representation.Transformer
-			transformer.FailureMode = normalizeTransformerFailureMode(transformer.FailureMode)
+			transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
 			sc.Transformers = append(sc.Transformers, transformer)
 		}
 	}
@@ -1759,7 +1770,16 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 		}
 	}
 
-	data, err := json.Marshal(representations)
+	wireRepresentations := make([]RepresentationSpec, len(representations))
+	for i, representation := range representations {
+		copied := representation
+		transformer := representation.Transformer
+		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
+		copied.Transformer = transformer
+		wireRepresentations[i] = copied
+	}
+
+	data, err := json.Marshal(wireRepresentations)
 	if err != nil {
 		return errors.Wrap(err, "marshal representations")
 	}
