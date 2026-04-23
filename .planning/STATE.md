@@ -2,20 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: "Phase 16 planned — ready for /gsd-execute-phase 16"
-stopped_at: Phase 16 plan-phase complete (4 plans verified across 3 waves)
-last_updated: "2026-04-23T09:00:30Z"
-last_activity: 2026-04-23
-last_learnings_extraction:
-  phase: 14
-  on: 2026-04-22
-
+status: executing
+stopped_at: 16-01 through 16-04 PLAN.md written and plan-checker verified; ATOMIC-01, ATOMIC-02, and ATOMIC-03 covered
+last_updated: "2026-04-23T09:33:22.050Z"
+last_activity: 2026-04-23 -- Phase 16 execution started
 progress:
-  total_phases: 3
-  completed_phases: 0
-  total_plans: 4
-  completed_plans: 0
-  percent: 0
+  total_phases: 15
+  completed_phases: 7
+  total_plans: 24
+  completed_plans: 19
+  percent: 79
 ---
 
 # Project State
@@ -25,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.2 Phase 16 — AddDocument atomicity (Lucene contract); ready for `/gsd-execute-phase 16`
+**Current focus:** Phase 16 — adddocument-atomicity-lucene-contract
 
 ## Current Position
 
-Phase: 16 (addDocument-atomicity-lucene-contract) — Planned; ready to execute
-Plan: 4 plans across 3 waves
-Status: 16-01 through 16-04 PLAN.md written and plan-checker verified
-Last activity: 2026-04-23 — Phase 16 plan-phase complete
+Phase: 16 (adddocument-atomicity-lucene-contract) — EXECUTING
+Plan: 1 of 4
+Status: Executing Phase 16
+Last activity: 2026-04-23 -- Phase 16 execution started
 
 Progress: [..........] 0% (0/3 phases, 0/8 requirements, 0/4 Phase 16 plans executed)
 
