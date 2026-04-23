@@ -31,7 +31,7 @@ func (e *stageCallbackError) Unwrap() error { return e.err }
 func (e *stageCallbackError) Cause() error  { return e.err }
 
 func isSkipDocument(err error) bool {
-	return err != nil && (errors.Cause(err) == errSkipDocument || errors.Is(err, errSkipDocument))
+	return errors.Is(err, errSkipDocument)
 }
 
 func tagStageError(err error) error {

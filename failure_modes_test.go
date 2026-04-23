@@ -2,7 +2,6 @@ package gin
 
 import (
 	"bytes"
-	"math"
 	"strings"
 	"testing"
 
@@ -550,13 +549,4 @@ func TestAllSoftFailureModesSilentlyDropFailures(t *testing.T) {
 		t.Fatal(`NumericIndexes["$.email"] present, want soft-skipped raw numeric value absent`)
 	}
 	requireRows(t, idx, EQ("$.email", "float@example.com"), []int{})
-}
-
-type softNativeNaNParser struct{}
-
-func (softNativeNaNParser) Name() string { return "soft-native-nan" }
-
-func (softNativeNaNParser) Parse(_ []byte, rgID int, sink parserSink) error {
-	state := sink.BeginDocument(rgID)
-	return sink.StageNativeNumeric(state, "$.score", math.NaN())
 }

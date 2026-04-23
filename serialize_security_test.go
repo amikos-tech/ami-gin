@@ -15,6 +15,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const lowerAlias = "lower"
+
 func buildAdaptiveSerializationFixture(t *testing.T, config GINConfig) *GINIndex {
 	t.Helper()
 
@@ -44,7 +46,7 @@ func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
 	t.Helper()
 
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower"),
+		WithToLowerTransformer("$.email", lowerAlias),
 		WithEmailDomainTransformer("$.email", "domain"),
 	)
 	if err != nil {
@@ -646,7 +648,7 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 
 	want := []RepresentationInfo{
 		{SourcePath: "$.email", Alias: "domain", Transformer: "email_domain"},
-		{SourcePath: "$.email", Alias: "lower", Transformer: "to_lower"},
+		{SourcePath: "$.email", Alias: lowerAlias, Transformer: "to_lower"},
 	}
 	if got := decoded.Representations("$.email"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("decoded.Representations($.email) = %#v, want %#v", got, want)
@@ -655,7 +657,7 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 
 func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft)),
+		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
@@ -684,8 +686,8 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 
 func TestDecodeLegacyTransformerFailureModeTokens(t *testing.T) {
 	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
-	lower.Alias = "lower"
-	lower.TargetPath = representationTargetPath("$.email", "lower")
+	lower.Alias = lowerAlias
+	lower.TargetPath = representationTargetPath("$.email", lowerAlias)
 	lower.FailureMode = IngestFailureMode("strict")
 
 	host := NewTransformerSpec("$.url", TransformerURLHost, nil)
@@ -724,8 +726,8 @@ func TestDecodeLegacyTransformerFailureModeTokens(t *testing.T) {
 
 func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
 	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
-	lower.Alias = "lower"
-	lower.TargetPath = representationTargetPath("$.email", "lower")
+	lower.Alias = lowerAlias
+	lower.TargetPath = representationTargetPath("$.email", lowerAlias)
 	lower.FailureMode = IngestFailureMode("panic")
 
 	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
@@ -743,7 +745,7 @@ func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
 
 func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(IngestFailureSoft)),
+		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
