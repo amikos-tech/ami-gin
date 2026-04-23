@@ -360,7 +360,8 @@ func (b *GINBuilder) walkJSON(path string, value any, rgID int) error {
 	if err := b.stageMaterializedValue(path, value, state, true); err != nil {
 		return err
 	}
-	return b.mergeStagedPaths(state)
+	b.mergeStagedPaths(state)
+	return nil
 }
 
 func ensureDecoderEOF(decoder *json.Decoder) error {
@@ -698,15 +699,7 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 	if err := b.validateStagedPaths(state); err != nil {
 		return err
 	}
-	if err := b.mergeStagedPaths(state); err != nil {
-		// mergeStagedPaths mutates pathData, bloom, and presentRGs path-by-path
-		// in a sorted loop. A mid-loop failure leaves earlier paths merged for
-		// this document while later ones are untouched, so the builder's state
-		// no longer reflects any single consistent document set. Flag it so
-		// subsequent AddDocument calls can't compound the corruption.
-		b.poisonErr = err
-		return err
-	}
+	b.mergeStagedPaths(state)
 
 	if !exists {
 		b.docIDToPos[docID] = pos
@@ -740,7 +733,8 @@ func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	return nil
 }
 
-func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 	paths := make([]string, 0, len(state.paths))
 	for path := range state.paths {
 		paths = append(paths, path)
@@ -770,12 +764,9 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) error {
 		}
 
 		for _, observation := range staged.numericValues {
-			if err := b.mergeNumericObservation(pd, observation, state.rgID, path); err != nil {
-				return err
-			}
+			b.mergeNumericObservation(pd, observation, state.rgID, path)
 		}
 	}
-	return nil
 }
 
 func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, path string) {
@@ -796,7 +787,8 @@ func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, pat
 	}
 }
 
-func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stagedNumericValue, rgID int, path string) {
 	if !pd.hasNumericValues {
 		pd.hasNumericValues = true
 		if observation.isInt {
@@ -805,20 +797,18 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 			pd.intGlobalMax = observation.intVal
 			b.addIntNumericValue(pd, observation.intVal, rgID)
 			b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-			return nil
+			return
 		}
 		pd.numericValueType = NumericValueTypeFloatMixed
 		pd.floatGlobalMin = observation.floatVal
 		pd.floatGlobalMax = observation.floatVal
 		b.addFloatNumericValue(pd, observation.floatVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatFloat(observation.floatVal, 'f', -1, 64))
-		return nil
+		return
 	}
 
 	if pd.numericValueType == NumericValueTypeIntOnly && !observation.isInt {
-		if err := b.promoteNumericPathToFloat(pd); err != nil {
-			return errors.Wrapf(err, "promote numeric path %s", path)
-		}
+		b.promoteNumericPathToFloat(pd)
 	}
 
 	if pd.numericValueType == NumericValueTypeIntOnly {
@@ -830,13 +820,13 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 		}
 		b.addIntNumericValue(pd, observation.intVal, rgID)
 		b.bloom.AddString(path + "=" + strconv.FormatInt(observation.intVal, 10))
-		return nil
+		return
 	}
 
 	floatVal := observation.floatVal
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			panic(errors.Errorf("validator missed unsupported mixed numeric promotion at %s", path))
 		}
 		floatVal = float64(observation.intVal)
 	}
@@ -849,22 +839,22 @@ func (b *GINBuilder) mergeNumericObservation(pd *pathBuildData, observation stag
 	}
 	b.addFloatNumericValue(pd, floatVal, rgID)
 	b.bloom.AddString(path + "=" + strconv.FormatFloat(floatVal, 'f', -1, 64))
-	return nil
 }
 
-func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) error {
+// MUST_BE_CHECKED_BY_VALIDATOR
+func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) {
 	if pd.numericValueType == NumericValueTypeFloatMixed {
-		return nil
+		return
 	}
 	if !canRepresentIntAsExactFloat(pd.intGlobalMin) || !canRepresentIntAsExactFloat(pd.intGlobalMax) {
-		return errors.New("unsupported mixed numeric promotion")
+		panic(errors.New("validator missed unsupported mixed numeric promotion"))
 	}
 	for _, stat := range pd.numericStats {
 		if !stat.HasValue {
 			continue
 		}
 		if !canRepresentIntAsExactFloat(stat.IntMin) || !canRepresentIntAsExactFloat(stat.IntMax) {
-			return errors.New("unsupported mixed numeric promotion")
+			panic(errors.New("validator missed unsupported mixed numeric promotion"))
 		}
 	}
 	pd.numericValueType = NumericValueTypeFloatMixed
@@ -877,7 +867,6 @@ func (b *GINBuilder) promoteNumericPathToFloat(pd *pathBuildData) error {
 		stat.Min = float64(stat.IntMin)
 		stat.Max = float64(stat.IntMax)
 	}
-	return nil
 }
 
 func (b *GINBuilder) addIntNumericValue(pd *pathBuildData, val int64, rgID int) {
