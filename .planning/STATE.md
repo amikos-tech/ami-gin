@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: shipped
-stopped_at: Phase 17 shipped - PR #32
-last_updated: "2026-04-24T07:04:51.000Z"
-last_activity: 2026-04-24
+status: in-progress
+stopped_at: Completed 18-01-PLAN.md
+last_updated: "2026-04-24T12:33:10Z"
+last_activity: "2026-04-24 - Completed Phase 18 Plan 01 public IngestError API"
 progress:
   total_phases: 15
   completed_phases: 9
-  total_plans: 28
-  completed_plans: 27
-  percent: 96
+  total_plans: 32
+  completed_plans: 28
+  percent: 88
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 18
-Plan: Discuss phase scope
-Status: Phase 17 shipped - PR #32; PR #32 review feedback items 1-5 addressed (260424d); Phase 18 ready for discuss/planning
-Last activity: 2026-04-24 - Completed quick task 260424d: PR #32 review feedback items 1-5
+Plan: 18-02 next
+Status: Phase 18 in progress; 18-01 complete
+Last activity: 2026-04-24 - Completed Phase 18 Plan 01 public IngestError API
 
-Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
+Progress: [███░░░░░░░] 25% for Phase 18 (1/4 plans executed)
 
 ## Performance Metrics
 
@@ -58,7 +58,7 @@ Progress: [██████████] 100% for Phase 17 (4/4 plans executed
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
 | 17 | 4 | Complete (4/4 plans complete) |
-| 18 | TBD | Planned (defining) |
+| 18 | 4 | In Progress (1/4 plans complete) |
 
 ## Accumulated Context
 
@@ -83,6 +83,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **17 planning resolution**: public `IngestFailureMode` string values are planned as `hard` and `soft`, while transformer serialization preserves legacy v9 wire tokens `strict` and `soft_fail` through private mapping.
 - **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
 - **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
+- **18-01 completion**: Public `IngestLayer`/`IngestError` API and builder hard-failure wrapping are complete. Parser, transformer, numeric, schema, and validator-replayed numeric failures are extractable with `errors.As`; parser contract, tragic/internal, and soft-mode paths stay non-`IngestError`.
 
 ### Roadmap Evolution
 
@@ -100,7 +101,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Discuss and plan Phase 18 structured `IngestError` + CLI integration
+- Execute remaining Phase 18 structured `IngestError` + CLI integration plans (18-02 through 18-04)
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -149,8 +150,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-23T17:08:48.000Z
-Stopped at: Phase 17 complete
-Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-VERIFICATION.md
+Last session: 2026-04-24T12:33:10Z
+Stopped at: Completed 18-01-PLAN.md
+Resume file: None
 
-**Next step:** Discuss Phase 18 structured `IngestError` + CLI integration.
+**Next step:** Execute `.planning/phases/18-structured-ingesterror-cli-integration/18-02-PLAN.md`.
