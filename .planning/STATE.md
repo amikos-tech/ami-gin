@@ -27,8 +27,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 Phase: 18
 Plan: Discuss phase scope
-Status: Phase 17 shipped - PR #32; Phase 18 ready for discuss/planning
-Last activity: 2026-04-24
+Status: Phase 17 shipped - PR #32; PR #32 review feedback items 1-5 addressed (260424d); Phase 18 ready for discuss/planning
+Last activity: 2026-04-24 - Completed quick task 260424d: PR #32 review feedback items 1-5
 
 Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
 
@@ -126,6 +126,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260424 | Phase 17 review feedback: Finalize nil caller guards, explicit soft-skip kinds/counters, nil Encode handling, and ErrInvalidFormat coverage | 2026-04-24 | this commit | [260424-address-review-feedback-finalize-soft-skips](./quick/260424-address-review-feedback-finalize-soft-skips/) |
 | 260424b | Phase 17 follow-up review: ErrNilIndex sentinel, builder Err propagation, soft-skip cleanup, and guard coverage | 2026-04-24 | this commit | [260424-follow-up-review-finalize-sentinels](./quick/260424-follow-up-review-finalize-sentinels/) |
 | 260424c | Phase 17 janitorial review suggestions: inline experiment finalize trampoline and document soft-skip fallback invariant | 2026-04-24 | this commit | [260424-janitorial-review-suggestions](./quick/260424-janitorial-review-suggestions/) |
+| 260424d | PR #32 review feedback items 1-5: drop redundant normalize calls, expand CHANGELOG, document parseFloat decimal-only, remove dead-code Group guard, document soft-skip parser remap invariant | 2026-04-24 | 9807748 | [260424-address-pr32-feedback-items-1-5](./quick/260424-address-pr32-feedback-items-1-5/) |
 
 ## Deferred Items
 
