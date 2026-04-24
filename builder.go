@@ -398,8 +398,9 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		}
 	}
 
-	// Return parser errors verbatim; do not wrap here. Reset the handoff
-	// fields before dispatch so AddDocument can verify Parse called
+	// Parse errors become parser-layer IngestErrors unless soft-mode or a
+	// stage-callback error takes the document down a different path. Reset the
+	// handoff fields before dispatch so AddDocument can verify Parse called
 	// BeginDocument exactly once with the expected row-group id.
 	b.currentDocState = nil
 	b.beginDocumentCalls = 0
@@ -657,11 +658,29 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 			)
 		}
 		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
+			remapCompanionIngestErrorPath(err, canonicalPath, registration.TargetPath)
 			return err
 		}
 	}
 
 	return nil
+}
+
+func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
+	var ingestErr *IngestError
+	if !errors.As(err, &ingestErr) || ingestErr == nil {
+		return
+	}
+	path := ingestErr.Path()
+	if path == "" {
+		return
+	}
+	if path == targetPath ||
+		strings.HasPrefix(path, targetPath+".") ||
+		strings.HasPrefix(path, targetPath+"[") ||
+		strings.HasPrefix(path, "__derived:") {
+		ingestErr.path = sourcePath
+	}
 }
 
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
@@ -735,6 +754,16 @@ func stagedNumericFromValue(value any) (stagedNumericValue, error) {
 	default:
 		return stagedNumericValue{}, errors.Errorf("unsupported numeric type %T", value)
 	}
+}
+
+func formatStagedNumericValue(value stagedNumericValue) string {
+	if value.raw != "" {
+		return value.raw
+	}
+	if value.isInt {
+		return strconv.FormatInt(value.intVal, 10)
+	}
+	return strconv.FormatFloat(value.floatVal, 'g', -1, 64)
 }
 
 func (b *GINBuilder) stageNumericObservation(path string, observation stagedNumericValue, state *documentBuildState) error {
@@ -970,6 +999,7 @@ func (b *GINBuilder) recordSoftDocumentSkip(kind softSkipKind) {
 	)
 }
 
+// +hard-ingest validate staged numeric transitions before merge.
 func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	preview := newDocumentBuildState(state.rgID)
 	paths := make([]string, 0, len(state.paths))

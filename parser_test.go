@@ -294,7 +294,7 @@ func TestAddDocumentReturnsParserIngestError(t *testing.T) {
 	if !stderrors.As(got, &ingestErr) {
 		t.Fatalf("AddDocument error = %v, want *IngestError", got)
 	}
-	if ingestErr.Layer != IngestLayerParser || ingestErr.Path != "" || !stderrors.Is(ingestErr.Err, sentinel) {
+	if ingestErr.Layer() != IngestLayerParser || ingestErr.Path() != "" || !stderrors.Is(ingestErr.Cause(), sentinel) {
 		t.Fatalf("IngestError = %+v, want parser layer, unknown path, sentinel cause", ingestErr)
 	}
 }

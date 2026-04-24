@@ -31,7 +31,10 @@ const (
 	experimentStatusComplete  = "complete"
 	experimentStatusPartial   = "partial"
 	experimentStatusTruncated = "truncated"
+	experimentStatusTragic    = "aborted:tragic"
 )
+
+const experimentUnknownFailureLayer gin.IngestLayer = "unknown"
 
 func cmdExperiment(args []string) {
 	if code := runExperiment(args, os.Stdin, os.Stdout, os.Stderr); code != 0 {
@@ -191,6 +194,8 @@ var errExperimentAbort = errors.New("experiment ingest aborted")
 
 const experimentFailureSampleLimit = 3
 
+// experimentDefaultConfig is overridden in tests; tests that replace it must
+// not use t.Parallel while the override is active.
 var experimentDefaultConfig = gin.DefaultConfig
 
 // newExperimentInterruptContext is overridable in tests to inject a
@@ -406,13 +411,9 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 		// rgID is derived from accepted documents rather than source line numbers.
 		lineErr := validateExperimentRecord(builder, record, result.ingestedDocs/rgSize)
 		if lineErr != nil {
-			fmt.Fprintf(stderr, "line %d: %v\n", lineNumber, lineErr)
-			if onError == experimentOnErrorAbort {
-				return experimentBuildResult{}, errExperimentAbort
+			if err := handleExperimentLineError(&result, lineNumber, lineErr, builder.Err(), onError, stderr); err != nil {
+				return experimentBuildResult{}, err
 			}
-			result.skippedLines++
-			result.errorCount++
-			recordExperimentIngestFailure(&result, lineNumber, lineErr)
 			if readErr == io.EOF {
 				break
 			}
@@ -440,6 +441,21 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 	return result, nil
 }
 
+func handleExperimentLineError(result *experimentBuildResult, lineNumber int, lineErr, builderErr error, onError string, stderr io.Writer) error {
+	fmt.Fprintf(stderr, "line %d: %v\n", lineNumber, lineErr)
+	if onError == experimentOnErrorAbort {
+		return errExperimentAbort
+	}
+
+	result.skippedLines++
+	result.errorCount++
+	recordExperimentIngestFailure(result, lineNumber, lineErr)
+	if builderErr != nil {
+		return newExperimentTragicAbortError(lineNumber, lineErr, builderErr)
+	}
+	return nil
+}
+
 func finalizeExperimentIndexResult(idx *gin.GINIndex, builderErr error, result experimentBuildResult) (experimentBuildResult, error) {
 	result.idx = idx
 	if idx != nil {
@@ -459,15 +475,29 @@ func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
 }
 
 func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int, err error) {
-	var ingestErr *gin.IngestError
-	if !errors.As(err, &ingestErr) {
-		return
-	}
 	if result.ingestFailures == nil {
 		result.ingestFailures = make(map[gin.IngestLayer]*experimentFailureGroup)
 	}
 
-	layer := ingestErr.Layer
+	layer := experimentUnknownFailureLayer
+	message := err.Error()
+	sample := experimentFailureSample{
+		Line:       lineNumber,
+		InputIndex: lineNumber - 1,
+		Message:    message,
+	}
+
+	var ingestErr *gin.IngestError
+	if errors.As(err, &ingestErr) && ingestErr != nil {
+		layer = ingestErr.Layer()
+		if cause := ingestErr.Cause(); cause != nil {
+			message = cause.Error()
+		}
+		sample.Path = ingestErr.Path()
+		sample.Value = ingestErr.Value()
+		sample.Message = message
+	}
+
 	group, ok := result.ingestFailures[layer]
 	if !ok {
 		group = &experimentFailureGroup{Layer: string(layer)}
@@ -477,20 +507,9 @@ func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int
 	if len(group.Samples) >= experimentFailureSampleLimit {
 		return
 	}
-
-	message := err.Error()
-	if ingestErr.Err != nil {
-		message = ingestErr.Err.Error()
-	}
 	// Values are captured verbatim per the library contract; report growth is
 	// bounded by sample count rather than by truncating individual values.
-	group.Samples = append(group.Samples, experimentFailureSample{
-		Line:       lineNumber,
-		InputIndex: lineNumber - 1,
-		Path:       ingestErr.Path,
-		Value:      ingestErr.Value,
-		Message:    message,
-	})
+	group.Samples = append(group.Samples, sample)
 }
 
 func experimentIngestFailureGroups(groups map[gin.IngestLayer]*experimentFailureGroup) []experimentFailureGroup {
@@ -543,9 +562,21 @@ func experimentIngestLayerRank(layer gin.IngestLayer) (int, bool) {
 		return 2, true
 	case gin.IngestLayerSchema:
 		return 3, true
+	case experimentUnknownFailureLayer:
+		return 4, true
 	default:
 		return 0, false
 	}
+}
+
+func newExperimentTragicAbortError(lineNumber int, lineErr, builderErr error) error {
+	if builderErr == nil {
+		return nil
+	}
+	if lineErr != nil && !errors.Is(lineErr, builderErr) {
+		return errors.Wrapf(builderErr, "%s after line %d following ingest error: %v", experimentStatusTragic, lineNumber, lineErr)
+	}
+	return errors.Wrapf(builderErr, "%s after line %d", experimentStatusTragic, lineNumber)
 }
 
 func experimentSummaryStatus(source experimentInputSource, result experimentBuildResult) string {

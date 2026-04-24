@@ -2,7 +2,6 @@ package gin
 
 import (
 	"fmt"
-	"strconv"
 )
 
 // IngestLayer identifies the ingest layer that rejected a document.
@@ -24,25 +23,57 @@ const (
 
 // IngestError reports a hard per-document ingest failure.
 //
-// Value is a verbatim string representation of the offending input or value;
-// the library does not redact or truncate it. Callers that log untrusted
-// documents own their redaction and output-size policy.
+// Path() returns the source JSONPath that rejected the document. Parser-level
+// failures that are not attributable to a path report the empty string.
+//
+// Layer() identifies the ingest stage that rejected the document. Callers must
+// tolerate future layer strings in addition to the built-in parser,
+// transformer, numeric, and schema values.
+//
+// Value() returns a verbatim string representation of the offending input or
+// value. The library does not redact or truncate it; callers that log
+// untrusted documents own their redaction and output-size policy.
 type IngestError struct {
-	Path  string
-	Layer IngestLayer
-	Value string
-	Err   error
+	path  string
+	layer IngestLayer
+	value string
+	err   error
 }
 
-// Error returns a human-readable message for the hard ingest failure.
+// Path returns the source JSONPath that rejected the document.
+func (e *IngestError) Path() string {
+	if e == nil {
+		return ""
+	}
+	return e.path
+}
+
+// Layer returns the ingest stage that rejected the document.
+func (e *IngestError) Layer() IngestLayer {
+	if e == nil {
+		return ""
+	}
+	return e.layer
+}
+
+// Value returns the verbatim offending input or transformed value.
+func (e *IngestError) Value() string {
+	if e == nil {
+		return ""
+	}
+	return e.value
+}
+
+// Error returns a stable human-readable message for the hard ingest failure.
+// The "ingest <layer> failure [at <path>]: <cause>" format is API-stable.
 func (e *IngestError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
-	if e.Path == "" {
-		return fmt.Sprintf("ingest %s failure: %v", e.Layer, e.Err)
+	if e.path == "" {
+		return fmt.Sprintf("ingest %s failure: %v", e.layer, e.err)
 	}
-	return fmt.Sprintf("ingest %s failure at %s: %v", e.Layer, e.Path, e.Err)
+	return fmt.Sprintf("ingest %s failure at %s: %v", e.layer, e.path, e.err)
 }
 
 // Unwrap returns the underlying cause for stdlib error unwrapping.
@@ -50,7 +81,7 @@ func (e *IngestError) Unwrap() error {
 	if e == nil {
 		return nil
 	}
-	return e.Err
+	return e.err
 }
 
 // Cause returns the underlying cause for github.com/pkg/errors compatibility.
@@ -58,7 +89,7 @@ func (e *IngestError) Cause() error {
 	if e == nil {
 		return nil
 	}
-	return e.Err
+	return e.err
 }
 
 func newIngestError(layer IngestLayer, path string, value any, err error) error {
@@ -73,19 +104,9 @@ func newIngestErrorString(layer IngestLayer, path string, value string, err erro
 		return nil
 	}
 	return &IngestError{
-		Path:  path,
-		Layer: layer,
-		Value: value,
-		Err:   err,
+		path:  path,
+		layer: layer,
+		value: value,
+		err:   err,
 	}
-}
-
-func formatStagedNumericValue(value stagedNumericValue) string {
-	if value.raw != "" {
-		return value.raw
-	}
-	if value.isInt {
-		return strconv.FormatInt(value.intVal, 10)
-	}
-	return strconv.FormatFloat(value.floatVal, 'g', -1, 64)
 }
