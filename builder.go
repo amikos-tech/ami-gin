@@ -409,6 +409,11 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 
 	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
 		if isSkipDocument(err) {
+			// Invariant: bare errSkipDocument sentinels (softSkipKindOther)
+			// originate only from the parser path here. Numeric and other
+			// skip sites must construct a typed softSkipDocumentError with
+			// an explicit kind; if a new non-parser site returns a bare
+			// sentinel, it will be misclassified as a parser skip.
 			kind := softSkipDocumentKind(err)
 			if kind == softSkipKindOther {
 				kind = softSkipKindParser
