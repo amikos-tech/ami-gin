@@ -428,7 +428,7 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 			b.recordSoftDocumentSkip(softSkipKindParser)
 			return nil
 		}
-		return err
+		return newIngestErrorString(IngestLayerParser, "", string(jsonDoc), err)
 	}
 
 	if b.beginDocumentCalls == 0 {
@@ -541,7 +541,12 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 	case json.Number:
 		return b.stageJSONNumberLiteral(canonicalPath, v.String(), state)
 	default:
-		return errors.Errorf("unsupported JSON token type %T at %s", token, canonicalPath)
+		return newIngestError(
+			IngestLayerSchema,
+			canonicalPath,
+			token,
+			errors.Errorf("unsupported JSON token type %T", token),
+		)
 	}
 }
 
@@ -586,6 +591,14 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case int64:
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint:
+		if v > math.MaxInt64 {
+			return newIngestError(
+				IngestLayerSchema,
+				canonicalPath,
+				value,
+				errors.New("unsupported unsigned integer"),
+			)
+		}
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint8:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
@@ -594,6 +607,14 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case uint32:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
 	case uint64:
+		if v > math.MaxInt64 {
+			return newIngestError(
+				IngestLayerSchema,
+				canonicalPath,
+				value,
+				errors.New("unsupported unsigned integer"),
+			)
+		}
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case []any:
 		for i, item := range v {
@@ -613,7 +634,12 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 		}
 		return nil
 	default:
-		return errors.Errorf("unsupported transformed value type %T at %s", value, canonicalPath)
+		return newIngestError(
+			IngestLayerSchema,
+			canonicalPath,
+			value,
+			errors.Errorf("unsupported transformed value type %T", value),
+		)
 	}
 }
 
@@ -638,7 +664,12 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 				)
 				continue
 			}
-			return errors.Errorf("companion transformer %q on %s failed to produce a value", registration.Alias, canonicalPath)
+			return newIngestError(
+				IngestLayerTransformer,
+				canonicalPath,
+				value,
+				errors.Errorf("companion transformer %q failed to produce a value", registration.Alias),
+			)
 		}
 		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
 			return err
