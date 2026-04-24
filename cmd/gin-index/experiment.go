@@ -191,6 +191,8 @@ var errExperimentAbort = errors.New("experiment ingest aborted")
 
 const experimentFailureSampleLimit = 3
 
+var experimentDefaultConfig = gin.DefaultConfig
+
 // newExperimentInterruptContext is overridable in tests to inject a
 // pre-canceled context without delivering a real SIGINT to the process.
 var newExperimentInterruptContext = func(parent context.Context) (context.Context, context.CancelFunc) {
@@ -680,7 +682,7 @@ func trimExperimentLineEnding(line []byte) []byte {
 }
 
 func experimentConfigForLogLevel(level string, stderr io.Writer) (gin.GINConfig, error) {
-	config := gin.DefaultConfig()
+	config := experimentDefaultConfig()
 
 	switch level {
 	case experimentLogLevelOff:

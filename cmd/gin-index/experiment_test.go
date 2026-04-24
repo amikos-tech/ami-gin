@@ -723,8 +723,13 @@ func TestRunExperimentHundredDocsKnownIngestFailuresJSON(t *testing.T) {
 	}
 
 	failures := decodeExperimentFailures(t, summary["failures"])
+	const (
+		wantParserFailures      = 3
+		wantTransformerFailures = 4
+		wantNumericFailures     = 3
+	)
 	wantLayers := []string{"parser", "transformer", "numeric"}
-	wantCounts := []int{3, 4, 3}
+	wantCounts := []int{wantParserFailures, wantTransformerFailures, wantNumericFailures}
 	if len(failures) != len(wantLayers) {
 		t.Fatalf("len(summary.failures) = %d, want %d: %#v", len(failures), len(wantLayers), failures)
 	}
