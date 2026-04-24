@@ -343,7 +343,7 @@ func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
 	if len(failures) != 5 {
 		t.Fatalf("len(failures) = %d, want 5", len(failures))
 	}
-	wantLayers := []string{"parser", "transformer", "numeric", "schema", "unknown"}
+	wantLayers := []string{"parser", "transformer", "numeric", "schema", string(experimentUnknownFailureLayer)}
 	for i, want := range wantLayers {
 		if failures[i].Layer != want {
 			t.Fatalf("failures[%d].Layer = %q, want %q", i, failures[i].Layer, want)
@@ -515,7 +515,7 @@ func TestRunExperimentOnErrorContinueTragicAbortJSON(t *testing.T) {
 		t.Fatalf("summary.error_count = %d, want 1", got)
 	}
 	failures := decodeExperimentFailures(t, summary["failures"])
-	if len(failures) != 1 || failures[0].Layer != "unknown" || failures[0].Count != 1 {
+	if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 1 {
 		t.Fatalf("summary.failures = %#v, want one preserved tragic unknown failure", failures)
 	}
 	if len(failures[0].Samples) != 1 || failures[0].Samples[0].Line != 2 {
@@ -564,7 +564,7 @@ func TestRunExperimentOnErrorContinueTragicAbortJSONPreservesTriggeringSamplePas
 		t.Fatalf("summary.status = %q, want %q", got, experimentStatusTragic)
 	}
 	failures := decodeExperimentFailures(t, summary["failures"])
-	if len(failures) != 1 || failures[0].Layer != "unknown" || failures[0].Count != 4 {
+	if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 4 {
 		t.Fatalf("summary.failures = %#v, want one tragic unknown bucket with count 4", failures)
 	}
 	if len(failures[0].Samples) != 4 {
@@ -964,7 +964,7 @@ func TestRunExperimentOnErrorContinue(t *testing.T) {
 			t.Fatalf("summary.status = %q, want %s", got, experimentStatusPartial)
 		}
 		failures := decodeExperimentFailures(t, summary["failures"])
-		if len(failures) != 1 || failures[0].Layer != "unknown" || failures[0].Count != 1 {
+		if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 1 {
 			t.Fatalf("summary.failures = %#v, want one unknown grouped failure", failures)
 		}
 	})
