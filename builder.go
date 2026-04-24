@@ -14,6 +14,7 @@ import (
 	"github.com/pkg/errors"
 
 	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 const maxExactFloatInt = int64(1 << 53)
@@ -26,6 +27,8 @@ var errSkipDocument = errors.New("skip document")
 type softSkipKind string
 
 const (
+	errorTypeDeserialization = "deserialization"
+
 	softSkipKindOther   softSkipKind = "other"
 	softSkipKindParser  softSkipKind = "parser"
 	softSkipKindNumeric softSkipKind = "numeric"
@@ -52,10 +55,10 @@ func isSkipDocument(err error) bool {
 	return errors.Is(err, errSkipDocument)
 }
 
-func newSoftSkipDocumentErrorf(kind softSkipKind, format string, args ...any) error {
+func newSoftSkipNumericDocumentError(path string) error {
 	return &softSkipDocumentError{
-		kind: kind,
-		err:  errors.Wrapf(errSkipDocument, format, args...),
+		kind: softSkipKindNumeric,
+		err:  errors.Wrapf(errSkipDocument, "soft numeric failure at %s", path),
 	}
 }
 
@@ -626,7 +629,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 					"builder skipped companion representation after soft transformer failure",
 					logging.AttrOperation("builder.transform"),
 					logging.AttrStatus("skipped"),
-					logging.AttrErrorType("other"),
+					logging.AttrErrorType(telemetry.ErrorTypeOther),
 				)
 				continue
 			}
@@ -644,7 +647,7 @@ func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBui
 	isInt, intVal, floatVal, err := parseJSONNumberLiteral(raw)
 	if err != nil {
 		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-			return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
+			return newSoftSkipNumericDocumentError(path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
@@ -678,7 +681,7 @@ func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentB
 	obs, err := stagedNumericFromValue(value)
 	if err != nil {
 		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-			return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
+			return newSoftSkipNumericDocumentError(path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
@@ -749,7 +752,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 
 		if !canRepresentIntAsExactFloat(pathState.numericSimIntMin) || !canRepresentIntAsExactFloat(pathState.numericSimIntMax) {
 			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-				return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
+				return newSoftSkipNumericDocumentError(path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
@@ -765,7 +768,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
 			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-				return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
+				return newSoftSkipNumericDocumentError(path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
@@ -855,7 +858,7 @@ func runMergeWithRecover(logger logging.Logger, fn func()) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			attrs := []logging.Attr{
-				logging.AttrErrorType("other"),
+				logging.AttrErrorType(telemetry.ErrorTypeOther),
 				logging.Attr{Key: "panic_type", Value: fmt.Sprintf("%T", recovered)},
 			}
 			if message, ok := safeMergePanicMessage(recovered); ok {
@@ -918,11 +921,11 @@ func (b *GINBuilder) Err() error {
 func (b *GINBuilder) recordSoftDocumentSkip(kind softSkipKind) {
 	b.numSoftSkips++
 	message := "builder skipped document after soft ingest failure"
-	errorType := "other"
+	errorType := telemetry.ErrorTypeOther
 	switch kind {
 	case softSkipKindParser:
 		message = "builder skipped document after soft parser failure"
-		errorType = "deserialization"
+		errorType = errorTypeDeserialization
 	case softSkipKindNumeric:
 		message = "builder skipped document after soft numeric failure"
 	}

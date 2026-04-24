@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
@@ -266,8 +268,8 @@ func TestSoftSkippedDocumentsAreObservable(t *testing.T) {
 	if value, ok := softSkipAttrValue(entry.attrs, "status"); !ok || value != "skipped" {
 		t.Fatalf("status attr = %q, %v; want %q, true", value, ok, "skipped")
 	}
-	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != "deserialization" {
-		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "deserialization")
+	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != errorTypeDeserialization {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, errorTypeDeserialization)
 	}
 }
 
@@ -305,8 +307,8 @@ func TestNumericFailureModeSoftLogsExplicitKind(t *testing.T) {
 	if value, ok := softSkipAttrValue(entry.attrs, "status"); !ok || value != "skipped" {
 		t.Fatalf("status attr = %q, %v; want %q, true", value, ok, "skipped")
 	}
-	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != "other" {
-		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "other")
+	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != telemetry.ErrorTypeOther {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, telemetry.ErrorTypeOther)
 	}
 }
 

@@ -520,7 +520,7 @@ func classifySerializeError(err error) string {
 		return "invalid_format"
 	}
 	if stderrors.Is(err, ErrVersionMismatch) {
-		return "deserialization"
+		return errorTypeDeserialization
 	}
 	if stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
 		return "integrity"
