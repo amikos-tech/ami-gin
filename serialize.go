@@ -85,6 +85,10 @@ var (
 	// ErrDecodedSizeExceedsLimit is returned by Decode when compressed input
 	// expands beyond maxDecodedIndexSize during zstd decompression.
 	ErrDecodedSizeExceedsLimit = errors.New("decoded size exceeds configured limit")
+
+	// ErrNilIndex is returned when a serialization or persistence boundary is
+	// asked to operate on a nil index.
+	ErrNilIndex = errors.New("nil index")
 )
 
 // CompressionLevel specifies the compression level for index serialization.
@@ -277,7 +281,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
 	}
 	if idx == nil {
-		return nil, errors.New("encode nil index")
+		return nil, errors.Wrap(ErrNilIndex, "encode index")
 	}
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")

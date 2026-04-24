@@ -250,6 +250,9 @@ func TestSoftSkippedDocumentsAreObservable(t *testing.T) {
 	if builder.SoftSkippedDocuments() != 1 {
 		t.Fatalf("SoftSkippedDocuments() = %d, want 1", builder.SoftSkippedDocuments())
 	}
+	if builder.NumSoftSkippedRepresentations() != 0 {
+		t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0", builder.NumSoftSkippedRepresentations())
+	}
 	if len(logger.entries) != 1 {
 		t.Fatalf("captured info log entries = %d, want 1", len(logger.entries))
 	}
@@ -286,12 +289,24 @@ func TestNumericFailureModeSoftLogsExplicitKind(t *testing.T) {
 	if builder.NumSoftSkippedDocuments() != 1 {
 		t.Fatalf("NumSoftSkippedDocuments() = %d, want 1", builder.NumSoftSkippedDocuments())
 	}
+	if builder.NumSoftSkippedRepresentations() != 0 {
+		t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0", builder.NumSoftSkippedRepresentations())
+	}
 	if len(logger.entries) != 1 {
 		t.Fatalf("captured info log entries = %d, want 1", len(logger.entries))
 	}
 	entry := logger.entries[0]
 	if entry.message != "builder skipped document after soft numeric failure" {
 		t.Fatalf("info log message = %q, want numeric soft-skip message", entry.message)
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "operation"); !ok || value != "builder.add_document" {
+		t.Fatalf("operation attr = %q, %v; want %q, true", value, ok, "builder.add_document")
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "status"); !ok || value != "skipped" {
+		t.Fatalf("status attr = %q, %v; want %q, true", value, ok, "skipped")
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != "other" {
+		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "other")
 	}
 }
 

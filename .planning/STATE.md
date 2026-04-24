@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: ready_to_discuss
-stopped_at: Phase 17 review feedback addressed
-last_updated: "2026-04-24T04:29:12.000Z"
+stopped_at: Phase 17 follow-up review feedback addressed
+last_updated: "2026-04-24T06:26:00.000Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 15
@@ -124,6 +124,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260424 | Phase 17 review feedback: Finalize nil caller guards, explicit soft-skip kinds/counters, nil Encode handling, and ErrInvalidFormat coverage | 2026-04-24 | this commit | [260424-address-review-feedback-finalize-soft-skips](./quick/260424-address-review-feedback-finalize-soft-skips/) |
+| 260424b | Phase 17 follow-up review: ErrNilIndex sentinel, builder Err propagation, soft-skip cleanup, and guard coverage | 2026-04-24 | this commit | [260424-follow-up-review-finalize-sentinels](./quick/260424-follow-up-review-finalize-sentinels/) |
 
 ## Deferred Items
 
