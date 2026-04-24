@@ -4,7 +4,7 @@ milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: phase-complete
 stopped_at: Phase 18 verified
-last_updated: "2026-04-24T14:46:00Z"
+last_updated: "2026-04-24T17:13:00Z"
 last_activity: "2026-04-24 - Verified Phase 18 structured IngestError + CLI integration"
 progress:
   total_phases: 15
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 Phase: 18
 Plan: 4/4 plans complete
 Status: Phase 18 verified; v1.2 functionally complete
-Last activity: 2026-04-24 - Completed quick task 260424f: Phase 18 re-review follow-ups
+Last activity: 2026-04-24 - Completed quick task 260424g: Phase 18 cycle 3 follow-ups
 
 Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
 
@@ -134,6 +134,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260424d | PR #32 review feedback items 1-5: drop redundant normalize calls, expand CHANGELOG, document parseFloat decimal-only, remove dead-code Group guard, document soft-skip parser remap invariant | 2026-04-24 | 9807748 | [260424-address-pr32-feedback-items-1-5](./quick/260424-address-pr32-feedback-items-1-5/) |
 | 260424e | Phase 18 review follow-ups: source-path remap, unknown CLI failures, tragic continue abort, unexported IngestError accessors, schema/sample-cap/guard coverage | 2026-04-24 | this commit | [260424e-phase18-review-followups](./quick/260424e-phase18-review-followups/) |
 | 260424f | Phase 18 re-review follow-ups: structured tragic status/reporting, end-to-end tragic CLI coverage, changelog/security refresh, helper docs, and nil-safe accessor tests | 2026-04-24 | this commit | [260424f-phase18-rereview-followups](./quick/260424f-phase18-rereview-followups/) |
+| 260424g | Phase 18 cycle 3 follow-ups: tragic sample-cap bypass, stronger tragic CLI assertions, text tragic coverage, SECURITY accessor/citation refresh, and remap godoc clarification | 2026-04-24 | this commit | [260424g-phase18-cycle3-followups](./quick/260424g-phase18-cycle3-followups/) |
 
 ## Deferred Items
 

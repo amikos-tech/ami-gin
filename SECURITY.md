@@ -26,9 +26,9 @@ Security support currently applies to the latest development line on main and, o
 
 | Threat ID | Category | Accepted Risk | Rationale |
 |-----------|----------|---------------|-----------|
-| T18-01 | Information Disclosure | `IngestError.Value` stores verbatim offending values without redaction or truncation. | Phase 18 intentionally preserves caller-visible verbatim values; callers own redaction policy. |
-| T18-03 | Denial of Service | Library-side `IngestError.Value` remains unbounded. | Phase 18 intentionally avoids a byte cap to preserve verbatim semantics; callers own logging and output-size policy. |
-| T18-08 | Information Disclosure | CLI failure samples copy verbatim `IngestError.Value` into reports. | Phase 18 intentionally keeps values verbatim; CLI growth is bounded by at most 3 samples per layer. |
+| T18-01 | Information Disclosure | `IngestError.Value()` stores verbatim offending values without redaction or truncation. | Phase 18 intentionally preserves caller-visible verbatim values; callers own redaction policy. |
+| T18-03 | Denial of Service | Library-side `IngestError.Value()` remains unbounded. | Phase 18 intentionally avoids a byte cap to preserve verbatim semantics; callers own logging and output-size policy. |
+| T18-08 | Information Disclosure | CLI failure samples copy verbatim `IngestError.Value()` into reports. | Phase 18 intentionally keeps values verbatim; CLI growth is bounded by at most 3 samples per layer. |
 
 ## Phase Audit Log
 
@@ -51,9 +51,9 @@ Security support currently applies to the latest development line on main and, o
 | T18-06 | Denial of Service | mitigate | CLOSED | `ingest_error_guard_test.go:11`, `ingest_error_guard_test.go:143`, `ingest_error_guard_test.go:181`, and `ingest_error_guard_test.go:208` auto-discover hard-ingest surfaces, track tainted plain-error assignments, and document the `stage*`/`+hard-ingest` scope. |
 | T18-07 | Repudiation | mitigate | CLOSED | `failure_modes_test.go:184`, `failure_modes_test.go:206`, `failure_modes_test.go:547`, `failure_modes_test.go:604`, and `failure_modes_test.go:782` keep parser-contract, soft-mode, tragic-state, and recovered-panic exceptions explicit in tests. |
 | T18-08 | Information Disclosure | accept | CLOSED | Accepted risk logged in this file. |
-| T18-09 | Tampering | mitigate | CLOSED | `cmd/gin-index/experiment.go:486` stores failed-line `input_index` separately from accepted docs; `cmd/gin-index/experiment_test.go:789` checks parser sample line/input-index; `cmd/gin-index/experiment_test.go:821` and `cmd/gin-index/experiment_test.go:827` assert 87 accepted docs collapse to 9 row groups. |
-| T18-10 | Denial of Service | mitigate | CLOSED | `cmd/gin-index/experiment.go:534` increments failure counts before `cmd/gin-index/experiment.go:535` enforces the 3-sample cap; `cmd/gin-index/experiment_test.go:319` and `cmd/gin-index/experiment_test.go:323` verify counts accumulate while samples stay capped. |
-| T18-11 | Repudiation | mitigate | CLOSED | `cmd/gin-index/experiment.go:524` sorts failure groups deterministically and `cmd/gin-index/experiment.go:563` plus `cmd/gin-index/experiment.go:565` pin parser/transformer/numeric/schema/unknown ordering; `cmd/gin-index/experiment_test.go:279`, `cmd/gin-index/experiment_test.go:774`, and `cmd/gin-index/experiment_test.go:844` assert stable order. |
+| T18-09 | Tampering | mitigate | CLOSED | `recordExperimentIngestFailure` in `cmd/gin-index/experiment.go` stores failed-line `input_index` separately from accepted docs; `TestRunExperimentOnErrorContinueIngestFailuresJSON` checks parser sample line/input-index, and `TestRunExperimentHundredDocsKnownIngestFailuresJSON` asserts 87 accepted docs collapse to 9 row groups. |
+| T18-10 | Denial of Service | mitigate | CLOSED | `recordExperimentIngestFailure` in `cmd/gin-index/experiment.go` increments failure counts before enforcing the sample cap; `TestRecordExperimentIngestFailureCapsSamplesInArrivalOrder` verifies counts accumulate while samples stay capped. |
+| T18-11 | Repudiation | mitigate | CLOSED | `experimentIngestFailureGroups` and `experimentIngestLayerRank` in `cmd/gin-index/experiment.go` pin parser/transformer/numeric/schema/unknown ordering; `TestExperimentIngestFailureGroupsDeterministic`, `TestRunExperimentOnErrorContinueIngestFailuresJSON`, and `TestRunExperimentHundredDocsKnownIngestFailuresJSON` assert stable order. |
 | T18-12 | Information Disclosure | mitigate | CLOSED | `ingest_error.go:33` documents that `Value()` is verbatim and caller-owned for redaction/output policy, and `ingest_error.go:68` makes the public `Error()` string contract explicit; `CHANGELOG.md:5` repeats the release-facing warning. |
 | T18-13 | Repudiation | mitigate | CLOSED | `.planning/phases/18-structured-ingesterror-cli-integration/18-VALIDATION.md:22`, `:23`, `:81`, and `:84` record focused and full verification commands plus execution results. |
 

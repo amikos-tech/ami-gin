@@ -668,8 +668,10 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 
 // remapCompanionIngestErrorPath hides internal derived-path names from
 // user-facing ingest errors by rewriting any leaked companion target path back
-// to the source path in place. The offending Value is left untouched because it
-// still reflects the transformed representation that actually failed.
+// to the source path in place via the caller's error pointer discovered through
+// errors.As. The offending Value is left untouched because it still reflects
+// the transformed representation that actually failed. Returns without effect
+// when err does not unwrap to *IngestError or when the path is empty.
 func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
 	var ingestErr *IngestError
 	if !errors.As(err, &ingestErr) || ingestErr == nil {

@@ -465,7 +465,7 @@ func handleExperimentLineError(result *experimentBuildResult, lineNumber int, li
 
 	result.skippedLines++
 	result.errorCount++
-	recordExperimentIngestFailure(result, lineNumber, lineErr)
+	recordExperimentIngestFailure(result, lineNumber, lineErr, builderErr != nil)
 	if builderErr != nil {
 		return newExperimentTragicAbortError(lineNumber, lineErr, builderErr)
 	}
@@ -492,6 +492,9 @@ func (e *experimentTragicAbortError) Error() string {
 	return message
 }
 
+// Unwrap intentionally exposes only the builder-closing tragic error. The
+// original lineErr has already been recorded into structured failure metadata
+// before wrapping and is not part of the returned error chain.
 func (e *experimentTragicAbortError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -524,7 +527,7 @@ func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
 	return ceilDiv(ingestedDocs, rgSize)
 }
 
-func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int, err error) {
+func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int, err error, forceSample bool) {
 	if result.ingestFailures == nil {
 		result.ingestFailures = make(map[gin.IngestLayer]*experimentFailureGroup)
 	}
@@ -554,11 +557,13 @@ func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int
 		result.ingestFailures[layer] = group
 	}
 	group.Count++
-	if len(group.Samples) >= experimentFailureSampleLimit {
+	if len(group.Samples) >= experimentFailureSampleLimit && !forceSample {
 		return
 	}
 	// Values are captured verbatim per the library contract; report growth is
 	// bounded by sample count rather than by truncating individual values.
+	// Tragic builder-closing failures bypass the cap so the triggering sample is
+	// always retained in the emitted report.
 	group.Samples = append(group.Samples, sample)
 }
 
