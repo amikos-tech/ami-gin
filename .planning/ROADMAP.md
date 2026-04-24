@@ -5,7 +5,7 @@
 - ✅ **v0.1.0 OSS Launch** — Phases 01-05 (shipped pre-v1.0)
 - ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (functionally complete 2026-04-22; PRs #29 and #30 merged)
-- 🚧 **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (started 2026-04-23)
+- ✅ **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (functionally complete 2026-04-24)
 - ⏸️ **v1.3 SIMD JSON Path** — Phases 19-20 (preview only; deferred 2026-04-21 pending `pure-simdjson` license/tag/distribution resolution; renumbered from v1.2 on 2026-04-23)
 
 ## Phases
@@ -34,11 +34,11 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — ACTIVE
+### ✅ v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — FUNCTIONALLY COMPLETE
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
 - [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
-- [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. In progress: 3/4 plans complete.
+- [x] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. Completed 2026-04-24.
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
 
@@ -152,7 +152,7 @@ Plans:
 - [x] 18-01-PLAN.md — Public `IngestError` API, helper formatting, and builder hard-failure wrapping
 - [x] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
 - [x] 18-03-PLAN.md — Experiment CLI grouped failure aggregation, deterministic output, and 100-line fixture
-- [ ] 18-04-PLAN.md — Public docs, changelog note, and final verification
+- [x] 18-04-PLAN.md — Public docs, changelog note, and final verification
 
 ### Phase 19: SIMD Parser Adapter
 **Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
@@ -199,12 +199,12 @@ Plans:
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 18. Structured IngestError + CLI integration | v1.2 | 3/4 | In Progress | - |
+| 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |
 
 ---
-*v1.2 started 2026-04-23 with 8 requirements across 3 phases (ATOMIC-01..03, FAIL-01..02, IERR-01..03). Architectural strategy: validate-before-mutate with Lucene's per-document contract as the target. v1.1 functionally complete 2026-04-22 (PRs #29, #30). v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
+*v1.2 functionally complete 2026-04-24 with 8 requirements across 3 phases (ATOMIC-01..03, FAIL-01..02, IERR-01..03). Architectural strategy: validate-before-mutate with Lucene's per-document contract as the target. v1.1 functionally complete 2026-04-22 (PRs #29, #30). v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
 *v1.3 (was v1.2) preview carries forward the deferred SIMD scope from original PARSER-02..05; exact requirement IDs will be restated when that milestone formally opens. Renumbered from v1.2 → v1.3 on 2026-04-23 to preserve chronological phase numbering.*
 
 ## Backlog
