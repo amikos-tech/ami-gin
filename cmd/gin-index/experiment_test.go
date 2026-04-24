@@ -125,6 +125,26 @@ func decodeJSONFloat(t *testing.T, raw json.RawMessage) float64 {
 	return out
 }
 
+func decodeExperimentFailures(t *testing.T, raw json.RawMessage) []experimentFailureGroup {
+	t.Helper()
+
+	var out []experimentFailureGroup
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("json.Unmarshal(failures): %v\n%s", err, string(raw))
+	}
+	return out
+}
+
+func withExperimentDefaultConfig(t *testing.T, fn func() gin.GINConfig) {
+	t.Helper()
+
+	original := experimentDefaultConfig
+	experimentDefaultConfig = fn
+	t.Cleanup(func() {
+		experimentDefaultConfig = original
+	})
+}
+
 func TestRunExperimentJSONGolden(t *testing.T) {
 	t.Parallel()
 
@@ -630,6 +650,128 @@ func TestRunExperimentOnErrorContinueIngestFailuresText(t *testing.T) {
 			t.Fatalf("stdout missing %q:\n%s", want, out)
 		}
 	}
+}
+
+func TestRunExperimentOnErrorContinueIngestFailuresJSON(t *testing.T) {
+	t.Parallel()
+
+	input := "{\"score\":9007199254740993}\nnot-json\n{\"score\":1.5}\n{\"score\":7}\n"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	failures := decodeExperimentFailures(t, summary["failures"])
+	if len(failures) != 2 {
+		t.Fatalf("len(summary.failures) = %d, want 2: %#v", len(failures), failures)
+	}
+	if failures[0].Layer != "parser" {
+		t.Fatalf("first failure layer = %q, want parser", failures[0].Layer)
+	}
+	if failures[1].Layer != "numeric" {
+		t.Fatalf("second failure layer = %q, want numeric", failures[1].Layer)
+	}
+	for _, group := range failures {
+		if len(group.Samples) > 3 {
+			t.Fatalf("%s samples = %d, want <= 3", group.Layer, len(group.Samples))
+		}
+		if len(group.Samples) == 0 {
+			t.Fatalf("%s samples empty", group.Layer)
+		}
+	}
+	parserSample := failures[0].Samples[0]
+	if parserSample.Line != 2 || parserSample.InputIndex != 1 || parserSample.Path != "" || parserSample.Value != "not-json" || parserSample.Message == "" {
+		t.Fatalf("parser sample = %+v, want structured parser sample", parserSample)
+	}
+}
+
+func TestRunExperimentHundredDocsKnownIngestFailuresJSON(t *testing.T) {
+	cfg, err := gin.NewConfig(gin.WithEmailDomainTransformer("$.email", "domain"))
+	if err != nil {
+		t.Fatalf("NewConfig(): %v", err)
+	}
+	withExperimentDefaultConfig(t, func() gin.GINConfig {
+		return cfg
+	})
+
+	lines := makeHundredDocKnownIngestFailureFixture()
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "hundred-docs.jsonl", lines, true)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "--rg-size", "10", inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONInt(t, summary["documents"]); got != 90 {
+		t.Fatalf("summary.documents = %d, want 90", got)
+	}
+	if got := decodeJSONInt(t, summary["error_count"]); got != 10 {
+		t.Fatalf("summary.error_count = %d, want 10", got)
+	}
+	if got := decodeJSONInt(t, summary["row_groups"]); got != 9 {
+		t.Fatalf("summary.row_groups = %d, want 9", got)
+	}
+
+	failures := decodeExperimentFailures(t, summary["failures"])
+	wantLayers := []string{"parser", "transformer", "numeric"}
+	wantCounts := []int{3, 4, 3}
+	if len(failures) != len(wantLayers) {
+		t.Fatalf("len(summary.failures) = %d, want %d: %#v", len(failures), len(wantLayers), failures)
+	}
+	for i, group := range failures {
+		if group.Layer != wantLayers[i] {
+			t.Fatalf("failures[%d].Layer = %q, want %q", i, group.Layer, wantLayers[i])
+		}
+		if group.Count != wantCounts[i] {
+			t.Fatalf("%s count = %d, want %d", group.Layer, group.Count, wantCounts[i])
+		}
+		if len(group.Samples) > 3 {
+			t.Fatalf("%s samples = %d, want <= 3", group.Layer, len(group.Samples))
+		}
+		hasMessage := false
+		for _, sample := range group.Samples {
+			if sample.Message != "" {
+				hasMessage = true
+				break
+			}
+		}
+		if !hasMessage {
+			t.Fatalf("%s samples have no non-empty message: %#v", group.Layer, group.Samples)
+		}
+	}
+}
+
+func makeHundredDocKnownIngestFailureFixture() []string {
+	lines := make([]string, 100)
+	parserFailures := map[int]bool{2: true, 25: true, 50: true}
+	transformerFailures := map[int]bool{10: true, 30: true, 60: true, 80: true}
+	numericFailures := map[int]bool{40: true, 70: true, 90: true}
+	for lineNumber := 1; lineNumber <= 100; lineNumber++ {
+		switch {
+		case lineNumber == 1:
+			// Line 1 seeds the large integer path before every numeric-promotion failure.
+			lines[lineNumber-1] = `{"email":"seed@example.com","score":9007199254740993}`
+		case parserFailures[lineNumber]:
+			lines[lineNumber-1] = `not-json`
+		case transformerFailures[lineNumber]:
+			lines[lineNumber-1] = `{"email":42,"score":7}`
+		case numericFailures[lineNumber]:
+			lines[lineNumber-1] = `{"email":"num@example.com","score":1.5}`
+		default:
+			lines[lineNumber-1] = fmt.Sprintf(`{"email":"user%03d@example.com","score":%d}`, lineNumber, lineNumber)
+		}
+	}
+	return lines
 }
 
 func TestRunExperimentOnErrorContinueMalformedJSONFromFile(t *testing.T) {
