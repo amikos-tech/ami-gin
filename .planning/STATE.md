@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: in-progress
-stopped_at: Completed 18-02-PLAN.md
-last_updated: "2026-04-24T12:46:30Z"
-last_activity: "2026-04-24 - Completed Phase 18 Plan 02 structured IngestError guard"
+stopped_at: Completed 18-03-PLAN.md
+last_updated: "2026-04-24T12:55:17Z"
+last_activity: "2026-04-24 - Completed Phase 18 Plan 03 experiment CLI grouped IngestError reporting"
 progress:
   total_phases: 15
   completed_phases: 9
   total_plans: 32
-  completed_plans: 29
-  percent: 91
+  completed_plans: 30
+  percent: 94
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 18
-Plan: 18-03 next
-Status: Phase 18 in progress; 18-02 complete
-Last activity: 2026-04-24 - Completed Phase 18 Plan 02 structured IngestError guard
+Plan: 18-04 next
+Status: Phase 18 in progress; 18-03 complete
+Last activity: 2026-04-24 - Completed Phase 18 Plan 03 experiment CLI grouped IngestError reporting
 
-Progress: [█████░░░░░] 50% for Phase 18 (2/4 plans executed)
+Progress: [███████░░░] 75% for Phase 18 (3/4 plans executed)
 
 ## Performance Metrics
 
@@ -85,6 +85,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
 - **18-01 completion**: Public `IngestLayer`/`IngestError` API and builder hard-failure wrapping are complete. Parser, transformer, numeric, schema, and validator-replayed numeric failures are extractable with `errors.As`; parser contract, tragic/internal, and soft-mode paths stay non-`IngestError`.
 - **18-02 completion**: The hard ingest behavior matrix now asserts extraction through an outer `errors.Wrap`, builder usability after public hard failures, and explicit non-`IngestError` exceptions. A focused stdlib AST guard protects named hard-ingest functions against direct plain error returns.
+- **18-03 completion**: `gin-index experiment --on-error continue` now reports grouped structured `IngestError` failures in text and JSON summaries. Failure groups are deterministic (`parser`, `transformer`, `numeric`, `schema`, then lexical unknowns), samples are capped at 3 per layer, and the 100-line fixture asserts 3 parser, 4 transformer, and 3 numeric failures with 90 accepted documents / 9 row groups.
 
 ### Roadmap Evolution
 
@@ -102,7 +103,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Execute remaining Phase 18 structured `IngestError` + CLI integration plans (18-03 through 18-04)
+- Execute remaining Phase 18 structured `IngestError` + CLI integration plan (18-04)
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -151,8 +152,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-24T12:46:30Z
-Stopped at: Completed 18-02-PLAN.md
+Last session: 2026-04-24T12:55:17Z
+Stopped at: Completed 18-03-PLAN.md
 Resume file: None
 
-**Next step:** Execute `.planning/phases/18-structured-ingesterror-cli-integration/18-03-PLAN.md`.
+**Next step:** Execute `.planning/phases/18-structured-ingesterror-cli-integration/18-04-PLAN.md`.
