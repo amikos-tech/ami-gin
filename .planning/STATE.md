@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: phase-complete
-stopped_at: Phase 18 verified
-last_updated: "2026-04-24T17:16:51Z"
-last_activity: "2026-04-24 - Completed quick task 260424h: Phase 18 nit follow-ups"
+status: shipped
+stopped_at: Phase 18 shipped to PR #33
+last_updated: "2026-04-24T17:58:36Z"
+last_activity: "2026-04-24 - Phase 18 shipped to PR #33"
 progress:
   total_phases: 15
   completed_phases: 10
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.2 milestone wrap-up after Phase 18 verification
+**Current focus:** v1.2 milestone wrap-up after Phase 18 shipping
 
 ## Current Position
 
 Phase: 18
 Plan: 4/4 plans complete
-Status: Phase 18 verified; v1.2 functionally complete
-Last activity: 2026-04-24 - Completed quick task 260424h: Phase 18 nit follow-ups
+Status: Phase 18 shipped to PR #33; v1.2 functionally complete
+Last activity: 2026-04-24 - Phase 18 shipped to PR #33
 
 Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
 
@@ -105,7 +105,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Complete v1.2 milestone wrap-up now that Phase 18 is verified
+- Complete v1.2 milestone wrap-up once PR #33 is merged
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
