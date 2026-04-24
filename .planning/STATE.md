@@ -142,6 +142,7 @@ Items deferred to v1.3 or later:
 | feature | Snapshot-and-restore atomicity (Strategy A) | reserve | Held in case a future failure mode cannot be pre-validated |
 | feature | Bloom `AddString` allocation cleanup | 999.x | Perf-shaped; profile before optimizing per project precedent |
 | feature | Per-path `[*]` array wildcard opt-out | 999.x | Disconnected from correctness theme |
+| bug | `RegexExtractInt` registry `parseFloat` round-trip divergence | 999.x | Reconstructed transformer rejects scientific notation while public API (`transformers.go:134`) accepts it; fix is to swap `parseFloat` for `strconv.ParseFloat` in `transformer_registry.go` with `NaN`/`Inf` guard and add a serialize→reload round-trip test. Surfaced during PR #32 review follow-up (quick task 260424d). |
 | feature | `zap` logger adapter | on-demand | Ship `slog`/`stdlib` only; add `zap` on explicit user request |
 | feature | Two-file index diff (CLI) | on-demand | Low value vs. complexity; wait for user signal |
 | feature | Experimentation CLI REPL/TUI | out-of-scope | Charter excludes interactive modes |
