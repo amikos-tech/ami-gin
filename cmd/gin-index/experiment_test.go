@@ -516,6 +516,27 @@ func TestRunExperimentOnErrorAbortFromStdinFailsFastBeforeDrain(t *testing.T) {
 	}
 }
 
+func TestRunExperimentOnErrorAbortIngestErrorDoesNotEmitGroupedSummary(t *testing.T) {
+	t.Parallel()
+
+	stdin := strings.NewReader("not-json\n")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", experimentOnErrorAbort, "-"}, stdin, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for abort mode")
+	}
+	for _, want := range []string{"line 1:", "ingest parser failure"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "Failures:") {
+		t.Fatalf("stdout = %q, want no grouped summary after abort", stdout.String())
+	}
+}
+
 func TestRunExperimentOnErrorContinue(t *testing.T) {
 	t.Parallel()
 
@@ -575,6 +596,39 @@ func TestRunExperimentOnErrorContinue(t *testing.T) {
 			t.Fatalf("summary.status = %q, want %s", got, experimentStatusPartial)
 		}
 	})
+}
+
+func TestRunExperimentOnErrorContinueIngestFailuresText(t *testing.T) {
+	t.Parallel()
+
+	input := "{\"status\":\"ok\"}\nnot-json\n{\"status\":\"error\"}\n"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "line 2:") {
+		t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"Documents: 2",
+		"Skipped Lines: 1",
+		"Error Count: 1",
+		"Failures:",
+		"parser: 1",
+		"line 2",
+		"input_index 1",
+		`path ""`,
+		`value "not-json"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestRunExperimentOnErrorContinueMalformedJSONFromFile(t *testing.T) {
