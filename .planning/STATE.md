@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: in-progress
-stopped_at: Completed 18-04-PLAN.md
-last_updated: "2026-04-24T13:04:05Z"
-last_activity: "2026-04-24 - Completed Phase 18 Plan 04 documentation and final verification"
+status: phase-complete
+stopped_at: Phase 18 verified
+last_updated: "2026-04-24T14:46:00Z"
+last_activity: "2026-04-24 - Verified Phase 18 structured IngestError + CLI integration"
 progress:
   total_phases: 15
   completed_phases: 10
   total_plans: 32
-  completed_plans: 31
-  percent: 97
+  completed_plans: 32
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 18 — structured-ingesterror-cli-integration
+**Current focus:** v1.2 milestone wrap-up after Phase 18 verification
 
 ## Current Position
 
 Phase: 18
-Plan: 18-04 complete
-Status: Phase 18 complete; final verification green
-Last activity: 2026-04-24 - Completed Phase 18 Plan 04 documentation and final verification
+Plan: 4/4 plans complete
+Status: Phase 18 verified; v1.2 functionally complete
+Last activity: 2026-04-24 - Verified Phase 18 structured IngestError + CLI integration
 
 Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
 
@@ -87,6 +87,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18-02 completion**: The hard ingest behavior matrix now asserts extraction through an outer `errors.Wrap`, builder usability after public hard failures, and explicit non-`IngestError` exceptions. A focused stdlib AST guard protects named hard-ingest functions against direct plain error returns.
 - **18-03 completion**: `gin-index experiment --on-error continue` now reports grouped structured `IngestError` failures in text and JSON summaries. Failure groups are deterministic (`parser`, `transformer`, `numeric`, `schema`, then lexical unknowns), samples are capped at 3 per layer, and the 100-line fixture asserts 3 parser, 4 transformer, and 3 numeric failures with 90 accepted documents / 9 row groups.
 - **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
+- **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
 
 ### Roadmap Evolution
 
@@ -104,7 +105,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Complete v1.2 milestone wrap-up now that Phase 18 is complete
+- Complete v1.2 milestone wrap-up now that Phase 18 is verified
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -153,8 +154,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-24T13:04:05Z
-Stopped at: Completed 18-04-PLAN.md
-Resume file: None
+Last session: 2026-04-24T14:46:00Z
+Stopped at: Phase 18 verified
+Resume file: .planning/phases/18-structured-ingesterror-cli-integration/18-VERIFICATION.md
 
 **Next step:** Run milestone completion or shipping workflow for v1.2.
