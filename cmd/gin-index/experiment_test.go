@@ -244,6 +244,7 @@ func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
 	}
 
 	parser := failures[0]
+	const parserSampleValue = "not-json"
 	if parser.Count != 1 {
 		t.Fatalf("parser.Count = %d, want 1", parser.Count)
 	}
@@ -251,7 +252,7 @@ func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
 		t.Fatalf("len(parser.Samples) = %d, want 1", len(parser.Samples))
 	}
 	sample := parser.Samples[0]
-	if sample.Line != 2 || sample.InputIndex != 1 || sample.Path != "" || sample.Value != "not-json" || sample.Message == "" {
+	if sample.Line != 2 || sample.InputIndex != 1 || sample.Path != "" || sample.Value != parserSampleValue || sample.Message == "" {
 		t.Fatalf("parser sample = %+v, want structured parser sample", sample)
 	}
 }

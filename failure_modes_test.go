@@ -30,10 +30,10 @@ func TestIngestErrorWrappingContract(t *testing.T) {
 	if extracted != ingestErr {
 		t.Fatalf("extracted IngestError = %p, want %p", extracted, ingestErr)
 	}
-	if errors.Cause(outer) != cause {
+	if !stderrors.Is(errors.Cause(outer), cause) {
 		t.Fatalf("pkg/errors.Cause(outer) = %v, want %v", errors.Cause(outer), cause)
 	}
-	if stderrors.Unwrap(ingestErr) != cause {
+	if !stderrors.Is(stderrors.Unwrap(ingestErr), cause) {
 		t.Fatalf("errors.Unwrap(ingestErr) = %v, want %v", stderrors.Unwrap(ingestErr), cause)
 	}
 	const want = "ingest numeric failure at $.score: unsupported mixed numeric promotion"
