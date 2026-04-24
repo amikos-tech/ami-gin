@@ -143,10 +143,16 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Exported `IngestError` type carries `Path` (JSONPath), `Layer` (parser / transformer / numeric / schema), `Cause` (wrapped underlying error), and `Value` (verbatim string repr — caller redacts as needed; the library does not redact).
   2. `errors.As`-friendly: callers can extract `IngestError` from anywhere in the wrap chain. Per-layer test matrix asserts round-trip extraction for every error site.
-  3. All ingest-error sites identified in Phases 16 and 17 wrap their underlying error in `IngestError` with the four fields populated; a grep+test enforces no plain `errors.New` / `errors.Wrap` returns from ingest sites.
+  3. All ingest-error sites identified in Phases 16 and 17 wrap their underlying error in `IngestError` with the four fields populated; focused behavior and AST tests enforce no plain `errors.New` / `errors.Wrap` returns from hard ingest sites.
   4. `gin-index experiment --on-error continue` reports per-document failures grouped by `Layer` (with counts) plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes; both modes are golden-tested.
   5. A test feeds 100 docs with 10 known failures (3 parser, 4 transformer, 3 numeric) through `gin-index experiment --on-error continue --json` and asserts the JSON output contains the correct grouped counts and a non-empty sample array with structured fields.
-**Plans**: TBD (planned during `/gsd-discuss-phase 18` and `/gsd-plan-phase 18`)
+**Plans**: 4 plans
+
+Plans:
+- [ ] 18-01-PLAN.md — Public `IngestError` API, helper formatting, and builder hard-failure wrapping
+- [ ] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
+- [ ] 18-03-PLAN.md — Experiment CLI grouped failure aggregation, deterministic output, and 100-line fixture
+- [ ] 18-04-PLAN.md — Public docs, changelog note, and final verification
 
 ### Phase 19: SIMD Parser Adapter
 **Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
