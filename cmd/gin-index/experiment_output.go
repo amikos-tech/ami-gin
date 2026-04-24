@@ -24,15 +24,30 @@ type experimentSource struct {
 }
 
 type experimentSummary struct {
-	Documents      int    `json:"documents"`
-	RowGroups      int    `json:"row_groups"`
-	RGSize         int    `json:"rg_size"`
-	SampleLimit    int    `json:"sample_limit"`
-	ProcessedLines int    `json:"processed_lines"`
-	SkippedLines   int    `json:"skipped_lines"`
-	ErrorCount     int    `json:"error_count"`
-	Status         string `json:"status"`
-	SidecarPath    string `json:"sidecar_path"`
+	Documents      int                      `json:"documents"`
+	RowGroups      int                      `json:"row_groups"`
+	RGSize         int                      `json:"rg_size"`
+	SampleLimit    int                      `json:"sample_limit"`
+	ProcessedLines int                      `json:"processed_lines"`
+	SkippedLines   int                      `json:"skipped_lines"`
+	ErrorCount     int                      `json:"error_count"`
+	Failures       []experimentFailureGroup `json:"failures,omitempty"`
+	Status         string                   `json:"status"`
+	SidecarPath    string                   `json:"sidecar_path"`
+}
+
+type experimentFailureSample struct {
+	Line       int    `json:"line"`
+	InputIndex int    `json:"input_index"`
+	Path       string `json:"path,omitempty"`
+	Value      string `json:"value,omitempty"`
+	Message    string `json:"message"`
+}
+
+type experimentFailureGroup struct {
+	Layer   string                    `json:"layer"`
+	Count   int                       `json:"count"`
+	Samples []experimentFailureSample `json:"samples,omitempty"`
 }
 
 type experimentPathRow struct {

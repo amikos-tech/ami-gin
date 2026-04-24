@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -123,6 +124,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 			ProcessedLines: result.processedLines,
 			SkippedLines:   result.skippedLines,
 			ErrorCount:     result.errorCount,
+			Failures:       experimentIngestFailureGroups(result.ingestFailures),
 			Status:         experimentSummaryStatus(source, result),
 			SidecarPath:    "",
 		},
@@ -182,9 +184,12 @@ type experimentBuildResult struct {
 	skippedLines   int
 	errorCount     int
 	sampleCapped   bool
+	ingestFailures map[gin.IngestLayer]*experimentFailureGroup
 }
 
 var errExperimentAbort = errors.New("experiment ingest aborted")
+
+const experimentFailureSampleLimit = 3
 
 // newExperimentInterruptContext is overridable in tests to inject a
 // pre-canceled context without delivering a real SIGINT to the process.
@@ -448,6 +453,96 @@ func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
 		return 0
 	}
 	return ceilDiv(ingestedDocs, rgSize)
+}
+
+func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int, err error) {
+	var ingestErr *gin.IngestError
+	if !errors.As(err, &ingestErr) {
+		return
+	}
+	if result.ingestFailures == nil {
+		result.ingestFailures = make(map[gin.IngestLayer]*experimentFailureGroup)
+	}
+
+	layer := ingestErr.Layer
+	group, ok := result.ingestFailures[layer]
+	if !ok {
+		group = &experimentFailureGroup{Layer: string(layer)}
+		result.ingestFailures[layer] = group
+	}
+	group.Count++
+	if len(group.Samples) >= experimentFailureSampleLimit {
+		return
+	}
+
+	message := err.Error()
+	if ingestErr.Err != nil {
+		message = ingestErr.Err.Error()
+	}
+	// Values are captured verbatim per the library contract; report growth is
+	// bounded by sample count rather than by truncating individual values.
+	group.Samples = append(group.Samples, experimentFailureSample{
+		Line:       lineNumber,
+		InputIndex: lineNumber - 1,
+		Path:       ingestErr.Path,
+		Value:      ingestErr.Value,
+		Message:    message,
+	})
+}
+
+func experimentIngestFailureGroups(groups map[gin.IngestLayer]*experimentFailureGroup) []experimentFailureGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	layers := make([]gin.IngestLayer, 0, len(groups))
+	for layer := range groups {
+		layers = append(layers, layer)
+	}
+	sort.Slice(layers, func(i, j int) bool {
+		left, right := layers[i], layers[j]
+		leftRank, leftKnown := experimentIngestLayerRank(left)
+		rightRank, rightKnown := experimentIngestLayerRank(right)
+		if leftKnown && rightKnown {
+			return leftRank < rightRank
+		}
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		return string(left) < string(right)
+	})
+
+	out := make([]experimentFailureGroup, 0, len(layers))
+	for _, layer := range layers {
+		group := groups[layer]
+		if group == nil {
+			continue
+		}
+		samples := append([]experimentFailureSample(nil), group.Samples...)
+		out = append(out, experimentFailureGroup{
+			Layer:   group.Layer,
+			Count:   group.Count,
+			Samples: samples,
+		})
+	}
+	return out
+}
+
+func experimentIngestLayerRank(layer gin.IngestLayer) (int, bool) {
+	// Keep report order pinned as parser, transformer, numeric, schema, then
+	// unknown future layers lexically in experimentIngestFailureGroups.
+	switch layer {
+	case gin.IngestLayerParser:
+		return 0, true
+	case gin.IngestLayerTransformer:
+		return 1, true
+	case gin.IngestLayerNumeric:
+		return 2, true
+	case gin.IngestLayerSchema:
+		return 3, true
+	default:
+		return 0, false
+	}
 }
 
 func experimentSummaryStatus(source experimentInputSource, result experimentBuildResult) string {
