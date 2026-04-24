@@ -126,7 +126,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 				return nil, false
 			}
 			matches := re.FindStringSubmatch(s)
-			if p.Group < 0 || len(matches) <= p.Group {
+			if len(matches) <= p.Group {
 				return nil, false
 			}
 			return matches[p.Group], true
@@ -149,7 +149,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 				return nil, false
 			}
 			matches := re.FindStringSubmatch(s)
-			if p.Group < 0 || len(matches) <= p.Group {
+			if len(matches) <= p.Group {
 				return nil, false
 			}
 			n, err := parseFloat(matches[p.Group])
