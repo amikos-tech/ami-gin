@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: ready_to_discuss
-stopped_at: Phase 17 janitorial review suggestions addressed
-last_updated: "2026-04-24T06:41:26.000Z"
+status: shipped
+stopped_at: Phase 17 shipped - PR #32
+last_updated: "2026-04-24T07:04:51.000Z"
 last_activity: 2026-04-24
 progress:
   total_phases: 15
@@ -27,8 +27,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 Phase: 18
 Plan: Discuss phase scope
-Status: Phase 17 complete and verified; Phase 18 ready for discuss/planning
-Last activity: 2026-04-23
+Status: Phase 17 shipped - PR #32; Phase 18 ready for discuss/planning
+Last activity: 2026-04-24
 
 Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
 
