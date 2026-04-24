@@ -566,8 +566,8 @@ func TestParserFailureModeSoftDoesNotSwallowStageHardErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddDocument hard stage error = nil, want numeric error")
 	}
-	if !strings.Contains(err.Error(), "parse numeric at $.score") {
-		t.Fatalf("AddDocument hard stage error = %v, want parse numeric at $.score", err)
+	if !strings.Contains(err.Error(), "ingest numeric failure at $.score: parse numeric") {
+		t.Fatalf("AddDocument hard stage error = %v, want structured numeric parse error", err)
 	}
 	if builder.tragicErr != nil {
 		t.Fatalf("builder.tragicErr = %v, want nil", builder.tragicErr)
@@ -644,8 +644,8 @@ func TestNumericFailureModeHardReturnsErrors(t *testing.T) {
 			t.Fatalf("NewBuilder: %v", err)
 		}
 		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
-		if err == nil || !strings.Contains(err.Error(), "parse numeric at $.score") {
-			t.Fatalf("AddDocument malformed literal error = %v, want parse numeric at $.score", err)
+		if err == nil || !strings.Contains(err.Error(), "ingest numeric failure at $.score: parse numeric") {
+			t.Fatalf("AddDocument malformed literal error = %v, want structured numeric parse error", err)
 		}
 	})
 
@@ -666,8 +666,8 @@ func TestNumericFailureModeHardReturnsErrors(t *testing.T) {
 			t.Fatalf("seed AddDocument: %v", err)
 		}
 		err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`))
-		if err == nil || !strings.Contains(err.Error(), mixedNumericPromotionScoreErr) {
-			t.Fatalf("AddDocument mixed promotion error = %v, want %q", err, mixedNumericPromotionScoreErr)
+		if err == nil || !strings.Contains(err.Error(), "ingest numeric failure at $.score: unsupported mixed numeric promotion") {
+			t.Fatalf("AddDocument mixed promotion error = %v, want structured mixed promotion error", err)
 		}
 	})
 }
@@ -782,7 +782,7 @@ func TestTransformerFailureModeHardReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddDocument transformer rejection error = nil, want hard error")
 	}
-	if !strings.Contains(err.Error(), `companion transformer "domain" on $.email failed to produce a value`) {
+	if !strings.Contains(err.Error(), `ingest transformer failure at $.email: companion transformer "domain" failed to produce a value`) {
 		t.Fatalf("AddDocument transformer rejection error = %v, want companion transformer context", err)
 	}
 	if builder.tragicErr != nil {

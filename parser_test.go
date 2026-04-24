@@ -1,6 +1,7 @@
 package gin
 
 import (
+	stderrors "errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -279,7 +280,7 @@ func (p failingParser) Parse(_ []byte, rgID int, sink parserSink) error {
 	return p.err
 }
 
-func TestAddDocumentReturnsParserErrorVerbatim(t *testing.T) {
+func TestAddDocumentReturnsParserIngestError(t *testing.T) {
 	sentinel := errors.New("sentinel parse error")
 	b, err := NewBuilder(DefaultConfig(), 4, WithParser(failingParser{err: sentinel}))
 	if err != nil {
@@ -289,8 +290,12 @@ func TestAddDocumentReturnsParserErrorVerbatim(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected error from AddDocument, got nil")
 	}
-	if got.Error() != "sentinel parse error" {
-		t.Fatalf("AddDocument err = %q, want %q", got.Error(), "sentinel parse error")
+	var ingestErr *IngestError
+	if !stderrors.As(got, &ingestErr) {
+		t.Fatalf("AddDocument error = %v, want *IngestError", got)
+	}
+	if ingestErr.Layer != IngestLayerParser || ingestErr.Path != "" || ingestErr.Err != sentinel {
+		t.Fatalf("IngestError = %+v, want parser layer, unknown path, sentinel cause", ingestErr)
 	}
 }
 

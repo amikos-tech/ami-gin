@@ -71,6 +71,9 @@ func newIngestErrorString(layer IngestLayer, path string, value string, err erro
 }
 
 func formatStagedNumericValue(value stagedNumericValue) string {
+	if value.raw != "" {
+		return value.raw
+	}
 	if value.isInt {
 		return strconv.FormatInt(value.intVal, 10)
 	}

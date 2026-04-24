@@ -150,6 +150,7 @@ type stagedNumericValue struct {
 	isInt    bool
 	intVal   int64
 	floatVal float64
+	raw      string
 }
 
 type stagedPathData struct {
@@ -591,14 +592,6 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case int64:
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint:
-		if v > math.MaxInt64 {
-			return newIngestError(
-				IngestLayerSchema,
-				canonicalPath,
-				value,
-				errors.New("unsupported unsigned integer"),
-			)
-		}
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case uint8:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
@@ -607,14 +600,6 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case uint32:
 		return b.stageNativeNumeric(canonicalPath, int64(v), state)
 	case uint64:
-		if v > math.MaxInt64 {
-			return newIngestError(
-				IngestLayerSchema,
-				canonicalPath,
-				value,
-				errors.New("unsupported unsigned integer"),
-			)
-		}
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case []any:
 		for i, item := range v {
@@ -685,12 +670,13 @@ func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBui
 		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
-		return errors.Wrapf(err, "parse numeric at %s", path)
+		return newIngestErrorString(IngestLayerNumeric, path, raw, errors.Wrap(err, "parse numeric"))
 	}
 	return b.stageNumericObservation(path, stagedNumericValue{
 		isInt:    isInt,
 		intVal:   intVal,
 		floatVal: floatVal,
+		raw:      raw,
 	}, state)
 }
 
@@ -719,7 +705,7 @@ func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentB
 		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
-		return errors.Wrapf(err, "parse numeric at %s", path)
+		return newIngestError(IngestLayerNumeric, path, value, errors.Wrap(err, "parse numeric"))
 	}
 	return b.stageNumericObservation(path, obs, state)
 }
@@ -790,7 +776,12 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			return newIngestErrorString(
+				IngestLayerNumeric,
+				path,
+				formatStagedNumericValue(observation),
+				errors.New("unsupported mixed numeric promotion"),
+			)
 		}
 
 		pathState.numericSimValueType = NumericValueTypeFloatMixed
@@ -806,7 +797,12 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			return newIngestErrorString(
+				IngestLayerNumeric,
+				path,
+				formatStagedNumericValue(observation),
+				errors.New("unsupported mixed numeric promotion"),
+			)
 		}
 		floatVal := float64(observation.intVal)
 		if floatVal < pathState.numericSimFloatMin {
