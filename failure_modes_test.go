@@ -63,8 +63,9 @@ func requireIngestError(t *testing.T, err error, wantLayer IngestLayer, wantPath
 		t.Fatal("error = nil, want *IngestError")
 	}
 	var ingestErr *IngestError
-	if !stderrors.As(err, &ingestErr) {
-		t.Fatalf("errors.As(%v) failed to extract *IngestError", err)
+	wrapped := errors.Wrap(err, "outer")
+	if !stderrors.As(wrapped, &ingestErr) {
+		t.Fatalf("errors.As(errors.Wrap(%v, outer)) failed to extract *IngestError", err)
 	}
 	if ingestErr.Layer != wantLayer {
 		t.Fatalf("IngestError.Layer = %q, want %q", ingestErr.Layer, wantLayer)
@@ -78,6 +79,26 @@ func requireIngestError(t *testing.T, err error, wantLayer IngestLayer, wantPath
 	return ingestErr
 }
 
+func requireNonIngestError(t *testing.T, err error, context string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s error = nil, want hard non-IngestError", context)
+	}
+	var ingestErr *IngestError
+	if stderrors.As(errors.Wrap(err, "outer"), &ingestErr) {
+		t.Fatalf("%s error extracted as *IngestError through outer wrap: %+v", context, ingestErr)
+	}
+}
+
+func requireBuilderUsableAfterHardFailure(t *testing.T, builder *GINBuilder, docID DocID) {
+	t.Helper()
+	builder.parser = stdlibParser{}
+	builder.parserName = stdlibParserName
+	if err := builder.AddDocument(docID, []byte(`{"ok":"after-failure"}`)); err != nil {
+		t.Fatalf("builder not usable after hard failure: %v", err)
+	}
+}
+
 func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 	t.Run("parser_unknown_path", func(t *testing.T) {
 		builder := mustNewBuilder(t, DefaultConfig(), 2)
@@ -87,6 +108,7 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 		if ingestErr.Value != "not-json" {
 			t.Fatalf("IngestError.Value = %q, want not-json", ingestErr.Value)
 		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
 	})
 
 	t.Run("transformer_source_path", func(t *testing.T) {
@@ -101,6 +123,9 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 		if strings.Contains(ingestErr.Path, "__derived:") {
 			t.Fatalf("IngestError.Path = %q, must not expose derived path", ingestErr.Path)
 		}
+		if err := builder.AddDocument(DocID(1), []byte(`{"email":"valid@example.com"}`)); err != nil {
+			t.Fatalf("builder not usable after transformer hard failure: %v", err)
+		}
 	})
 
 	t.Run("schema_unsupported_token", func(t *testing.T) {
@@ -114,6 +139,7 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 		if ingestErr.Value == "" {
 			t.Fatal("IngestError.Value = empty, want offending token representation")
 		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
 	})
 
 	t.Run("numeric_malformed_literal", func(t *testing.T) {
@@ -127,6 +153,7 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 		if ingestErr.Value != "not-a-number" {
 			t.Fatalf("IngestError.Value = %q, want not-a-number", ingestErr.Value)
 		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
 	})
 
 	t.Run("numeric_mixed_promotion", func(t *testing.T) {
@@ -148,6 +175,9 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 		if !strings.Contains(ingestErr.Err.Error(), "unsupported mixed numeric promotion") {
 			t.Fatalf("IngestError.Err = %v, want unsupported mixed numeric promotion", ingestErr.Err)
 		}
+		if err := builder.AddDocument(DocID(2), []byte(`{"score":9007199254740992}`)); err != nil {
+			t.Fatalf("builder not usable after numeric hard failure: %v", err)
+		}
 	})
 }
 
@@ -168,13 +198,7 @@ func TestParserContractErrorsRemainNonIngestError(t *testing.T) {
 				t.Fatalf("NewBuilder: %v", err)
 			}
 			err = builder.AddDocument(DocID(0), []byte(`{"name":"bad"}`))
-			if err == nil {
-				t.Fatal("AddDocument contract error = nil, want hard error")
-			}
-			var ingestErr *IngestError
-			if stderrors.As(err, &ingestErr) {
-				t.Fatalf("contract error extracted as *IngestError: %+v", ingestErr)
-			}
+			requireNonIngestError(t, err, "parser contract")
 		})
 	}
 }
@@ -594,6 +618,7 @@ func TestParserFailureModeSoftKeepsTragicStateHard(t *testing.T) {
 	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
 		t.Fatalf("AddDocument after tragic state = %v, want tragic refusal", err)
 	}
+	requireNonIngestError(t, err, "tragic state refusal")
 }
 
 func TestParserFailureModeStageProvenanceDoesNotLeakAcrossDocuments(t *testing.T) {
@@ -769,6 +794,7 @@ func TestNumericFailureModeSoftKeepsMergeRecoveryTragic(t *testing.T) {
 	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
 		t.Fatalf("AddDocument recovered merge panic error = %v, want tragic merge error", err)
 	}
+	requireNonIngestError(t, err, "recovered merge panic")
 	if builder.numDocs != 0 || builder.nextPos != 0 {
 		t.Fatalf("builder advanced after tragic merge: numDocs=%d nextPos=%d", builder.numDocs, builder.nextPos)
 	}
