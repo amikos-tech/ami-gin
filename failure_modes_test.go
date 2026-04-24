@@ -57,6 +57,94 @@ func TestIngestErrorWrappingContract(t *testing.T) {
 	}
 }
 
+func requireIngestError(t *testing.T, err error, wantLayer IngestLayer, wantPath string) *IngestError {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want *IngestError")
+	}
+	var ingestErr *IngestError
+	if !stderrors.As(err, &ingestErr) {
+		t.Fatalf("errors.As(%v) failed to extract *IngestError", err)
+	}
+	if ingestErr.Layer != wantLayer {
+		t.Fatalf("IngestError.Layer = %q, want %q", ingestErr.Layer, wantLayer)
+	}
+	if ingestErr.Path != wantPath {
+		t.Fatalf("IngestError.Path = %q, want %q", ingestErr.Path, wantPath)
+	}
+	if ingestErr.Err == nil {
+		t.Fatal("IngestError.Err = nil, want cause")
+	}
+	return ingestErr
+}
+
+func TestHardIngestFailuresReturnIngestError(t *testing.T) {
+	t.Run("parser_unknown_path", func(t *testing.T) {
+		builder := mustNewBuilder(t, DefaultConfig(), 2)
+		err := builder.AddDocument(DocID(0), []byte("not-json"))
+
+		ingestErr := requireIngestError(t, err, IngestLayerParser, "")
+		if ingestErr.Value != "not-json" {
+			t.Fatalf("IngestError.Value = %q, want not-json", ingestErr.Value)
+		}
+	})
+
+	t.Run("transformer_source_path", func(t *testing.T) {
+		config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain"))
+		builder := mustNewBuilder(t, config, 2)
+		err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerTransformer, "$.email")
+		if ingestErr.Value != "42" {
+			t.Fatalf("IngestError.Value = %q, want 42", ingestErr.Value)
+		}
+		if strings.Contains(ingestErr.Path, "__derived:") {
+			t.Fatalf("IngestError.Path = %q, must not expose derived path", ingestErr.Path)
+		}
+	})
+
+	t.Run("schema_unsupported_token", func(t *testing.T) {
+		builder, err := NewBuilder(DefaultConfig(), 2, WithParser(unsupportedTokenAtomicityParser{}))
+		if err != nil {
+			t.Fatalf("NewBuilder: %v", err)
+		}
+		err = builder.AddDocument(DocID(0), []byte(`{"bad":true}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerSchema, "$.bad")
+		if ingestErr.Value == "" {
+			t.Fatal("IngestError.Value = empty, want offending token representation")
+		}
+	})
+}
+
+func TestParserContractErrorsRemainNonIngestError(t *testing.T) {
+	cases := []struct {
+		name   string
+		parser Parser
+	}{
+		{name: "missing-begin", parser: skipBeginDocumentParser{}},
+		{name: "double-begin", parser: doubleBeginDocumentParser{}},
+		{name: "wrong-rgid", parser: wrongRGIDParser{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder, err := NewBuilder(DefaultConfig(), 2, WithParser(tc.parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+			err = builder.AddDocument(DocID(0), []byte(`{"name":"bad"}`))
+			if err == nil {
+				t.Fatal("AddDocument contract error = nil, want hard error")
+			}
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("contract error extracted as *IngestError: %+v", ingestErr)
+			}
+		})
+	}
+}
+
 func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
 	defaults := DefaultConfig()
 	if defaults.ParserFailureMode != IngestFailureHard {
