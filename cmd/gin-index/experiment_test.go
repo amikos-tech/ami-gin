@@ -519,11 +519,12 @@ func TestRunExperimentOnErrorAbortFromStdinFailsFastBeforeDrain(t *testing.T) {
 func TestRunExperimentOnErrorAbortIngestErrorDoesNotEmitGroupedSummary(t *testing.T) {
 	t.Parallel()
 
-	stdin := strings.NewReader("not-json\n")
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "malformed.jsonl", []string{"not-json"}, true)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	code := runExperiment([]string{"--on-error", experimentOnErrorAbort, "-"}, stdin, &stdout, &stderr)
+	code := runExperiment([]string{"--on-error", experimentOnErrorAbort, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
 	if code == 0 {
 		t.Fatal("runExperiment() code = 0, want non-zero for abort mode")
 	}

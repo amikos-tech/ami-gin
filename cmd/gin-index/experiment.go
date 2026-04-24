@@ -410,6 +410,7 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 			}
 			result.skippedLines++
 			result.errorCount++
+			recordExperimentIngestFailure(&result, lineNumber, lineErr)
 			if readErr == io.EOF {
 				break
 			}

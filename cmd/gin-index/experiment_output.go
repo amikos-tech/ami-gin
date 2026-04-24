@@ -133,6 +133,15 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 		fmt.Fprintf(stdout, "  Skipped Lines: %d\n", report.Summary.SkippedLines)
 		fmt.Fprintf(stdout, "  Error Count: %d\n", report.Summary.ErrorCount)
 	}
+	if len(report.Summary.Failures) > 0 {
+		fmt.Fprintln(stdout, "  Failures:")
+		for _, group := range report.Summary.Failures {
+			fmt.Fprintf(stdout, "    %s: %d\n", group.Layer, group.Count)
+			for _, sample := range group.Samples {
+				fmt.Fprintf(stdout, "      line %d input_index %d path %q value %q: %s\n", sample.Line, sample.InputIndex, sample.Path, sample.Value, sample.Message)
+			}
+		}
+	}
 	if report.Summary.SidecarPath != "" {
 		fmt.Fprintf(stdout, "  Sidecar Path: %s\n", report.Summary.SidecarPath)
 	}
