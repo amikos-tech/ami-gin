@@ -64,6 +64,9 @@ func softSkipDocumentKind(err error) softSkipKind {
 	if errors.As(err, &skipped) && skipped.kind != "" {
 		return skipped.kind
 	}
+	// Defensive fallback: every builder-created errSkipDocument should carry
+	// a typed softSkipDocumentError so metrics/logs can classify it precisely.
+	// Treat bare sentinels as "other" rather than guessing from message text.
 	return softSkipKindOther
 }
 

@@ -424,16 +424,12 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 
 	result.rowGroups = experimentUsedRowGroups(result.ingestedDocs, rgSize)
 	var finalizeErr error
-	result, finalizeErr = finalizeExperimentIndex(builder, result)
+	result, finalizeErr = finalizeExperimentIndexResult(builder.Finalize(), builder.Err(), result)
 	if finalizeErr != nil {
 		return experimentBuildResult{}, finalizeErr
 	}
 	trimExperimentIndexRowGroups(result.idx, result.rowGroups)
 	return result, nil
-}
-
-func finalizeExperimentIndex(builder *gin.GINBuilder, result experimentBuildResult) (experimentBuildResult, error) {
-	return finalizeExperimentIndexResult(builder.Finalize(), builder.Err(), result)
 }
 
 func finalizeExperimentIndexResult(idx *gin.GINIndex, builderErr error, result experimentBuildResult) (experimentBuildResult, error) {
