@@ -455,6 +455,21 @@ func TestHandleExperimentLineErrorAbortsOnTragicBuilder(t *testing.T) {
 	}
 }
 
+func TestExperimentTragicAbortErrorUnwrapExposesOnlyBuilderErr(t *testing.T) {
+	t.Parallel()
+
+	lineErr := errors.New("line ingest failure")
+	builderErr := errors.New("simulated tragic failure")
+
+	err := newExperimentTragicAbortError(7, lineErr, builderErr)
+	if !errors.Is(err, builderErr) {
+		t.Fatalf("errors.Is(err, builderErr) = false, want true")
+	}
+	if errors.Is(err, lineErr) {
+		t.Fatalf("errors.Is(err, lineErr) = true, want false")
+	}
+}
+
 func TestRunExperimentOnErrorContinueTragicAbortJSON(t *testing.T) {
 	fakeBuilder := &tragicExperimentBuilder{tragicErr: errors.New("simulated tragic failure")}
 	withExperimentBuilderFactory(t, func(gin.GINConfig, int) (experimentBuilder, error) {
@@ -583,8 +598,8 @@ func TestRunExperimentOnErrorContinueTragicAbortText(t *testing.T) {
 	if !strings.Contains(out, "GIN Index Info: unavailable (build aborted before finalize)") {
 		t.Fatalf("stdout = %q, want unavailable index sentinel", out)
 	}
-	if strings.Contains(out, "GIN Index Info:\n  Total Paths") {
-		t.Fatalf("stdout = %q, want no finalized index summary", out)
+	if count := strings.Count(out, "GIN Index Info:"); count != 1 {
+		t.Fatalf("strings.Count(stdout, %q) = %d, want 1\nstdout=%q", "GIN Index Info:", count, out)
 	}
 }
 

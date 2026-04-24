@@ -465,6 +465,7 @@ func handleExperimentLineError(result *experimentBuildResult, lineNumber int, li
 
 	result.skippedLines++
 	result.errorCount++
+	// Must precede tragic wrap: Unwrap exposes builderErr only, not lineErr.
 	recordExperimentIngestFailure(result, lineNumber, lineErr, builderErr != nil)
 	if builderErr != nil {
 		return newExperimentTragicAbortError(lineNumber, lineErr, builderErr)
