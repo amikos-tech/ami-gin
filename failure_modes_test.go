@@ -115,6 +115,40 @@ func TestHardIngestFailuresReturnIngestError(t *testing.T) {
 			t.Fatal("IngestError.Value = empty, want offending token representation")
 		}
 	})
+
+	t.Run("numeric_malformed_literal", func(t *testing.T) {
+		builder, err := NewBuilder(DefaultConfig(), 2, WithParser(malformedNumericLiteralAtomicityParser{}))
+		if err != nil {
+			t.Fatalf("NewBuilder: %v", err)
+		}
+		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerNumeric, "$.score")
+		if ingestErr.Value != "not-a-number" {
+			t.Fatalf("IngestError.Value = %q, want not-a-number", ingestErr.Value)
+		}
+	})
+
+	t.Run("numeric_mixed_promotion", func(t *testing.T) {
+		builder := mustNewBuilder(t, DefaultConfig(), 3)
+		if err := builder.AddDocument(DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+			t.Fatalf("seed AddDocument: %v", err)
+		}
+		err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerNumeric, "$.score")
+		switch ingestErr.Value {
+		case "1.5", "9007199254740993":
+		default:
+			t.Fatalf("IngestError.Value = %q, want doc-facing numeric string", ingestErr.Value)
+		}
+		if strings.Contains(ingestErr.Value, "e+") || strings.Contains(ingestErr.Value, "E+") {
+			t.Fatalf("IngestError.Value = %q, must not use scientific notation", ingestErr.Value)
+		}
+		if !strings.Contains(ingestErr.Err.Error(), "unsupported mixed numeric promotion") {
+			t.Fatalf("IngestError.Err = %v, want unsupported mixed numeric promotion", ingestErr.Err)
+		}
+	})
 }
 
 func TestParserContractErrorsRemainNonIngestError(t *testing.T) {
@@ -143,6 +177,47 @@ func TestParserContractErrorsRemainNonIngestError(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSoftFailureModesDoNotReturnIngestError(t *testing.T) {
+	t.Run("parser_soft", func(t *testing.T) {
+		config := softFailureConfig(t, WithParserFailureMode(IngestFailureSoft))
+		builder := mustNewBuilder(t, config, 2)
+		if err := builder.AddDocument(DocID(0), []byte("not-json")); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft parser error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft parser AddDocument error = %v, want nil", err)
+		}
+	})
+
+	t.Run("numeric_soft_mixed_promotion", func(t *testing.T) {
+		config := softFailureConfig(t, WithNumericFailureMode(IngestFailureSoft))
+		builder := mustNewBuilder(t, config, 3)
+		if err := builder.AddDocument(DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+			t.Fatalf("seed AddDocument: %v", err)
+		}
+		if err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`)); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft numeric error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft numeric AddDocument error = %v, want nil", err)
+		}
+	})
+
+	t.Run("transformer_soft", func(t *testing.T) {
+		config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
+		builder := mustNewBuilder(t, config, 2)
+		if err := builder.AddDocument(DocID(0), []byte(`{"email":42}`)); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft transformer error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft transformer AddDocument error = %v, want nil", err)
+		}
+	})
 }
 
 func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
