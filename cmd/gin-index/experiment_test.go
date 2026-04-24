@@ -190,6 +190,52 @@ func TestRunExperimentJSONGolden(t *testing.T) {
 	}
 }
 
+func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	result := experimentBuildResult{}
+	recordExperimentIngestFailure(&result, 8, &gin.IngestError{
+		Path:  "$.score",
+		Layer: gin.IngestLayerNumeric,
+		Value: "1.5",
+		Err:   errors.New("mixed numeric promotion"),
+	})
+	recordExperimentIngestFailure(&result, 2, &gin.IngestError{
+		Layer: gin.IngestLayerParser,
+		Value: "not-json",
+		Err:   errors.New("read JSON token"),
+	})
+	recordExperimentIngestFailure(&result, 6, &gin.IngestError{
+		Path:  "$.email",
+		Layer: gin.IngestLayerTransformer,
+		Value: "42",
+		Err:   errors.New("transformer failed"),
+	})
+
+	failures := experimentIngestFailureGroups(result.ingestFailures)
+	if len(failures) != 3 {
+		t.Fatalf("len(failures) = %d, want 3", len(failures))
+	}
+	wantLayers := []string{"parser", "transformer", "numeric"}
+	for i, want := range wantLayers {
+		if failures[i].Layer != want {
+			t.Fatalf("failures[%d].Layer = %q, want %q", i, failures[i].Layer, want)
+		}
+	}
+
+	parser := failures[0]
+	if parser.Count != 1 {
+		t.Fatalf("parser.Count = %d, want 1", parser.Count)
+	}
+	if len(parser.Samples) != 1 {
+		t.Fatalf("len(parser.Samples) = %d, want 1", len(parser.Samples))
+	}
+	sample := parser.Samples[0]
+	if sample.Line != 2 || sample.InputIndex != 1 || sample.Path != "" || sample.Value != "not-json" || sample.Message == "" {
+		t.Fatalf("parser sample = %+v, want structured parser sample", sample)
+	}
+}
+
 func TestRunExperimentPredicateReportText(t *testing.T) {
 	t.Parallel()
 
