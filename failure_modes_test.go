@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	stderrors "errors"
 	"math"
 	"strings"
 	"testing"
@@ -11,6 +12,50 @@ import (
 	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/amikos-tech/ami-gin/telemetry"
 )
+
+func TestIngestErrorWrappingContract(t *testing.T) {
+	cause := errors.New("unsupported mixed numeric promotion")
+	ingestErr := &IngestError{
+		Path:  "$.score",
+		Layer: IngestLayerNumeric,
+		Value: "9007199254740993",
+		Err:   cause,
+	}
+	outer := errors.Wrap(ingestErr, "outer context")
+
+	var extracted *IngestError
+	if !stderrors.As(outer, &extracted) {
+		t.Fatal("errors.As failed to extract *IngestError")
+	}
+	if extracted != ingestErr {
+		t.Fatalf("extracted IngestError = %p, want %p", extracted, ingestErr)
+	}
+	if errors.Cause(outer) != cause {
+		t.Fatalf("pkg/errors.Cause(outer) = %v, want %v", errors.Cause(outer), cause)
+	}
+	if stderrors.Unwrap(ingestErr) != cause {
+		t.Fatalf("errors.Unwrap(ingestErr) = %v, want %v", stderrors.Unwrap(ingestErr), cause)
+	}
+	const want = "ingest numeric failure at $.score: unsupported mixed numeric promotion"
+	if got := ingestErr.Error(); got != want {
+		t.Fatalf("IngestError.Error() = %q, want %q", got, want)
+	}
+	if got := (*IngestError)(nil).Error(); got != "<nil>" {
+		t.Fatalf("nil IngestError.Error() = %q, want <nil>", got)
+	}
+	if got := (&IngestError{Layer: IngestLayerParser, Err: errors.New("bad json")}).Error(); got != "ingest parser failure: bad json" {
+		t.Fatalf("empty-path IngestError.Error() = %q", got)
+	}
+
+	stagedInt := stagedNumericValue{isInt: true, intVal: 9007199254740993}
+	if got := formatStagedNumericValue(stagedInt); got != "9007199254740993" {
+		t.Fatalf("formatStagedNumericValue(int) = %q, want 9007199254740993", got)
+	}
+	stagedFloat := stagedNumericValue{floatVal: 1.5}
+	if got := formatStagedNumericValue(stagedFloat); got != "1.5" {
+		t.Fatalf("formatStagedNumericValue(float) = %q, want 1.5", got)
+	}
+}
 
 func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
 	defaults := DefaultConfig()
