@@ -232,7 +232,11 @@ func buildFromParquetReaderCore(ctx context.Context, parquetFile string, jsonCol
 		_ = pages.Close()
 	}
 
-	return builder.Finalize(), nil
+	idx := builder.Finalize()
+	if idx == nil {
+		return nil, errors.New("finalize index after parquet build")
+	}
+	return idx, nil
 }
 
 func EncodeToMetadata(idx *GINIndex, cfg ParquetConfig) (key string, value string, err error) {

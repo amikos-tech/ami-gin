@@ -768,6 +768,82 @@ func TestReadConfigRejectsCorruptJSONAsInvalidFormat(t *testing.T) {
 	}
 }
 
+func TestReadConfigRejectsInvalidFTSPathAsInvalidFormat(t *testing.T) {
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		FTSPaths: []string{"$.items[0]"},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid FTS path rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "canonicalize FTS path") {
+		t.Fatalf("readConfig() error = %v, want FTS canonicalization context", err)
+	}
+}
+
+func TestReadConfigRejectsInvalidTransformerPathAsInvalidFormat(t *testing.T) {
+	spec := NewTransformerSpec("$.items[0]", TransformerToLower, nil)
+	spec.Alias = lowerAlias
+	spec.TargetPath = representationTargetPath("$.items[0]", lowerAlias)
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{spec},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid transformer path rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "canonicalize transformer path") {
+		t.Fatalf("readConfig() error = %v, want transformer canonicalization context", err)
+	}
+}
+
+func TestReadConfigRejectsReconstructTransformerFailureAsInvalidFormat(t *testing.T) {
+	spec := NewTransformerSpec("$.ts", TransformerCustomDateToEpochMs, json.RawMessage(`{}`))
+	spec.Alias = "epoch"
+	spec.TargetPath = representationTargetPath("$.ts", "epoch")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{spec},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want transformer reconstruction rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "reconstruct transformer") {
+		t.Fatalf("readConfig() error = %v, want reconstruction context", err)
+	}
+}
+
+func TestReadConfigRejectsValidateFailureAsInvalidFormat(t *testing.T) {
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		PrefixBlockSize: -1,
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want config validation rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "validate config") {
+		t.Fatalf("readConfig() error = %v, want validation context", err)
+	}
+}
+
 func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
 	config, err := NewConfig(
 		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),

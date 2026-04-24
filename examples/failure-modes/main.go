@@ -99,10 +99,10 @@ func runSoft() error {
 
 	// The soft config skips malformed JSON and incompatible numeric promotion,
 	// but companion transformer soft failures keep the raw source document.
-	// DocIDs therefore pack densely into row groups [0 1 2].
+	// Matching domain rows therefore land in dense row groups [0 2].
 	idx := builder.Finalize()
-	if builder.SoftSkippedDocuments() != 2 {
-		return errors.Errorf("soft skipped %d documents, want 2", builder.SoftSkippedDocuments())
+	if builder.NumSoftSkippedDocuments() != 2 {
+		return errors.Errorf("soft skipped %d documents, want 2", builder.NumSoftSkippedDocuments())
 	}
 	result := idx.Evaluate([]gin.Predicate{
 		gin.EQ("$.email", gin.As("domain", "example.com")),

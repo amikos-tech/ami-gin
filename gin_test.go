@@ -588,8 +588,17 @@ func TestAddDocumentRefusesAfterRecoveredMergePanic(t *testing.T) {
 		t.Fatalf("AddDocument refusal = %q, want tragic closure context", err.Error())
 	}
 
-	if idx := builder.Finalize(); idx != nil {
+	idx := builder.Finalize()
+	if idx != nil {
 		t.Fatal("Finalize() after tragedy = non-nil, want nil")
+	}
+	if _, err := Encode(idx); err == nil {
+		t.Fatal("Encode(nil finalized index) error = nil, want refusal")
+	} else if !strings.Contains(err.Error(), "encode nil index") {
+		t.Fatalf("Encode(nil finalized index) error = %v, want nil-index context", err)
+	}
+	if builder.NumSoftSkippedDocuments() != 0 {
+		t.Fatalf("NumSoftSkippedDocuments() = %d, want 0", builder.NumSoftSkippedDocuments())
 	}
 }
 

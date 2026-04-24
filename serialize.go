@@ -244,8 +244,12 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var cfg *GINConfig
+	if idx != nil {
+		cfg = idx.Config
+	}
 	rt := &encodeRuntime{
-		signals: configSignals(idx.Config),
+		signals: configSignals(cfg),
 	}
 	for _, o := range opts {
 		o(rt)
@@ -271,6 +275,9 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if level < 0 || level > 19 {
 		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
+	}
+	if idx == nil {
+		return nil, errors.New("encode nil index")
 	}
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")

@@ -23,6 +23,22 @@ const validatorMissedMixedNumericPromotion = validatorMissedPanicPrefix + "unsup
 
 var errSkipDocument = errors.New("skip document")
 
+const (
+	softSkipKindOther     = "other"
+	softSkipKindParser    = "parser"
+	softSkipKindNumeric   = "numeric"
+	softSkipKindCompanion = "companion"
+)
+
+type softSkipDocumentError struct {
+	kind string
+	err  error
+}
+
+func (e *softSkipDocumentError) Error() string { return e.err.Error() }
+func (e *softSkipDocumentError) Unwrap() error { return e.err }
+func (e *softSkipDocumentError) Cause() error  { return e.err }
+
 type stageCallbackError struct {
 	err error
 }
@@ -33,6 +49,28 @@ func (e *stageCallbackError) Cause() error  { return e.err }
 
 func isSkipDocument(err error) bool {
 	return errors.Is(err, errSkipDocument)
+}
+
+func newSoftSkipDocumentError(kind, message string) error {
+	return &softSkipDocumentError{
+		kind: kind,
+		err:  errors.Wrap(errSkipDocument, message),
+	}
+}
+
+func newSoftSkipDocumentErrorf(kind, format string, args ...any) error {
+	return &softSkipDocumentError{
+		kind: kind,
+		err:  errors.Wrapf(errSkipDocument, format, args...),
+	}
+}
+
+func softSkipDocumentKind(err error) string {
+	var skipped *softSkipDocumentError
+	if errors.As(err, &skipped) && skipped.kind != "" {
+		return skipped.kind
+	}
+	return softSkipKindOther
 }
 
 func tagStageError(err error) error {
@@ -56,17 +94,18 @@ func unwrapStageCallbackError(err error) error {
 }
 
 type GINBuilder struct {
-	config       GINConfig
-	numRGs       int
-	numDocs      uint64
-	numSoftSkips uint64
-	maxRGID      int
-	pathData     map[string]*pathBuildData
-	bloom        *BloomFilter
-	codec        DocIDCodec
-	docIDToPos   map[DocID]int
-	posToDocID   []DocID
-	nextPos      int
+	config                     GINConfig
+	numRGs                     int
+	numDocs                    uint64
+	numSoftSkips               uint64
+	numSoftRepresentationSkips uint64
+	maxRGID                    int
+	pathData                   map[string]*pathBuildData
+	bloom                      *BloomFilter
+	codec                      DocIDCodec
+	docIDToPos                 map[DocID]int
+	posToDocID                 []DocID
+	nextPos                    int
 	// tragicErr closes the builder after an internal invariant violation or recovered merge panic.
 	// Finalize then returns nil because prior partial merges may have left an undefined subset of paths.
 	tragicErr error
@@ -370,14 +409,18 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 
 	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
 		if isSkipDocument(err) {
-			b.recordSoftDocumentSkip(err)
+			kind := softSkipDocumentKind(err)
+			if kind == softSkipKindOther {
+				kind = softSkipKindParser
+			}
+			b.recordSoftDocumentSkip(kind, err)
 			return nil
 		}
 		if isStageCallbackError(err) {
 			return unwrapStageCallbackError(err)
 		}
 		if normalizeIngestFailureMode(b.config.ParserFailureMode) == IngestFailureSoft {
-			b.recordSoftDocumentSkip(errors.Wrap(errSkipDocument, "soft parser failure"))
+			b.recordSoftDocumentSkip(softSkipKindParser, newSoftSkipDocumentError(softSkipKindParser, "soft parser failure"))
 			return nil
 		}
 		return err
@@ -580,6 +623,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 		transformed, ok := registration.FieldTransformer(prepared)
 		if !ok {
 			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == IngestFailureSoft {
+				b.numSoftRepresentationSkips++
 				logging.Info(
 					b.config.Logger,
 					"builder skipped companion representation after soft transformer failure",
@@ -603,7 +647,7 @@ func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBui
 	isInt, intVal, floatVal, err := parseJSONNumberLiteral(raw)
 	if err != nil {
 		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-			return errors.Wrapf(errSkipDocument, "soft numeric failure at %s", path)
+			return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
@@ -637,7 +681,7 @@ func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentB
 	obs, err := stagedNumericFromValue(value)
 	if err != nil {
 		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-			return errors.Wrapf(errSkipDocument, "soft numeric failure at %s", path)
+			return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
 	}
@@ -708,7 +752,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 
 		if !canRepresentIntAsExactFloat(pathState.numericSimIntMin) || !canRepresentIntAsExactFloat(pathState.numericSimIntMax) {
 			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-				return errors.Wrapf(errSkipDocument, "soft numeric failure at %s", path)
+				return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
@@ -724,7 +768,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
 			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
-				return errors.Wrapf(errSkipDocument, "soft numeric failure at %s", path)
+				return newSoftSkipDocumentErrorf(softSkipKindNumeric, "soft numeric failure at %s", path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
 		}
@@ -780,7 +824,7 @@ func canRepresentIntAsExactFloat(value int64) bool {
 func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state *documentBuildState) error {
 	if err := b.commitStagedPaths(state); err != nil {
 		if isSkipDocument(err) {
-			b.recordSoftDocumentSkip(err)
+			b.recordSoftDocumentSkip(softSkipDocumentKind(err), err)
 			return nil
 		}
 		return err
@@ -801,9 +845,6 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 
 func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
 	if err := b.validateStagedPaths(state); err != nil {
-		if isSkipDocument(err) {
-			return err
-		}
 		return err
 	}
 	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
@@ -850,21 +891,41 @@ func safeMergePanicMessage(recovered any) (string, bool) {
 	return "", false
 }
 
-// SoftSkippedDocuments reports how many documents were dropped because a
+// NumSoftSkippedDocuments reports how many documents were dropped because a
 // builder-level soft ingest mode chose skip-over-error semantics.
-func (b *GINBuilder) SoftSkippedDocuments() uint64 {
+func (b *GINBuilder) NumSoftSkippedDocuments() uint64 {
 	return b.numSoftSkips
 }
 
-func (b *GINBuilder) recordSoftDocumentSkip(err error) {
+// SoftSkippedDocuments reports how many documents were dropped because a
+// builder-level soft ingest mode chose skip-over-error semantics.
+//
+// Deprecated: use NumSoftSkippedDocuments.
+func (b *GINBuilder) SoftSkippedDocuments() uint64 {
+	return b.NumSoftSkippedDocuments()
+}
+
+// NumSoftSkippedRepresentations reports how many companion representations
+// were omitted because a per-transformer soft failure kept the source document
+// and skipped only the failed derived value.
+func (b *GINBuilder) NumSoftSkippedRepresentations() uint64 {
+	return b.numSoftRepresentationSkips
+}
+
+func (b *GINBuilder) recordSoftDocumentSkip(kind string, _ error) {
 	b.numSoftSkips++
 	message := "builder skipped document after soft ingest failure"
 	errorType := "other"
-	if err != nil && strings.Contains(err.Error(), "soft parser failure") {
+	switch kind {
+	case softSkipKindParser:
 		message = "builder skipped document after soft parser failure"
 		errorType = "deserialization"
-	} else if err != nil && strings.Contains(err.Error(), "soft numeric failure") {
+	case softSkipKindNumeric:
 		message = "builder skipped document after soft numeric failure"
+	case softSkipKindCompanion:
+		message = "builder skipped document after soft companion failure"
+	default:
+		kind = softSkipKindOther
 	}
 	logging.Info(
 		b.config.Logger,
@@ -1092,6 +1153,10 @@ func (b *GINBuilder) addStringLengthStat(pd *pathBuildData, length int, rgID int
 	}
 }
 
+// Finalize returns an immutable index for all successfully committed documents.
+// If the builder previously encountered a tragic internal failure, Finalize
+// returns nil and logs the refusal; callers that continue after AddDocument
+// errors must nil-check the result before using it.
 func (b *GINBuilder) Finalize() *GINIndex {
 	if b.tragicErr != nil {
 		logging.Error(

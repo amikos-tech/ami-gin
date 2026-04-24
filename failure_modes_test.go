@@ -244,6 +244,9 @@ func TestSoftSkippedDocumentsAreObservable(t *testing.T) {
 
 	err := builder.AddDocument(DocID(0), []byte("not-json"))
 	requireSoftSkippedDocument(t, builder, err, DocID(0), 0, 0)
+	if builder.NumSoftSkippedDocuments() != 1 {
+		t.Fatalf("NumSoftSkippedDocuments() = %d, want 1", builder.NumSoftSkippedDocuments())
+	}
 	if builder.SoftSkippedDocuments() != 1 {
 		t.Fatalf("SoftSkippedDocuments() = %d, want 1", builder.SoftSkippedDocuments())
 	}
@@ -262,6 +265,33 @@ func TestSoftSkippedDocumentsAreObservable(t *testing.T) {
 	}
 	if value, ok := softSkipAttrValue(entry.attrs, "error.type"); !ok || value != "deserialization" {
 		t.Fatalf("error.type attr = %q, %v; want %q, true", value, ok, "deserialization")
+	}
+}
+
+func TestNumericFailureModeSoftLogsExplicitKind(t *testing.T) {
+	logger := &softSkipInfoLogger{}
+	config := softFailureConfig(
+		t,
+		WithNumericFailureMode(IngestFailureSoft),
+		WithLogger(logger),
+	)
+	builder := mustNewBuilder(t, config, 2)
+
+	if err := builder.AddDocument(DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed AddDocument: %v", err)
+	}
+	err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`))
+	requireSoftSkippedDocument(t, builder, err, DocID(1), 1, 1)
+
+	if builder.NumSoftSkippedDocuments() != 1 {
+		t.Fatalf("NumSoftSkippedDocuments() = %d, want 1", builder.NumSoftSkippedDocuments())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured info log entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.message != "builder skipped document after soft numeric failure" {
+		t.Fatalf("info log message = %q, want numeric soft-skip message", entry.message)
 	}
 }
 
@@ -539,7 +569,12 @@ func TestTransformerFailureModeHardReturnsError(t *testing.T) {
 }
 
 func TestTransformerFailureModeSoftKeepsRawDocumentAndSkipsCompanion(t *testing.T) {
-	config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
+	logger := &softSkipInfoLogger{}
+	config := softFailureConfig(
+		t,
+		WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)),
+		WithLogger(logger),
+	)
 	builder := mustNewBuilder(t, config, 2)
 
 	err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
@@ -548,6 +583,19 @@ func TestTransformerFailureModeSoftKeepsRawDocumentAndSkipsCompanion(t *testing.
 	}
 	if builder.SoftSkippedDocuments() != 0 {
 		t.Fatalf("SoftSkippedDocuments() = %d, want 0", builder.SoftSkippedDocuments())
+	}
+	if builder.NumSoftSkippedRepresentations() != 1 {
+		t.Fatalf("NumSoftSkippedRepresentations() = %d, want 1", builder.NumSoftSkippedRepresentations())
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured info log entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.message != "builder skipped companion representation after soft transformer failure" {
+		t.Fatalf("info log message = %q, want companion soft-skip message", entry.message)
+	}
+	if value, ok := softSkipAttrValue(entry.attrs, "operation"); !ok || value != "builder.transform" {
+		t.Fatalf("operation attr = %q, %v; want %q, true", value, ok, "builder.transform")
 	}
 	if got := builder.docIDToPos[DocID(0)]; got != 0 {
 		t.Fatalf("docIDToPos[0] = %d, want 0", got)

@@ -423,6 +423,9 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 	}
 
 	result.idx = builder.Finalize()
+	if result.idx == nil {
+		return experimentBuildResult{}, errors.New("finalize experiment index")
+	}
 	result.rowGroups = experimentUsedRowGroups(result.ingestedDocs, rgSize)
 	trimExperimentIndexRowGroups(result.idx, result.rowGroups)
 	return result, nil

@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: ready_to_discuss
-stopped_at: Phase 17 complete
-last_updated: "2026-04-23T17:08:48.000Z"
-last_activity: 2026-04-23
+stopped_at: Phase 17 review feedback addressed
+last_updated: "2026-04-24T04:29:12.000Z"
+last_activity: 2026-04-24
 progress:
   total_phases: 15
   completed_phases: 9
@@ -118,6 +118,12 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 |---|-------------|------|--------|-----------|
 | 260422-lv1 | PR #29 review feedback: predicate_op attr fix, telemetry.ErrorTypeOther promotion + go mod tidy, allocs test rename, parser-name info-leak test wiring | 2026-04-22 | 8679f64 | [260422-lv1-...](./quick/260422-lv1-address-pr-29-feedback-fix-attr-vocab-ti/) |
 | 260422-ur4 | PR #30 review feedback: json.Valid abort validator, trim mutation contract doc, name-based $.status lookup, shared typeNames helper | 2026-04-22 | 231275d | [260422-ur4-...](./quick/260422-ur4-address-pr-30-feedback-items-1-4-replace/) |
+
+### Quick Tasks Completed (v1.2)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260424 | Phase 17 review feedback: Finalize nil caller guards, explicit soft-skip kinds/counters, nil Encode handling, and ErrInvalidFormat coverage | 2026-04-24 | this commit | [260424-address-review-feedback-finalize-soft-skips](./quick/260424-address-review-feedback-finalize-soft-skips/) |
 
 ## Deferred Items
 
