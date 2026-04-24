@@ -9,10 +9,17 @@ import (
 type IngestLayer string
 
 const (
-	IngestLayerParser      IngestLayer = "parser"
+	// IngestLayerParser identifies JSON parser failures for a document.
+	IngestLayerParser IngestLayer = "parser"
+
+	// IngestLayerTransformer identifies field transformer failures for a document.
 	IngestLayerTransformer IngestLayer = "transformer"
-	IngestLayerNumeric     IngestLayer = "numeric"
-	IngestLayerSchema      IngestLayer = "schema"
+
+	// IngestLayerNumeric identifies numeric coercion or promotion failures for a document.
+	IngestLayerNumeric IngestLayer = "numeric"
+
+	// IngestLayerSchema identifies unsupported value-shape failures for a document.
+	IngestLayerSchema IngestLayer = "schema"
 )
 
 // IngestError reports a hard per-document ingest failure.
@@ -27,6 +34,7 @@ type IngestError struct {
 	Err   error
 }
 
+// Error returns a human-readable message for the hard ingest failure.
 func (e *IngestError) Error() string {
 	if e == nil {
 		return "<nil>"
@@ -37,6 +45,7 @@ func (e *IngestError) Error() string {
 	return fmt.Sprintf("ingest %s failure at %s: %v", e.Layer, e.Path, e.Err)
 }
 
+// Unwrap returns the underlying cause for stdlib error unwrapping.
 func (e *IngestError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -44,6 +53,7 @@ func (e *IngestError) Unwrap() error {
 	return e.Err
 }
 
+// Cause returns the underlying cause for github.com/pkg/errors compatibility.
 func (e *IngestError) Cause() error {
 	if e == nil {
 		return nil

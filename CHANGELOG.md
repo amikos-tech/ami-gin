@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The root package now exports `IngestError` for hard per-document ingest failures. It carries `Path`, `Layer`, `Value`, and `Err`; `Layer` uses `parser`, `transformer`, `numeric`, and `schema` values. `Value` is verbatim and is not redacted or truncated by the library, so callers own redaction and output-size policy. `gin-index experiment --on-error continue` text and JSON summaries now group structured failures by layer with at most 3 samples per layer.
 - `IngestFailureMode` / `IngestFailureHard` / `IngestFailureSoft` are the preferred failure-mode names. Deprecated source-compatible aliases `TransformerFailureMode` / `TransformerFailureStrict` / `TransformerFailureSoft` remain available for pre-phase-17 callers.
 - Companion transformer soft mode is representation-scoped: `WithTransformerFailureMode(gin.IngestFailureSoft)` skips only the derived alias when a transformer returns `ok=false`; it does not drop the source document.
 
