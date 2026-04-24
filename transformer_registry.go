@@ -180,6 +180,11 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 	}
 }
 
+// parseFloat accepts plain decimal numbers only: an optional leading '-',
+// digits, and at most one '.'. Scientific notation ("1.5e3"), hex, and
+// Inf/NaN literals are rejected. Used by the RegexExtractInt closure
+// reconstructed from a serialized index; captures that do not match this
+// shape cause the document to be skipped (the closure returns ok=false).
 func parseFloat(s string) (float64, error) {
 	var n float64
 	_, err := parseFloatInto(s, &n)
