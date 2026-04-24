@@ -70,6 +70,9 @@ type experimentPredicateResult struct {
 }
 
 func collectExperimentPathRows(idx *gin.GINIndex) []experimentPathRow {
+	if idx == nil {
+		return nil
+	}
 	rows := make([]experimentPathRow, 0, len(idx.PathDirectory))
 	for _, pe := range idx.PathDirectory {
 		if strings.HasPrefix(pe.PathName, "__derived:") {
@@ -146,6 +149,11 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 		fmt.Fprintf(stdout, "  Sidecar Path: %s\n", report.Summary.SidecarPath)
 	}
 	fmt.Fprintln(stdout)
+
+	if idx == nil {
+		fmt.Fprintln(stdout, "GIN Index Info: unavailable (build aborted before finalize)")
+		return
+	}
 
 	writeIndexInfo(stdout, idx)
 

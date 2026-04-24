@@ -43,6 +43,21 @@ func TestIngestErrorWrappingContract(t *testing.T) {
 	if got := (*IngestError)(nil).Error(); got != "<nil>" {
 		t.Fatalf("nil IngestError.Error() = %q, want <nil>", got)
 	}
+	if got := (*IngestError)(nil).Path(); got != "" {
+		t.Fatalf("nil IngestError.Path() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Layer(); got != "" {
+		t.Fatalf("nil IngestError.Layer() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Value(); got != "" {
+		t.Fatalf("nil IngestError.Value() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Unwrap(); got != nil {
+		t.Fatalf("nil IngestError.Unwrap() = %v, want nil", got)
+	}
+	if got := (*IngestError)(nil).Cause(); got != nil {
+		t.Fatalf("nil IngestError.Cause() = %v, want nil", got)
+	}
 	if got := (&IngestError{layer: IngestLayerParser, err: errors.New("bad json")}).Error(); got != "ingest parser failure: bad json" {
 		t.Fatalf("empty-path IngestError.Error() = %q", got)
 	}

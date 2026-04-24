@@ -145,6 +145,48 @@ func withExperimentDefaultConfig(t *testing.T, fn func() gin.GINConfig) {
 	})
 }
 
+func withExperimentBuilderFactory(t *testing.T, fn func(gin.GINConfig, int) (experimentBuilder, error)) {
+	t.Helper()
+
+	// This helper overrides a package-global seam; callers must not run in
+	// parallel while the override is active.
+	original := newExperimentBuilder
+	newExperimentBuilder = fn
+	t.Cleanup(func() {
+		newExperimentBuilder = original
+	})
+}
+
+type tragicExperimentBuilder struct {
+	addCalls  int
+	tragicErr error
+	finalized bool
+}
+
+func (b *tragicExperimentBuilder) AddDocument(gin.DocID, []byte) error {
+	b.addCalls++
+	switch b.addCalls {
+	case 1:
+		return nil
+	case 2:
+		return errors.New("builder tragic: recovered panic in merge: simulated")
+	default:
+		return errors.New("unexpected AddDocument call after tragic closure")
+	}
+}
+
+func (b *tragicExperimentBuilder) Finalize() *gin.GINIndex {
+	b.finalized = true
+	return nil
+}
+
+func (b *tragicExperimentBuilder) Err() error {
+	if b.addCalls >= 2 {
+		return b.tragicErr
+	}
+	return nil
+}
+
 func newParserIngestFailure(t *testing.T) error {
 	t.Helper()
 	builder, err := gin.NewBuilder(gin.DefaultConfig(), 2)
@@ -349,6 +391,66 @@ func TestHandleExperimentLineErrorAbortsOnTragicBuilder(t *testing.T) {
 	}
 	if result.errorCount != 1 || result.skippedLines != 1 {
 		t.Fatalf("result = %+v, want one skipped/error line", result)
+	}
+	var tragicErr *experimentTragicAbortError
+	if !errors.As(err, &tragicErr) {
+		t.Fatalf("handleExperimentLineError() error = %T, want *experimentTragicAbortError", err)
+	}
+	if !errors.Is(err, builderErr) {
+		t.Fatalf("handleExperimentLineError() error = %v, want errors.Is(..., %v)", err, builderErr)
+	}
+}
+
+func TestRunExperimentOnErrorContinueTragicAbortJSON(t *testing.T) {
+	fakeBuilder := &tragicExperimentBuilder{tragicErr: errors.New("simulated tragic failure")}
+	withExperimentBuilderFactory(t, func(gin.GINConfig, int) (experimentBuilder, error) {
+		return fakeBuilder, nil
+	})
+
+	input := "{\"status\":\"ok\"}\n{\"status\":\"boom\"}\n{\"status\":\"later\"}\n"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("runExperiment() code = %d, want 1 for tragic abort; stderr=%q", code, stderr.String())
+	}
+	if fakeBuilder.addCalls != 2 {
+		t.Fatalf("fakeBuilder.addCalls = %d, want 2 (stop after tragic failure)", fakeBuilder.addCalls)
+	}
+	if fakeBuilder.finalized {
+		t.Fatal("fakeBuilder.Finalize() was called, want tragic abort before finalize")
+	}
+	if !strings.Contains(stderr.String(), "line 2:") {
+		t.Fatalf("stderr = %q, want tragic line-numbered failure", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), experimentStatusTragic) {
+		t.Fatalf("stderr = %q, want tragic status marker", stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONString(t, summary["status"]); got != experimentStatusTragic {
+		t.Fatalf("summary.status = %q, want %q", got, experimentStatusTragic)
+	}
+	if got := decodeJSONInt(t, summary["documents"]); got != 1 {
+		t.Fatalf("summary.documents = %d, want 1", got)
+	}
+	if got := decodeJSONInt(t, summary["processed_lines"]); got != 2 {
+		t.Fatalf("summary.processed_lines = %d, want 2", got)
+	}
+	if got := decodeJSONInt(t, summary["skipped_lines"]); got != 1 {
+		t.Fatalf("summary.skipped_lines = %d, want 1", got)
+	}
+	if got := decodeJSONInt(t, summary["error_count"]); got != 1 {
+		t.Fatalf("summary.error_count = %d, want 1", got)
+	}
+	failures := decodeExperimentFailures(t, summary["failures"])
+	if len(failures) != 1 || failures[0].Layer != "unknown" || failures[0].Count != 1 {
+		t.Fatalf("summary.failures = %#v, want one preserved tragic unknown failure", failures)
+	}
+	parserPaths := decodeJSONArray(t, root["paths"])
+	if len(parserPaths) != 0 {
+		t.Fatalf("len(paths) = %d, want 0 for tragic report without finalized index", len(parserPaths))
 	}
 }
 
