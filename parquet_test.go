@@ -1,6 +1,7 @@
 package gin
 
 import (
+	stderrors "errors"
 	"os"
 	"strings"
 	"testing"
@@ -33,6 +34,26 @@ func createTestParquetFile(t *testing.T, path string, records []testRecord, rows
 
 	if err := writer.Close(); err != nil {
 		t.Fatalf("close writer: %v", err)
+	}
+}
+
+func TestFinalizeParquetBuildWrapsBuilderErr(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	tragicErr := stderrors.New("simulated tragic failure")
+	builder.tragicErr = tragicErr
+
+	idx, err := finalizeParquetBuild(builder)
+	if idx != nil {
+		t.Fatalf("finalizeParquetBuild() index = %v, want nil", idx)
+	}
+	if err == nil {
+		t.Fatal("finalizeParquetBuild() error = nil, want error")
+	}
+	if !stderrors.Is(err, tragicErr) {
+		t.Fatalf("finalizeParquetBuild() error = %v, want wrapped builder error", err)
+	}
+	if !strings.Contains(err.Error(), "finalize index after parquet build") {
+		t.Fatalf("finalizeParquetBuild() error = %v, want parquet finalize context", err)
 	}
 }
 

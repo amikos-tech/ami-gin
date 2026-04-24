@@ -85,6 +85,10 @@ var (
 	// ErrDecodedSizeExceedsLimit is returned by Decode when compressed input
 	// expands beyond maxDecodedIndexSize during zstd decompression.
 	ErrDecodedSizeExceedsLimit = errors.New("decoded size exceeds configured limit")
+
+	// ErrNilIndex is returned when a serialization or persistence boundary is
+	// asked to operate on a nil index.
+	ErrNilIndex = errors.New("nil index")
 )
 
 // CompressionLevel specifies the compression level for index serialization.
@@ -122,6 +126,17 @@ type SerializedConfig struct {
 	AdaptiveBucketCount     int               `json:"adaptive_bucket_count"`
 	FTSPaths                []string          `json:"fts_paths,omitempty"`
 	Transformers            []TransformerSpec `json:"transformers,omitempty"`
+}
+
+func transformerFailureModeWireToken(mode IngestFailureMode) IngestFailureMode {
+	switch normalizeTransformerFailureMode(mode) {
+	case IngestFailureHard:
+		return transformerFailureWireStrict
+	case IngestFailureSoft:
+		return transformerFailureWireSoft
+	default:
+		return mode
+	}
 }
 
 func writeRGSet(w io.Writer, rs *RGSet) error {
@@ -233,8 +248,12 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	var cfg *GINConfig
+	if idx != nil {
+		cfg = idx.Config
+	}
 	rt := &encodeRuntime{
-		signals: configSignals(idx.Config),
+		signals: configSignals(cfg),
 	}
 	for _, o := range opts {
 		o(rt)
@@ -260,6 +279,9 @@ func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level Compressio
 func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 	if level < 0 || level > 19 {
 		return nil, errors.Errorf("compression level must be 0-19, got %d", level)
+	}
+	if idx == nil {
+		return nil, errors.Wrap(ErrNilIndex, "encode index")
 	}
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")
@@ -498,7 +520,7 @@ func classifySerializeError(err error) string {
 		return "invalid_format"
 	}
 	if stderrors.Is(err, ErrVersionMismatch) {
-		return "deserialization"
+		return errorTypeDeserialization
 	}
 	if stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
 		return "integrity"
@@ -1621,7 +1643,7 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 				continue
 			}
 			transformer := representation.Transformer
-			transformer.FailureMode = normalizeTransformerFailureMode(transformer.FailureMode)
+			transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
 			sc.Transformers = append(sc.Transformers, transformer)
 		}
 	}
@@ -1652,7 +1674,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if configLen > maxConfigSize {
-		return nil, errors.Errorf("config size %d exceeds max %d", configLen, maxConfigSize)
+		return nil, errors.Wrapf(ErrInvalidFormat, "config size %d exceeds max %d", configLen, maxConfigSize)
 	}
 
 	data := make([]byte, configLen)
@@ -1665,7 +1687,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 
 	var sc SerializedConfig
 	if err := json.Unmarshal(data, &sc); err != nil {
-		return nil, errors.Wrap(err, "unmarshal config")
+		return nil, errors.Wrapf(ErrInvalidFormat, "unmarshal config: %v", err)
 	}
 
 	cfg := &GINConfig{
@@ -1687,7 +1709,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, path := range sc.FTSPaths {
 			canonicalPath, err := canonicalizeSupportedPath(path)
 			if err != nil {
-				return nil, errors.Wrapf(err, "canonicalize FTS path %q", path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize FTS path %q: %v", path, err)
 			}
 			if firstPath, exists := seenFTSPaths[canonicalPath]; exists {
 				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
@@ -1701,7 +1723,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
-				return nil, errors.Wrapf(err, "canonicalize transformer path %q", spec.Path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize transformer path %q: %v", spec.Path, err)
 			}
 			alias := spec.Alias
 			if alias == "" {
@@ -1724,7 +1746,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
-				return nil, errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)
+				return nil, errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
 			}
 			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
 				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
@@ -1733,8 +1755,13 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, errors.Wrap(err, "validate config")
+		return nil, errors.Wrapf(ErrInvalidFormat, "validate config: %v", err)
 	}
+
+	// Builder-only ingest routing fields are not serialized. Restore their
+	// documented hard defaults so decoded configs never expose an empty state.
+	cfg.ParserFailureMode = normalizeIngestFailureMode(cfg.ParserFailureMode)
+	cfg.NumericFailureMode = normalizeIngestFailureMode(cfg.NumericFailureMode)
 
 	// Restore silent observability defaults so decoded configs are always safe
 	// before any boundary code consumes them.
@@ -1759,7 +1786,16 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 		}
 	}
 
-	data, err := json.Marshal(representations)
+	wireRepresentations := make([]RepresentationSpec, len(representations))
+	for i, representation := range representations {
+		copied := representation
+		transformer := representation.Transformer
+		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
+		copied.Transformer = transformer
+		wireRepresentations[i] = copied
+	}
+
+	data, err := json.Marshal(wireRepresentations)
 	if err != nil {
 		return errors.Wrap(err, "marshal representations")
 	}

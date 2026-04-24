@@ -16,9 +16,10 @@ import (
 
 type atomicityDoc struct {
 	// docID DocID is intentionally non-contiguous in fixtures and properties.
-	docID      DocID
-	doc        []byte
-	shouldFail bool
+	docID       DocID
+	doc         []byte
+	shouldFail  bool
+	failureKind atomicityFailureKind
 }
 
 type atomicityCorpus struct {
@@ -29,8 +30,25 @@ type atomicityCorpus struct {
 	numRGs       int
 }
 
+type atomicityFailureKind uint8
+
+const (
+	atomicityFailureNone atomicityFailureKind = iota
+	atomicityFailureParser
+	atomicityFailureTransformer
+	atomicityFailureNumeric
+)
+
 func strictEmailAtomicityConfig() (GINConfig, error) {
 	return NewConfig(WithEmailDomainTransformer("$.email", "strict"))
+}
+
+func softEmailAtomicityConfig() (GINConfig, error) {
+	return NewConfig(
+		WithParserFailureMode(IngestFailureSoft),
+		WithNumericFailureMode(IngestFailureSoft),
+		WithEmailDomainTransformer("$.email", "strict", WithTransformerFailureMode(IngestFailureSoft)),
+	)
 }
 
 func buildAtomicityIndex(config GINConfig, docs []atomicityDoc, numRGs int) ([]byte, error) {
@@ -48,6 +66,22 @@ func buildAtomicityIndex(config GINConfig, docs []atomicityDoc, numRGs int) ([]b
 			return nil, errors.Errorf("AddDocument(%d) succeeded for expected failure", doc.docID)
 		case !doc.shouldFail && err != nil:
 			return nil, errors.Wrapf(err, "AddDocument(%d) failed for clean document", doc.docID)
+		}
+	}
+	return Encode(builder.Finalize())
+}
+
+func buildSoftAtomicityIndex(config GINConfig, docs []atomicityDoc, numRGs int) ([]byte, error) {
+	if numRGs < 1 {
+		numRGs = 1
+	}
+	builder, err := NewBuilder(config, numRGs)
+	if err != nil {
+		return nil, errors.Wrap(err, "new atomicity builder")
+	}
+	for _, doc := range docs {
+		if err := builder.AddDocument(doc.docID, doc.doc); err != nil {
+			return nil, errors.Wrapf(err, "AddDocument(%d) failed under soft config", doc.docID)
 		}
 	}
 	return Encode(builder.Finalize())
@@ -465,10 +499,13 @@ func genAtomicityCorpus(size int) gopter.Gen {
 				corpus.failingCount++
 				switch (i / 10) % 3 {
 				case 0:
+					doc.failureKind = atomicityFailureParser
 					doc.doc = parserMalformed
 				case 1:
+					doc.failureKind = atomicityFailureTransformer
 					doc.doc = transformerRejecting
 				default:
+					doc.failureKind = atomicityFailureNumeric
 					doc.doc = numericPromotionPair[1]
 				}
 			}
@@ -484,6 +521,18 @@ func genAtomicityCorpus(size int) gopter.Gen {
 		}
 		return corpus
 	})
+}
+
+func expectedSoftAtomicityDocs(corpus atomicityCorpus) []atomicityDoc {
+	docs := make([]atomicityDoc, 0, len(corpus.all))
+	for _, doc := range corpus.all {
+		if doc.failureKind == atomicityFailureParser || doc.failureKind == atomicityFailureNumeric {
+			continue
+		}
+		doc.shouldFail = false
+		docs = append(docs, doc)
+	}
+	return docs
 }
 
 func TestAddDocumentAtomicity(t *testing.T) {
@@ -516,6 +565,39 @@ func TestAddDocumentAtomicity(t *testing.T) {
 			// Both builds use corpus.numRGs, so Header.NumRowGroups matches before bytes.Equal compares the full encoded payload and DocIDMapping.
 			if !bytes.Equal(fullBytes, cleanBytes) {
 				return "full corpus and clean corpus encoded bytes differ"
+			}
+			return ""
+		},
+		genAtomicityCorpus(1000),
+	))
+
+	properties.TestingRun(t)
+}
+
+func TestAddDocumentAtomicityUnderSoftMode(t *testing.T) {
+	config, err := softEmailAtomicityConfig()
+	if err != nil {
+		t.Fatalf("softEmailAtomicityConfig: %v", err)
+	}
+
+	properties := gopter.NewProperties(propertyTestParametersWithBudgets(50, 10))
+	properties.Property("soft mode keeps only the documents allowed by its configured scopes", prop.ForAll(
+		func(corpus atomicityCorpus) string {
+			if len(corpus.all) != 1000 {
+				return "generated corpus does not contain 1000 attempted docs"
+			}
+
+			fullBytes, err := buildSoftAtomicityIndex(config, corpus.all, corpus.numRGs)
+			if err != nil {
+				return err.Error()
+			}
+			expectedBytes, err := buildSoftAtomicityIndex(config, expectedSoftAtomicityDocs(corpus), corpus.numRGs)
+			if err != nil {
+				return err.Error()
+			}
+
+			if !bytes.Equal(fullBytes, expectedBytes) {
+				return "soft-mode full corpus and expected corpus encoded bytes differ"
 			}
 			return ""
 		},

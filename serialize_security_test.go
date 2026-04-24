@@ -15,6 +15,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const lowerAlias = "lower"
+
 func buildAdaptiveSerializationFixture(t *testing.T, config GINConfig) *GINIndex {
 	t.Helper()
 
@@ -44,7 +46,7 @@ func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
 	t.Helper()
 
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower"),
+		WithToLowerTransformer("$.email", lowerAlias),
 		WithEmailDomainTransformer("$.email", "domain"),
 	)
 	if err != nil {
@@ -67,6 +69,17 @@ func buildRepresentationSerializationFixture(t *testing.T) *GINIndex {
 }
 
 func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpec, int) {
+	t.Helper()
+
+	_, representationJSON, offset := encodedConfigAndRepresentationJSON(t, data)
+	representations, err := readRepresentations(bytes.NewReader(appendLengthPrefix(representationJSON)))
+	if err != nil {
+		t.Fatalf("readRepresentations() error = %v", err)
+	}
+	return representations, offset
+}
+
+func encodedConfigAndRepresentationJSON(t *testing.T, data []byte) ([]byte, []byte, int) {
 	t.Helper()
 
 	if len(data) < 4 {
@@ -112,16 +125,74 @@ func locateRepresentationSection(t *testing.T, data []byte) ([]RepresentationSpe
 			t.Fatalf("readDocIDMapping() error = %v", err)
 		}
 	}
-	if _, err := readConfig(buf); err != nil {
-		t.Fatalf("readConfig() error = %v", err)
+
+	var configLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &configLen); err != nil {
+		t.Fatalf("read config length error = %v", err)
+	}
+	configJSON := make([]byte, configLen)
+	if _, err := io.ReadFull(buf, configJSON); err != nil {
+		t.Fatalf("read config payload error = %v", err)
 	}
 
 	offset := len(data) - buf.Len()
-	representations, err := readRepresentations(buf)
-	if err != nil {
-		t.Fatalf("readRepresentations() error = %v", err)
+
+	var representationLen uint32
+	if err := binary.Read(buf, binary.LittleEndian, &representationLen); err != nil {
+		t.Fatalf("read representation metadata length error = %v", err)
 	}
-	return representations, offset
+	representationJSON := make([]byte, representationLen)
+	if _, err := io.ReadFull(buf, representationJSON); err != nil {
+		t.Fatalf("read representation metadata payload error = %v", err)
+	}
+
+	return configJSON, representationJSON, offset
+}
+
+func appendLengthPrefix(data []byte) []byte {
+	var buf bytes.Buffer
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(data)))
+	_, _ = buf.Write(data)
+	return buf.Bytes()
+}
+
+func mustMarshalLengthPrefixedConfig(t *testing.T, sc SerializedConfig) bytes.Buffer {
+	t.Helper()
+
+	data, err := json.Marshal(sc)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(data))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(data); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+	return buf
+}
+
+func jsonContainsKey(v any, key string) bool {
+	switch typed := v.(type) {
+	case map[string]any:
+		if _, ok := typed[key]; ok {
+			return true
+		}
+		for _, child := range typed {
+			if jsonContainsKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonContainsKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func legacyV5HeaderOnlyPayload(t *testing.T) []byte {
@@ -577,7 +648,7 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 
 	want := []RepresentationInfo{
 		{SourcePath: "$.email", Alias: "domain", Transformer: "email_domain"},
-		{SourcePath: "$.email", Alias: "lower", Transformer: "to_lower"},
+		{SourcePath: "$.email", Alias: lowerAlias, Transformer: "to_lower"},
 	}
 	if got := decoded.Representations("$.email"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("decoded.Representations($.email) = %#v, want %#v", got, want)
@@ -586,7 +657,7 @@ func TestRepresentationMetadataRoundTrip(t *testing.T) {
 
 func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	config, err := NewConfig(
-		WithToLowerTransformer("$.email", "lower", WithTransformerFailureMode(TransformerFailureSoft)),
+		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig() error = %v", err)
@@ -603,13 +674,249 @@ func TestRepresentationFailureModeRoundTrip(t *testing.T) {
 	if len(specs) != 1 {
 		t.Fatalf("len(decoded.Config.representationSpecs[$.email]) = %d, want 1", len(specs))
 	}
-	if specs[0].Transformer.FailureMode != TransformerFailureSoft {
-		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, TransformerFailureSoft)
+	if specs[0].Transformer.FailureMode != IngestFailureSoft {
+		t.Fatalf("decoded failure mode = %q, want %q", specs[0].Transformer.FailureMode, IngestFailureSoft)
 	}
 
 	reloadedBuilder := mustNewBuilder(t, *decoded.Config, 1)
 	if err := reloadedBuilder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
 		t.Fatalf("AddDocument() with decoded soft-fail config error = %v, want success", err)
+	}
+}
+
+func TestDecodeLegacyTransformerFailureModeTokens(t *testing.T) {
+	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
+	lower.Alias = lowerAlias
+	lower.TargetPath = representationTargetPath("$.email", lowerAlias)
+	lower.FailureMode = IngestFailureMode("strict")
+
+	host := NewTransformerSpec("$.url", TransformerURLHost, nil)
+	host.Alias = "host"
+	host.TargetPath = representationTargetPath("$.url", "host")
+	host.FailureMode = IngestFailureMode("soft_fail")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{
+			lower,
+			host,
+		},
+	})
+
+	cfg, err := readConfig(&buf)
+	if err != nil {
+		t.Fatalf("readConfig() error = %v", err)
+	}
+
+	lowerSpecs := cfg.representationSpecs["$.email"]
+	if len(lowerSpecs) != 1 {
+		t.Fatalf("len($.email specs) = %d, want 1", len(lowerSpecs))
+	}
+	if got := lowerSpecs[0].Transformer.FailureMode; got != IngestFailureHard {
+		t.Fatalf("legacy strict decoded as %q, want %q", got, IngestFailureHard)
+	}
+
+	hostSpecs := cfg.representationSpecs["$.url"]
+	if len(hostSpecs) != 1 {
+		t.Fatalf("len($.url specs) = %d, want 1", len(hostSpecs))
+	}
+	if got := hostSpecs[0].Transformer.FailureMode; got != IngestFailureSoft {
+		t.Fatalf("legacy soft_fail decoded as %q, want %q", got, IngestFailureSoft)
+	}
+}
+
+func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
+	lower := NewTransformerSpec("$.email", TransformerToLower, nil)
+	lower.Alias = lowerAlias
+	lower.TargetPath = representationTargetPath("$.email", lowerAlias)
+	lower.FailureMode = IngestFailureMode("panic")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{lower},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid transformer failure mode")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "invalid transformer failure mode") {
+		t.Fatalf("readConfig() error = %v, want invalid transformer failure mode", err)
+	}
+}
+
+func TestReadConfigRejectsCorruptJSONAsInvalidFormat(t *testing.T) {
+	var buf bytes.Buffer
+	payload := []byte(`{"transformers":[`)
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(len(payload))); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+	if _, err := buf.Write(payload); err != nil {
+		t.Fatalf("buf.Write() error = %v", err)
+	}
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want corrupt JSON rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "unmarshal config") {
+		t.Fatalf("readConfig() error = %v, want unmarshal config context", err)
+	}
+}
+
+func TestReadConfigRejectsInvalidFTSPathAsInvalidFormat(t *testing.T) {
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		FTSPaths: []string{"$.items[0]"},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid FTS path rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "canonicalize FTS path") {
+		t.Fatalf("readConfig() error = %v, want FTS canonicalization context", err)
+	}
+}
+
+func TestReadConfigRejectsInvalidTransformerPathAsInvalidFormat(t *testing.T) {
+	spec := NewTransformerSpec("$.items[0]", TransformerToLower, nil)
+	spec.Alias = lowerAlias
+	spec.TargetPath = representationTargetPath("$.items[0]", lowerAlias)
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{spec},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want invalid transformer path rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "canonicalize transformer path") {
+		t.Fatalf("readConfig() error = %v, want transformer canonicalization context", err)
+	}
+}
+
+func TestReadConfigRejectsReconstructTransformerFailureAsInvalidFormat(t *testing.T) {
+	spec := NewTransformerSpec("$.ts", TransformerCustomDateToEpochMs, json.RawMessage(`{}`))
+	spec.Alias = "epoch"
+	spec.TargetPath = representationTargetPath("$.ts", "epoch")
+
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		Transformers: []TransformerSpec{spec},
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want transformer reconstruction rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "reconstruct transformer") {
+		t.Fatalf("readConfig() error = %v, want reconstruction context", err)
+	}
+}
+
+func TestReadConfigRejectsValidateFailureAsInvalidFormat(t *testing.T) {
+	buf := mustMarshalLengthPrefixedConfig(t, SerializedConfig{
+		PrefixBlockSize: -1,
+	})
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("readConfig() error = nil, want config validation rejection")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("readConfig() error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "validate config") {
+		t.Fatalf("readConfig() error = %v, want validation context", err)
+	}
+}
+
+func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
+	config, err := NewConfig(
+		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+
+	builder := mustNewBuilder(t, config, 1)
+	if err := builder.AddDocument(0, []byte(`{"email":"Alice@Example.COM"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+
+	data, err := EncodeWithLevel(builder.Finalize(), CompressionNone)
+	if err != nil {
+		t.Fatalf("EncodeWithLevel() error = %v", err)
+	}
+
+	if Version != 9 {
+		t.Fatalf("Version = %d, want 9", Version)
+	}
+
+	configJSON, representationJSON, _ := encodedConfigAndRepresentationJSON(t, data)
+	var configPayload struct {
+		Transformers []struct {
+			FailureMode IngestFailureMode `json:"failure_mode"`
+		} `json:"transformers"`
+	}
+	if err := json.Unmarshal(configJSON, &configPayload); err != nil {
+		t.Fatalf("json.Unmarshal(config) error = %v", err)
+	}
+	if len(configPayload.Transformers) != 1 {
+		t.Fatalf("len(config transformers) = %d, want 1", len(configPayload.Transformers))
+	}
+	if got := configPayload.Transformers[0].FailureMode; got != transformerFailureWireSoft {
+		t.Fatalf("config transformer failure_mode = %q, want %q", got, transformerFailureWireSoft)
+	}
+
+	var representationPayload []struct {
+		Transformer struct {
+			FailureMode IngestFailureMode `json:"failure_mode"`
+		} `json:"transformer"`
+	}
+	if err := json.Unmarshal(representationJSON, &representationPayload); err != nil {
+		t.Fatalf("json.Unmarshal(representations) error = %v", err)
+	}
+	if len(representationPayload) != 1 {
+		t.Fatalf("len(representations) = %d, want 1", len(representationPayload))
+	}
+	if got := representationPayload[0].Transformer.FailureMode; got != transformerFailureWireSoft {
+		t.Fatalf("representation transformer failure_mode = %q, want %q", got, transformerFailureWireSoft)
+	}
+
+	var configMap map[string]any
+	if err := json.Unmarshal(configJSON, &configMap); err != nil {
+		t.Fatalf("json.Unmarshal(config map) error = %v", err)
+	}
+	if jsonContainsKey(configMap, "parser_failure_mode") {
+		t.Fatal("config JSON contains parser_failure_mode")
+	}
+	if jsonContainsKey(configMap, "numeric_failure_mode") {
+		t.Fatal("config JSON contains numeric_failure_mode")
+	}
+
+	var representationAny any
+	if err := json.Unmarshal(representationJSON, &representationAny); err != nil {
+		t.Fatalf("json.Unmarshal(representation any) error = %v", err)
+	}
+	if jsonContainsKey(representationAny, "parser_failure_mode") {
+		t.Fatal("representation metadata JSON contains parser_failure_mode")
+	}
+	if jsonContainsKey(representationAny, "numeric_failure_mode") {
+		t.Fatal("representation metadata JSON contains numeric_failure_mode")
 	}
 }
 
@@ -2235,6 +2542,21 @@ func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
 	_, err = readConfig(&buf)
 	if err == nil {
 		t.Fatal("expected canonical FTS collision error, got nil")
+	}
+	if !stderrors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("expected ErrInvalidFormat, got %v", err)
+	}
+}
+
+func TestReadConfigRejectsOversizedConfigLength(t *testing.T) {
+	var buf bytes.Buffer
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(maxConfigSize+1)); err != nil {
+		t.Fatalf("binary.Write() error = %v", err)
+	}
+
+	_, err := readConfig(&buf)
+	if err == nil {
+		t.Fatal("expected oversized config length error, got nil")
 	}
 	if !stderrors.Is(err, ErrInvalidFormat) {
 		t.Fatalf("expected ErrInvalidFormat, got %v", err)

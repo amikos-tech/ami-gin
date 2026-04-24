@@ -37,13 +37,13 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 ### 🚧 v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — ACTIVE
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
-- [ ] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs.
+- [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
 - [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes.
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
 
-- [ ] **Phase 19: SIMD Parser Adapter** — Same-package `simdjson` parser behind `//go:build simdjson`, explicit opt-in via `WithParser(...)`, preserve exact-int semantics, keep `stdlib` as the default path.
-- [ ] **Phase 20: SIMD Validation, Datasets & CI** — Benchmark stdlib vs SIMD on SEED-001-backed fixtures, vendor the required simdjson example corpus + NOTICE metadata, add `-tags simdjson` CI coverage, and lock the shared-library distribution/loading contract.
+- [ ] **Phase 19: SIMD Parser Adapter** — Same-package `simdjson` parser behind `//go:build simdjson`, explicit opt-in via `WithParser(...)`, preserve exact-int semantics, keep `stdlib` as the default path, and add typed parser-sink fast paths so SIMD tape tags do not round-trip through `any`.
+- [ ] **Phase 20: SIMD Validation, Datasets & CI** — Benchmark stdlib vs SIMD typed-sink ingest on SEED-001-backed fixtures, vendor the required simdjson example corpus + NOTICE metadata, add `-tags simdjson` CI coverage, and lock the shared-library distribution/loading contract.
 
 ## Phase Details
 
@@ -128,7 +128,13 @@ Plans:
   2. New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` thread through to the parser and numeric layers; default `Hard` for both, preserving current behavior.
   3. `Soft` mode at any layer skips the failing document silently and returns no error to the caller; per-layer test coverage matches the existing transformer-failure-mode tests.
   4. An `examples/failure-modes/main.go` demonstrates one config that rejects on any failure and one that skips on any failure, with predictable output for both.
-**Plans**: TBD (planned during `/gsd-discuss-phase 17` and `/gsd-plan-phase 17`)
+**Plans**: 4 plans
+
+Plans:
+- [x] 17-01-PLAN.md — Unified public failure-mode API and parser/numeric config defaults
+- [x] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
+- [x] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
+- [x] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
 
 ### Phase 18: Structured `IngestError` + CLI integration
 **Goal**: Make per-document failures actionable by callers. Replace the current opaque wrapped-string error with a structured type that carries enough context to identify, classify, and act on failures programmatically; surface the same structure in the existing CLI summary.
@@ -148,10 +154,13 @@ Plans:
 **Blocked on**: upstream `pure-simdjson` LICENSE file, version tag, and a settled shared-library distribution/loading decision
 **Requirements**: Deferred SIMD scope from original PARSER-02..05 (to be restated when v1.3 formally opens)
 **Success Criteria** (what must be TRUE):
-  1. `parser_simd.go` behind `//go:build simdjson` adds a same-package SIMD parser constructor and `WithParser(...)` can select it without any builder-internal changes beyond the already-landed Phase 13 seam.
+  1. `parser_simd.go` behind `//go:build simdjson` adds a same-package SIMD parser constructor and `WithParser(...)` can select it without changing the default stdlib parser path.
   2. The SIMD path preserves exact-int semantics for the Phase 07 numeric corpus, routing overflow-sensitive numbers through the existing builder classifier rather than silently coercing them to `float64`.
   3. Default builds remain stdlib-only: no simd dependency or runtime shared-library requirement unless the build tag is enabled and the parser is explicitly selected.
   4. Parity tests prove `Evaluate` results match the stdlib parser across the authored Phase 13 fixtures and targeted numeric edge cases.
+  5. The package-private `parserSink` grows typed scalar fast paths for same-package parsers (`StageString`, `StageBool`, `StageNull`, and typed numeric/raw-number methods as needed) while keeping `StageScalar` as the stdlib/compat fallback.
+  6. The SIMD walker dispatches directly from tape tags into typed sink methods and does not materialize scalar leaves as `any` or walk through `map[string]any`; transformed subtrees may still use `StageMaterialized` where required by transformer buffering.
+  7. SIMD numeric handling documents and tests the invariant that integer tape tokens use raw source text or exact integer staging, while float tape tokens use typed float staging, preserving the `json.Decoder.UseNumber()` semantics of the stdlib path.
 **Plans**: TBD
 
 ### Phase 20: SIMD Validation, Datasets & CI
@@ -160,10 +169,12 @@ Plans:
 **Blocked on**: final parser dependency choice and shared-library distribution contract
 **Requirements**: Deferred SIMD scope from original PARSER-02..05 (to be restated when v1.3 formally opens)
 **Success Criteria** (what must be TRUE):
-  1. A benchmark suite compares stdlib vs SIMD ingest on SEED-001-backed fixtures and reports reproducible CPU and allocation deltas.
+  1. A benchmark suite compares stdlib vs SIMD typed-sink ingest on SEED-001-backed fixtures and reports reproducible CPU, allocation, and bytes/op deltas.
   2. Required simdjson example fixtures are vendored under `testdata/` with preserved license/NOTICE metadata and documented size limits.
   3. CI runs both the default and `-tags simdjson` test paths on the supported platform set, with explicit skip/fail behavior when the shared library is unavailable.
   4. Runtime loading and release/distribution guidance for the shared library is documented and tested so consumers can enable the SIMD path without guesswork.
+  5. Benchmarks include at least one geography/number-heavy SEED-001 fixture such as `canada.json` if vendored, or the closest available dataset, and explicitly report whether scalar leaves avoid `any` materialization on the SIMD path.
+  6. Allocation regression coverage protects the typed sink win: SIMD scalar ingestion should not allocate once per scalar leaf merely to box strings, bools, nulls, or numeric values into `any`.
 **Plans**: TBD
 
 ## Progress
@@ -181,7 +192,7 @@ Plans:
 | 14. Observability Seams | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 17. Failure-Mode Taxonomy Unification | v1.2 | 0/- | Planned | - |
+| 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |

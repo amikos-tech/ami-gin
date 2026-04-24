@@ -28,7 +28,7 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = uint16(9)
+	Version = 9
 )
 
 const (
@@ -275,32 +275,74 @@ func As(alias string, value any) RepresentationValue {
 
 // FieldTransformer transforms a value before indexing.
 // Returns (transformedValue, ok). If ok=false, the companion representation
-// follows the registration's configured failure mode. Strict is the default.
+// follows the registration's configured failure mode. Hard rejects the
+// document; soft skips only the derived representation and keeps the source
+// document indexed.
 type FieldTransformer func(value any) (any, bool)
 
-type TransformerFailureMode string
+type IngestFailureMode string
 
 const (
-	TransformerFailureStrict TransformerFailureMode = "strict"
-	TransformerFailureSoft   TransformerFailureMode = "soft_fail"
+	IngestFailureHard IngestFailureMode = "hard"
+	IngestFailureSoft IngestFailureMode = "soft"
+)
+
+// TransformerFailureMode is kept as a deprecated source-compatible alias for
+// pre-phase-17 callers.
+//
+// Deprecated: use IngestFailureMode.
+type TransformerFailureMode = IngestFailureMode
+
+const (
+	// Deprecated: use IngestFailureHard.
+	TransformerFailureStrict = IngestFailureHard
+	// Deprecated: use IngestFailureSoft.
+	TransformerFailureSoft = IngestFailureSoft
+
+	transformerFailureWireStrict = IngestFailureMode("strict")
+	transformerFailureWireSoft   = IngestFailureMode("soft_fail")
 )
 
 type transformerRegistrationOptions struct {
-	failureMode TransformerFailureMode
+	failureMode IngestFailureMode
 }
 
 type TransformerOption func(*transformerRegistrationOptions) error
 
-func normalizeTransformerFailureMode(mode TransformerFailureMode) TransformerFailureMode {
+func normalizeIngestFailureMode(mode IngestFailureMode) IngestFailureMode {
 	if mode == "" {
-		return TransformerFailureStrict
+		return IngestFailureHard
 	}
 	return mode
 }
 
-func validateTransformerFailureMode(mode TransformerFailureMode) error {
+// validateIngestFailureMode is the public API validator. It rejects legacy
+// transformer wire tokens "strict" and "soft_fail"; those are metadata-only.
+func validateIngestFailureMode(mode IngestFailureMode) error {
+	switch normalizeIngestFailureMode(mode) {
+	case IngestFailureHard, IngestFailureSoft:
+		return nil
+	default:
+		return errors.Errorf("invalid ingest failure mode %q", mode)
+	}
+}
+
+func normalizeTransformerFailureMode(mode IngestFailureMode) IngestFailureMode {
+	switch mode {
+	case "", transformerFailureWireStrict:
+		return IngestFailureHard
+	case transformerFailureWireSoft:
+		return IngestFailureSoft
+	default:
+		return mode
+	}
+}
+
+// validateTransformerFailureMode is the transformer metadata validator. It
+// accepts legacy wire tokens "strict" and "soft_fail" for v9 decode compatibility.
+func validateTransformerFailureMode(mode IngestFailureMode) error {
 	switch normalizeTransformerFailureMode(mode) {
-	case TransformerFailureStrict, TransformerFailureSoft:
+	case IngestFailureHard, IngestFailureSoft:
 		return nil
 	default:
 		return errors.Errorf("invalid transformer failure mode %q", mode)
@@ -309,23 +351,23 @@ func validateTransformerFailureMode(mode TransformerFailureMode) error {
 
 func resolveTransformerOptions(opts ...TransformerOption) (transformerRegistrationOptions, error) {
 	options := transformerRegistrationOptions{
-		failureMode: TransformerFailureStrict,
+		failureMode: IngestFailureHard,
 	}
 	for _, opt := range opts {
 		if err := opt(&options); err != nil {
 			return transformerRegistrationOptions{}, err
 		}
 	}
-	options.failureMode = normalizeTransformerFailureMode(options.failureMode)
+	options.failureMode = normalizeIngestFailureMode(options.failureMode)
 	return options, nil
 }
 
-func WithTransformerFailureMode(mode TransformerFailureMode) TransformerOption {
+func WithTransformerFailureMode(mode IngestFailureMode) TransformerOption {
 	return func(options *transformerRegistrationOptions) error {
-		if err := validateTransformerFailureMode(mode); err != nil {
-			return err
+		if err := validateIngestFailureMode(mode); err != nil {
+			return errors.Wrapf(err, "invalid transformer failure mode %q", mode)
 		}
-		options.failureMode = normalizeTransformerFailureMode(mode)
+		options.failureMode = normalizeIngestFailureMode(mode)
 		return nil
 	}
 }
@@ -350,17 +392,22 @@ type registeredRepresentation struct {
 }
 
 type GINConfig struct {
-	CardinalityThreshold       uint32
-	BloomFilterSize            uint32
-	BloomFilterHashes          uint8
-	EnableTrigrams             bool
-	TrigramMinLength           int
-	HLLPrecision               uint8
-	PrefixBlockSize            int
-	AdaptiveMinRGCoverage      int
-	AdaptivePromotedTermCap    int
-	AdaptiveCoverageCeiling    float64
-	AdaptiveBucketCount        int
+	CardinalityThreshold    uint32
+	BloomFilterSize         uint32
+	BloomFilterHashes       uint8
+	EnableTrigrams          bool
+	TrigramMinLength        int
+	HLLPrecision            uint8
+	PrefixBlockSize         int
+	AdaptiveMinRGCoverage   int
+	AdaptivePromotedTermCap int
+	AdaptiveCoverageCeiling float64
+	AdaptiveBucketCount     int
+	// ParserFailureMode and NumericFailureMode are builder-time ingest routing
+	// knobs. They are never serialized into finalized indexes; see
+	// SerializedConfig and writeConfig/readConfig for persisted config state.
+	ParserFailureMode          IngestFailureMode
+	NumericFailureMode         IngestFailureMode
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
 	representationTransformers map[string][]registeredRepresentation // canonical source path -> runtime companion transformers
@@ -393,6 +440,26 @@ func WithFTSPaths(paths ...string) ConfigOption {
 	}
 }
 
+func WithParserFailureMode(mode IngestFailureMode) ConfigOption {
+	return func(c *GINConfig) error {
+		if err := validateIngestFailureMode(mode); err != nil {
+			return err
+		}
+		c.ParserFailureMode = normalizeIngestFailureMode(mode)
+		return nil
+	}
+}
+
+func WithNumericFailureMode(mode IngestFailureMode) ConfigOption {
+	return func(c *GINConfig) error {
+		if err := validateIngestFailureMode(mode); err != nil {
+			return err
+		}
+		c.NumericFailureMode = normalizeIngestFailureMode(mode)
+		return nil
+	}
+}
+
 func representationTargetPath(sourcePath, alias string) string {
 	return internalRepresentationPathPrefix + sourcePath + internalRepresentationPathSeparator + alias
 }
@@ -418,7 +485,7 @@ func validateRepresentationAlias(alias string) error {
 	return nil
 }
 
-func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode TransformerFailureMode, fn FieldTransformer) error {
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer) error {
 	if err := validateRepresentationAlias(alias); err != nil {
 		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
@@ -665,6 +732,8 @@ func DefaultConfig() GINConfig {
 		AdaptivePromotedTermCap: 64,
 		AdaptiveCoverageCeiling: 0.80,
 		AdaptiveBucketCount:     128,
+		ParserFailureMode:       IngestFailureHard,
+		NumericFailureMode:      IngestFailureHard,
 	}
 	normalizeObservability(&cfg)
 	return cfg
@@ -772,6 +841,13 @@ func (c GINConfig) validate() error {
 	}
 	if c.PrefixBlockSize > math.MaxUint16 {
 		return errors.Errorf("prefix block size must be <= %d", math.MaxUint16)
+	}
+
+	if err := validateIngestFailureMode(c.ParserFailureMode); err != nil {
+		return errors.Wrap(err, "parser failure mode invalid")
+	}
+	if err := validateIngestFailureMode(c.NumericFailureMode); err != nil {
+		return errors.Wrap(err, "numeric failure mode invalid")
 	}
 
 	if c.AdaptiveEnabled() {

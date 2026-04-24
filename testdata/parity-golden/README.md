@@ -48,3 +48,4 @@ authored fixture; names match `authoredParityFixtures()` in
 | `empty-arrays.bin` | `[]` and `[[], []]` edges |
 | `large-strings.bin` | Trigram-index stress |
 | `transformers-iso-date-and-lower.bin` | WithISODateTransformer + WithToLowerTransformer (D-05 dim #4 / Pitfall #2) |
+| `transformers-soft-fail-wire.bin` | Full v9 payload pin for companion transformer `soft_fail` wire tokens |

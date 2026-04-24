@@ -45,13 +45,13 @@ var transformerNames = map[TransformerID]string{
 }
 
 type TransformerSpec struct {
-	Path        string                 `json:"path"`
-	Alias       string                 `json:"alias,omitempty"`
-	TargetPath  string                 `json:"target_path,omitempty"`
-	FailureMode TransformerFailureMode `json:"failure_mode,omitempty"`
-	ID          TransformerID          `json:"id"`
-	Name        string                 `json:"name"`
-	Params      json.RawMessage        `json:"params,omitempty"`
+	Path        string            `json:"path"`
+	Alias       string            `json:"alias,omitempty"`
+	TargetPath  string            `json:"target_path,omitempty"`
+	FailureMode IngestFailureMode `json:"failure_mode,omitempty"`
+	ID          TransformerID     `json:"id"`
+	Name        string            `json:"name"`
+	Params      json.RawMessage   `json:"params,omitempty"`
 }
 
 type CustomDateParams struct {
@@ -113,6 +113,9 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
 		}
+		if p.Group < 0 {
+			return nil, errors.New("regex group must be non-negative")
+		}
 		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
 		if err != nil {
 			return nil, errors.Wrap(err, "compile regex pattern")
@@ -132,6 +135,9 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		var p RegexParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
+		}
+		if p.Group < 0 {
+			return nil, errors.New("regex group must be non-negative")
 		}
 		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
 		if err != nil {
@@ -174,6 +180,11 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 	}
 }
 
+// parseFloat accepts plain decimal numbers only: an optional leading '-',
+// digits, and at most one '.'. Scientific notation ("1.5e3"), hex, and
+// Inf/NaN literals are rejected. Used by the RegexExtractInt closure
+// reconstructed from a serialized index; captures that do not match this
+// shape cause the document to be skipped (the closure returns ok=false).
 func parseFloat(s string) (float64, error) {
 	var n float64
 	_, err := parseFloatInto(s, &n)
@@ -197,6 +208,7 @@ func parseFloatSimple(s string) (float64, error) {
 	}
 	var intPart, fracPart float64
 	var fracDiv float64 = 1
+	digits := 0
 	seenDot := false
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -210,12 +222,16 @@ func parseFloatSimple(s string) (float64, error) {
 		if c < '0' || c > '9' {
 			return 0, errors.New("invalid number")
 		}
+		digits++
 		if seenDot {
 			fracPart = fracPart*10 + float64(c-'0')
 			fracDiv *= 10
 		} else {
 			intPart = intPart*10 + float64(c-'0')
 		}
+	}
+	if digits == 0 {
+		return 0, errors.New("invalid number")
 	}
 	result := intPart + fracPart/fracDiv
 	if negative {

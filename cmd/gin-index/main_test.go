@@ -44,6 +44,24 @@ func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord) {
 	}
 }
 
+func TestFinalizeExperimentIndexResultWrapsBuilderErr(t *testing.T) {
+	tragicErr := errors.New("simulated tragic failure")
+
+	result, err := finalizeExperimentIndexResult(nil, tragicErr, experimentBuildResult{})
+	if result.idx != nil {
+		t.Fatalf("finalizeExperimentIndexResult() index = %v, want nil", result.idx)
+	}
+	if err == nil {
+		t.Fatal("finalizeExperimentIndexResult() error = nil, want error")
+	}
+	if !errors.Is(err, tragicErr) {
+		t.Fatalf("finalizeExperimentIndexResult() error = %v, want wrapped builder error", err)
+	}
+	if !strings.Contains(err.Error(), "finalize experiment index") {
+		t.Fatalf("finalizeExperimentIndexResult() error = %v, want experiment finalize context", err)
+	}
+}
+
 func TestRunParseErrorHelper(t *testing.T) {
 	helper := os.Getenv("GIN_INDEX_PARSE_HELPER")
 	if helper == "" {

@@ -21,8 +21,8 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 
 ### Failure-Mode Taxonomy
 
-- [ ] **FAIL-01**: Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces the existing `TransformerFailureMode` constants (deliberate breaking rename for clarity over convenience) and extends to parser and numeric-promotion layers. CHANGELOG flags this as a breaking API change with a one-line migration note.
-- [ ] **FAIL-02**: New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` added; default `Hard` for both, preserving current behavior. `Soft` mode skips the failing document at the configured layer and returns no error to the caller.
+- [x] **FAIL-01**: Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces the existing `TransformerFailureMode` constants (deliberate breaking rename for clarity over convenience) and extends to parser and numeric-promotion layers. CHANGELOG flags this as a breaking API change with a one-line migration note. Completed by Phase 17.
+- [x] **FAIL-02**: New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` added; default `Hard` for both, preserving current behavior. `Soft` mode skips the failing document at the configured layer and returns no error to the caller. Completed by Phase 17.
 
 ### Structured IngestError
 
@@ -48,8 +48,8 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 | ATOMIC-01 | Phase 16 | Complete (16-03 atomicity property) |
 | ATOMIC-02 | Phase 16 | Complete (16-01, 16-04 guard) |
 | ATOMIC-03 | Phase 16 | Complete (16-02 recovery, 16-03 public catalog) |
-| FAIL-01 | Phase 17 | Planned |
-| FAIL-02 | Phase 17 | Planned |
+| FAIL-01 | Phase 17 | Complete |
+| FAIL-02 | Phase 17 | Complete |
 | IERR-01 | Phase 18 | Planned |
 | IERR-02 | Phase 18 | Planned |
 | IERR-03 | Phase 18 | Planned |

@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
-status: "Phase 16 shipped - PR #31"
-stopped_at: Completed 16-03-PLAN.md; Phase 16 complete
-last_updated: "2026-04-23T12:57:37Z"
-last_activity: 2026-04-23
+status: shipped
+stopped_at: Phase 17 shipped - PR #32
+last_updated: "2026-04-24T07:04:51.000Z"
+last_activity: 2026-04-24
 progress:
   total_phases: 15
-  completed_phases: 8
-  total_plans: 24
-  completed_plans: 23
+  completed_phases: 9
+  total_plans: 28
+  completed_plans: 27
   percent: 96
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 17 — failure-mode-taxonomy-unification
+**Current focus:** Phase 18 — structured-ingesterror-cli-integration
 
 ## Current Position
 
-Phase: 17
-Plan: Not started
-Status: Phase 16 shipped in PR #31; ready for Phase 17 planning
-Last activity: 2026-04-23
+Phase: 18
+Plan: Discuss phase scope
+Status: Phase 17 shipped - PR #32; PR #32 review feedback items 1-5 addressed (260424d); Phase 18 ready for discuss/planning
+Last activity: 2026-04-24 - Completed quick task 260424d: PR #32 review feedback items 1-5
 
-Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements fully complete, 4/4 Phase 16 plans executed)
+Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
 
 ## Performance Metrics
 
@@ -57,7 +57,7 @@ Progress: [##########] 100% for Phase 16 (1/3 v1.2 phases, 3/8 requirements full
 | Phase | Plans | Status |
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
-| 17 | TBD | Planned (defining) |
+| 17 | 4 | Complete (4/4 plans complete) |
 | 18 | TBD | Planned (defining) |
 
 ## Accumulated Context
@@ -80,6 +80,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
 - **16-04 marker enforcement**: local and CI marker checks now enforce the merge-layer validator marker policy; the Wave 2 integration fix resolved the `gin_test.go` goconst finding and `make lint` is green.
 - **16-03 atomicity proof**: `atomicity_test.go` uses a bounded 1000-document full-vs-clean property with deterministic 10% failing slots and encoded-byte equality; the public failure catalog asserts user-input failures leave `tragicErr` nil.
+- **17 planning resolution**: public `IngestFailureMode` string values are planned as `hard` and `soft`, while transformer serialization preserves legacy v9 wire tokens `strict` and `soft_fail` through private mapping.
+- **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
+- **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
 
 ### Roadmap Evolution
 
@@ -91,19 +94,21 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
   - Phase 18: Structured IngestError + CLI integration — IERR-01..03
 - DAG: 16 → 17 → 18 (strict sequence; Phases 17 and 18 only become possible because Phase 16 makes per-document failure first-class).
 - Phase 16 completed 2026-04-23 with ATOMIC-01, ATOMIC-02, and ATOMIC-03 fully covered.
+- Phase 17 completed 2026-04-23 with 4/4 plans complete, verification passed, and FAIL-01/FAIL-02 satisfied.
 - v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
 
 ### Pending Todos
 
-- Plan Phase 17 failure-mode taxonomy unification
-- Update CHANGELOG / release notes draft to flag `TransformerFailureMode` → `IngestFailureMode` rename as breaking when v1.2 ships
+- Discuss and plan Phase 18 structured `IngestError` + CLI integration
+- Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
 ### Blockers/Concerns
 
 - The validator becoming the single point of truth for "what can fail" introduces an invariant that future contributors must respect. Mitigation is captured in Phase 16 plans: `// MUST_BE_CHECKED_BY_VALIDATOR` markers plus local and CI checks for merge-layer error returns.
 - Phase 16 integration gate is green: `make test`, `make lint`, and `go build ./...` passed after all four plans.
+- Phase 17 integration gate is green: `go test ./...`, `make test`, `make lint`, and `go build ./...` passed. Advisory review warnings are documented in `17-REVIEW.md` and residual risks in `17-VERIFICATION.md`.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
 
@@ -113,6 +118,15 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 |---|-------------|------|--------|-----------|
 | 260422-lv1 | PR #29 review feedback: predicate_op attr fix, telemetry.ErrorTypeOther promotion + go mod tidy, allocs test rename, parser-name info-leak test wiring | 2026-04-22 | 8679f64 | [260422-lv1-...](./quick/260422-lv1-address-pr-29-feedback-fix-attr-vocab-ti/) |
 | 260422-ur4 | PR #30 review feedback: json.Valid abort validator, trim mutation contract doc, name-based $.status lookup, shared typeNames helper | 2026-04-22 | 231275d | [260422-ur4-...](./quick/260422-ur4-address-pr-30-feedback-items-1-4-replace/) |
+
+### Quick Tasks Completed (v1.2)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260424 | Phase 17 review feedback: Finalize nil caller guards, explicit soft-skip kinds/counters, nil Encode handling, and ErrInvalidFormat coverage | 2026-04-24 | this commit | [260424-address-review-feedback-finalize-soft-skips](./quick/260424-address-review-feedback-finalize-soft-skips/) |
+| 260424b | Phase 17 follow-up review: ErrNilIndex sentinel, builder Err propagation, soft-skip cleanup, and guard coverage | 2026-04-24 | this commit | [260424-follow-up-review-finalize-sentinels](./quick/260424-follow-up-review-finalize-sentinels/) |
+| 260424c | Phase 17 janitorial review suggestions: inline experiment finalize trampoline and document soft-skip fallback invariant | 2026-04-24 | this commit | [260424-janitorial-review-suggestions](./quick/260424-janitorial-review-suggestions/) |
+| 260424d | PR #32 review feedback items 1-5: drop redundant normalize calls, expand CHANGELOG, document parseFloat decimal-only, remove dead-code Group guard, document soft-skip parser remap invariant | 2026-04-24 | 9807748 | [260424-address-pr32-feedback-items-1-5](./quick/260424-address-pr32-feedback-items-1-5/) |
 
 ## Deferred Items
 
@@ -128,14 +142,15 @@ Items deferred to v1.3 or later:
 | feature | Snapshot-and-restore atomicity (Strategy A) | reserve | Held in case a future failure mode cannot be pre-validated |
 | feature | Bloom `AddString` allocation cleanup | 999.x | Perf-shaped; profile before optimizing per project precedent |
 | feature | Per-path `[*]` array wildcard opt-out | 999.x | Disconnected from correctness theme |
+| bug | `RegexExtractInt` registry `parseFloat` round-trip divergence | 999.x | Reconstructed transformer rejects scientific notation while public API (`transformers.go:134`) accepts it; fix is to swap `parseFloat` for `strconv.ParseFloat` in `transformer_registry.go` with `NaN`/`Inf` guard and add a serialize→reload round-trip test. Surfaced during PR #32 review follow-up (quick task 260424d). |
 | feature | `zap` logger adapter | on-demand | Ship `slog`/`stdlib` only; add `zap` on explicit user request |
 | feature | Two-file index diff (CLI) | on-demand | Low value vs. complexity; wait for user signal |
 | feature | Experimentation CLI REPL/TUI | out-of-scope | Charter excludes interactive modes |
 
 ## Session Continuity
 
-Last session: Phase 16 plan 16-03 execution
-Stopped at: Completed 16-03-PLAN.md; Phase 16 complete
-Resume file: None
+Last session: 2026-04-23T17:08:48.000Z
+Stopped at: Phase 17 complete
+Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-VERIFICATION.md
 
-**Next step:** Plan Phase 17 failure-mode taxonomy unification.
+**Next step:** Discuss Phase 18 structured `IngestError` + CLI integration.

@@ -535,7 +535,7 @@ func TestBuilderFailsWhenCompanionTransformFails(t *testing.T) {
 	}
 }
 
-func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
+func TestBuilderSoftFailSkipsOnlyRepresentationWhenConfigured(t *testing.T) {
 	config, err := NewConfig(
 		WithCustomTransformer("$.email", "strict", func(value any) (any, bool) {
 			s, ok := value.(string)
@@ -543,7 +543,7 @@ func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
 				return nil, false
 			}
 			return s, true
-		}, WithTransformerFailureMode(TransformerFailureSoft)),
+		}, WithTransformerFailureMode(IngestFailureSoft)),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig failed: %v", err)
@@ -557,6 +557,12 @@ func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
 	if err := builder.AddDocument(0, []byte(`{"email":42}`)); err != nil {
 		t.Fatalf("AddDocument(0) error = %v, want soft-fail success", err)
 	}
+	if builder.numDocs != 1 {
+		t.Fatalf("numDocs = %d, want 1 after raw document is kept", builder.numDocs)
+	}
+	if builder.nextPos != 1 {
+		t.Fatalf("nextPos = %d, want 1 after raw document is kept", builder.nextPos)
+	}
 	if err := builder.AddDocument(1, []byte(`{"email":"bob@example.com"}`)); err != nil {
 		t.Fatalf("AddDocument(1) failed: %v", err)
 	}
@@ -566,7 +572,11 @@ func TestBuilderSoftFailSkipsCompanionWhenConfigured(t *testing.T) {
 		t.Fatalf("Header.NumDocs = %d, want 2", idx.Header.NumDocs)
 	}
 
-	if got := idx.Evaluate([]Predicate{EQ("$.email", float64(42))}).ToSlice(); len(got) != 1 || got[0] != 0 {
+	rawPathID := requirePathID(t, idx, "$.email")
+	if _, ok := idx.NumericIndexes[rawPathID]; !ok {
+		t.Fatal(`NumericIndexes["$.email"] missing, want raw numeric value retained`)
+	}
+	if got := idx.Evaluate([]Predicate{EQ("$.email", int64(42))}).ToSlice(); len(got) != 1 || got[0] != 0 {
 		t.Fatalf(`EQ("$.email", 42) = %v, want [0]`, got)
 	}
 
@@ -766,6 +776,9 @@ func TestRegexExtractInt(t *testing.T) {
 		{"extract order number", `order-(\d+)`, 1, "order-12345", true, 12345},
 		{"extract year", `(\d{4})-\d{2}-\d{2}`, 1, "2024-01-15", true, 2024},
 		{"extract float", `price: (\d+\.?\d*)`, 1, "price: 99.99", true, 99.99},
+		{"empty capture", `value:([-.0-9]*)`, 1, "value:", false, 0},
+		{"sign only capture", `value:([-.0-9]*)`, 1, "value:-", false, 0},
+		{"dot only capture", `value:([-.0-9]*)`, 1, "value:.", false, 0},
 		{"no match", `order-(\d+)`, 1, "item-abc", false, 0},
 		{"not a number", `id-(\w+)`, 1, "id-abc", false, 0},
 		{"non-string input", `\d+`, 0, 12345, false, 0},
