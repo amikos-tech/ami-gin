@@ -419,7 +419,7 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		if isStageCallbackError(err) {
 			return unwrapStageCallbackError(err)
 		}
-		if normalizeIngestFailureMode(b.config.ParserFailureMode) == IngestFailureSoft {
+		if b.config.ParserFailureMode == IngestFailureSoft {
 			b.recordSoftDocumentSkip(softSkipKindParser)
 			return nil
 		}
@@ -646,7 +646,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
 	isInt, intVal, floatVal, err := parseJSONNumberLiteral(raw)
 	if err != nil {
-		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
@@ -680,7 +680,7 @@ func parseJSONNumberLiteral(raw string) (bool, int64, float64, error) {
 func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentBuildState) error {
 	obs, err := stagedNumericFromValue(value)
 	if err != nil {
-		if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
 		return errors.Wrapf(err, "parse numeric at %s", path)
@@ -751,7 +751,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 		}
 
 		if !canRepresentIntAsExactFloat(pathState.numericSimIntMin) || !canRepresentIntAsExactFloat(pathState.numericSimIntMax) {
-			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
@@ -767,7 +767,7 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 
 	if observation.isInt {
 		if !canRepresentIntAsExactFloat(observation.intVal) {
-			if normalizeIngestFailureMode(b.config.NumericFailureMode) == IngestFailureSoft {
+			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
 			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
