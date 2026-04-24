@@ -38,7 +38,7 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
 - [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
-- [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. In progress: 1/4 plans complete.
+- [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. In progress: 2/4 plans complete.
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
 
@@ -150,7 +150,7 @@ Plans:
 
 Plans:
 - [x] 18-01-PLAN.md — Public `IngestError` API, helper formatting, and builder hard-failure wrapping
-- [ ] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
+- [x] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
 - [ ] 18-03-PLAN.md — Experiment CLI grouped failure aggregation, deterministic output, and 100-line fixture
 - [ ] 18-04-PLAN.md — Public docs, changelog note, and final verification
 
@@ -199,7 +199,7 @@ Plans:
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 18. Structured IngestError + CLI integration | v1.2 | 1/4 | In Progress | - |
+| 18. Structured IngestError + CLI integration | v1.2 | 2/4 | In Progress | - |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |
 

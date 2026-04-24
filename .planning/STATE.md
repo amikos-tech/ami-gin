@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: in-progress
-stopped_at: Completed 18-01-PLAN.md
-last_updated: "2026-04-24T12:33:10Z"
-last_activity: "2026-04-24 - Completed Phase 18 Plan 01 public IngestError API"
+stopped_at: Completed 18-02-PLAN.md
+last_updated: "2026-04-24T12:46:30Z"
+last_activity: "2026-04-24 - Completed Phase 18 Plan 02 structured IngestError guard"
 progress:
   total_phases: 15
   completed_phases: 9
   total_plans: 32
-  completed_plans: 28
-  percent: 88
+  completed_plans: 29
+  percent: 91
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-23)
 ## Current Position
 
 Phase: 18
-Plan: 18-02 next
-Status: Phase 18 in progress; 18-01 complete
-Last activity: 2026-04-24 - Completed Phase 18 Plan 01 public IngestError API
+Plan: 18-03 next
+Status: Phase 18 in progress; 18-02 complete
+Last activity: 2026-04-24 - Completed Phase 18 Plan 02 structured IngestError guard
 
-Progress: [███░░░░░░░] 25% for Phase 18 (1/4 plans executed)
+Progress: [█████░░░░░] 50% for Phase 18 (2/4 plans executed)
 
 ## Performance Metrics
 
@@ -58,7 +58,7 @@ Progress: [███░░░░░░░] 25% for Phase 18 (1/4 plans executed)
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
 | 17 | 4 | Complete (4/4 plans complete) |
-| 18 | 4 | In Progress (1/4 plans complete) |
+| 18 | 4 | In Progress (2/4 plans complete) |
 
 ## Accumulated Context
 
@@ -84,6 +84,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
 - **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
 - **18-01 completion**: Public `IngestLayer`/`IngestError` API and builder hard-failure wrapping are complete. Parser, transformer, numeric, schema, and validator-replayed numeric failures are extractable with `errors.As`; parser contract, tragic/internal, and soft-mode paths stay non-`IngestError`.
+- **18-02 completion**: The hard ingest behavior matrix now asserts extraction through an outer `errors.Wrap`, builder usability after public hard failures, and explicit non-`IngestError` exceptions. A focused stdlib AST guard protects named hard-ingest functions against direct plain error returns.
 
 ### Roadmap Evolution
 
@@ -101,7 +102,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Execute remaining Phase 18 structured `IngestError` + CLI integration plans (18-02 through 18-04)
+- Execute remaining Phase 18 structured `IngestError` + CLI integration plans (18-03 through 18-04)
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -150,8 +151,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-24T12:33:10Z
-Stopped at: Completed 18-01-PLAN.md
+Last session: 2026-04-24T12:46:30Z
+Stopped at: Completed 18-02-PLAN.md
 Resume file: None
 
-**Next step:** Execute `.planning/phases/18-structured-ingesterror-cli-integration/18-02-PLAN.md`.
+**Next step:** Execute `.planning/phases/18-structured-ingesterror-cli-integration/18-03-PLAN.md`.
