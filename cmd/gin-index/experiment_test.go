@@ -138,6 +138,8 @@ func decodeExperimentFailures(t *testing.T, raw json.RawMessage) []experimentFai
 func withExperimentDefaultConfig(t *testing.T, fn func() gin.GINConfig) {
 	t.Helper()
 
+	// This helper overrides a package-global seam; callers must not run in
+	// parallel while the override is active.
 	original := experimentDefaultConfig
 	experimentDefaultConfig = fn
 	t.Cleanup(func() {
