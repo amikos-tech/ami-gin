@@ -166,12 +166,17 @@ func isGINBuilderMethod(fn *ast.FuncDecl) bool {
 	return ok && ident.Name == "GINBuilder"
 }
 
+// hasHardIngestDirective requires the canonical standalone form
+// `// +hard-ingest` as its own comment line. Substring matches with trailing
+// text or near-identical tokens (e.g. `+hard-ingest-foo`) are rejected so the
+// directive cannot drift via copy-paste.
 func hasHardIngestDirective(fn *ast.FuncDecl) bool {
 	if fn.Doc == nil {
 		return false
 	}
 	for _, comment := range fn.Doc.List {
-		if strings.Contains(comment.Text, "+hard-ingest") {
+		text := strings.TrimSpace(strings.TrimPrefix(comment.Text, "//"))
+		if text == "+hard-ingest" {
 			return true
 		}
 	}
@@ -205,4 +210,6 @@ func identExprs(idents []*ast.Ident) []ast.Expr {
 }
 
 // This guard auto-discovers builder stage* methods plus any method annotated
-// with // +hard-ingest. Behavior-matrix tests still cover semantic outcomes.
+// with the canonical standalone directive `// +hard-ingest` (the directive
+// must be its own comment line — no trailing text on the same line).
+// Behavior-matrix tests still cover semantic outcomes.

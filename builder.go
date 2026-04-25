@@ -1006,7 +1006,10 @@ func (b *GINBuilder) recordSoftDocumentSkip(kind softSkipKind) {
 	)
 }
 
-// +hard-ingest validate staged numeric transitions before merge.
+// +hard-ingest
+// validateStagedPaths replays buffered numeric observations through a fresh
+// preview state so cross-document promotions or unrepresentable transitions
+// surface before merge.
 func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	preview := newDocumentBuildState(state.rgID)
 	paths := make([]string, 0, len(state.paths))
