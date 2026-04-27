@@ -6,8 +6,7 @@
 - ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (functionally complete 2026-04-22; PRs #29 and #30 merged)
 - ✅ **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (shipped 2026-04-27) — see [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
-- 🚧 **v1.3 Performance Evidence & Positioning** — Phases 19-25 (planned 2026-04-27)
-- ⏸️ **v1.4 SIMD JSON Path** — Phases 26-27 (preview only; deferred pending `pure-simdjson` license/tag/distribution resolution)
+- 🚧 **v1.3 SIMD-First Performance** — Phases 19-25 (planned 2026-04-27)
 
 ## Phases
 
@@ -38,24 +37,65 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.3 Performance Evidence & Positioning (Phases 19-25)
+### 🚧 v1.3 SIMD-First Performance (Phases 19-25)
 
-- [ ] **Phase 19: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance without changing the pruning-first API model.
-- [ ] **Phase 20: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
-- [ ] **Phase 21: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs.
-- [ ] **Phase 22: Encode CPU Profiling** — Measure `writeOrderedStrings` CPU/allocation cost on realistic UUID, timestamp, and mixed JSON workloads before adding encode strategy API.
-- [ ] **Phase 23: Ingest Hotspot Profiling** — Measure `NormalizePath`, bloom hashing, and array wildcard staging costs before implementing ingestion optimizations.
-- [ ] **Phase 24: Encode Strategy Option** — If Phase 22 justifies it, add `WithEncodeStrategy(Auto|RawOnly|FrontCodedOnly)` with explicit version/test behavior.
-- [ ] **Phase 25: Measurement-Backed Ingest Optimizations** — If Phase 23 justifies it, implement the selected `NormalizePath`, bloom allocation, and/or `[*]` opt-out improvements.
-
-### ⏸️ v1.4 SIMD JSON Path (Phases 26-27) — PREVIEW / DEFERRED
-
-- [ ] **Phase 26: SIMD Parser Adapter** — Same-package SIMD parser behind `//go:build simdjson`, opt-in via `WithParser(...)`, preserving exact-int semantics and default stdlib behavior.
-- [ ] **Phase 27: SIMD Validation, Datasets & CI** — Validate and operationalize the SIMD path once external dependency blockers are resolved.
+- [ ] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
+- [ ] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
+- [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
+- [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
+- [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
+- [ ] **Phase 24: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
+- [ ] **Phase 25: Follow-On Profiling & Measurement-Backed Optimizations** — Profile encode and ingest hotspots, then implement only the encode strategy or ingest optimizations justified by measurements.
 
 ## Phase Details
 
-### Phase 19: Row-Level Pruning Positioning
+### Phase 19: SIMD Dependency Decision & Integration Strategy
+
+**Goal:** Make SIMD executable as soon as possible by resolving the external dependency and distribution blockers before any lower-impact backlog work.
+**Depends on:** Phase 13
+**Requirements:** SIMD-01, SIMD-02, SIMD-03
+**Success Criteria:**
+1. The milestone records a clear decision on the SIMD dependency source, license/NOTICE posture, version/tag pinning, and shared-library distribution/loading strategy.
+2. The build strategy is specified before implementation: build tags, default stdlib behavior, opt-in API shape, unsupported-platform behavior, and CI expectations.
+3. If a blocker remains unresolved, the phase produces an explicit fallback or stop condition rather than silently pushing SIMD behind unrelated work.
+**Plans:** TBD
+
+### Phase 20: Realistic Benchmark Dataset Foundation
+
+**Goal:** Turn SEED-001 into usable test/benchmark infrastructure with size limits, provenance notes, and smoke-scale fixtures that exercise realistic JSON shapes needed for SIMD evaluation.
+**Depends on:** Nothing
+**Requirements:** DATA-01, DATA-02, DATA-03
+**Success Criteria:**
+1. Dataset policy defines whether fixtures are vendored, generated, or downloaded, including license/NOTICE handling and size limits.
+2. Smoke fixtures cover at least nested/high-cardinality, mixed-type array, and number-heavy cases.
+3. Benchmarks can run in a default smoke mode without network access or large downloads.
+**Plans:** TBD
+
+### Phase 21: SIMD Parser Adapter
+
+**Goal:** Land an opt-in same-package SIMD parser implementation behind the existing parser seam without changing default stdlib behavior.
+**Depends on:** Phase 19
+**Requirements:** SIMD-04, SIMD-05, SIMD-06, SIMD-07
+**Success Criteria:**
+1. `parser_simd.go` behind `//go:build simdjson` adds a same-package SIMD parser constructor and `WithParser(...)` can select it explicitly.
+2. Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement.
+3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
+4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
+**Plans:** TBD
+
+### Phase 22: SIMD Validation, Benchmarks & CI
+
+**Goal:** Prove the SIMD path is correct, measurable, and operationally shippable.
+**Depends on:** Phase 20, Phase 21
+**Requirements:** SIMD-08, SIMD-09, SIMD-10, SIMD-11
+**Success Criteria:**
+1. Parity tests prove SIMD and stdlib produce identical encoded indexes and query results across authored fixtures and Phase 20 datasets.
+2. Benchmarks compare stdlib vs SIMD typed-sink ingest on realistic fixtures and report CPU, allocation, and bytes/op deltas.
+3. CI covers default builds and `-tags simdjson` builds with explicit skip/fail behavior when platform or shared-library requirements are unmet.
+4. Runtime loading and release/distribution guidance explains how consumers enable SIMD without guesswork.
+**Plans:** TBD
+
+### Phase 23: Row-Level Pruning Positioning
 
 **Goal:** Make it clear that GIN Index supports both grouped pruning and row-level pruning when callers choose one document per row group, without renaming the API or implying row-level storage/search semantics.
 **Depends on:** Nothing
@@ -66,7 +106,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 3. At least one example or experiment note demonstrates the row-level mental model using existing APIs.
 **Plans:** TBD
 
-### Phase 20: Developer Quality Gates & Janitorial Clarity
+### Phase 24: Developer Quality Gates & Janitorial Clarity
 
 **Goal:** Improve contributor safety with local pre-push checks and close low-risk clarity issues that reduce future maintenance friction.
 **Depends on:** Nothing
@@ -77,76 +117,16 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 3. Phase 06 clarity backlog is closed with comments or small test cleanups only; no behavior changes.
 **Plans:** TBD
 
-### Phase 21: Realistic Benchmark Dataset Foundation
+### Phase 25: Follow-On Profiling & Measurement-Backed Optimizations
 
-**Goal:** Turn SEED-001 into usable test/benchmark infrastructure with size limits, provenance notes, and smoke-scale fixtures that exercise realistic JSON shapes.
-**Depends on:** Nothing
-**Requirements:** DATA-01, DATA-02, DATA-03
+**Goal:** After SIMD is underway, evaluate the remaining performance backlog and implement only improvements justified by measurements.
+**Depends on:** Phase 20
+**Requirements:** PROF-01, PROF-02, PROF-03, PROF-04, PROF-05, ENC-01, ENC-02, ENC-03, ING-01, ING-02, ING-03
 **Success Criteria:**
-1. Dataset policy defines whether fixtures are vendored, generated, or downloaded, including license/NOTICE handling and size limits.
-2. Smoke fixtures cover at least nested/high-cardinality, mixed-type array, and number-heavy cases.
-3. Benchmarks can run in a default smoke mode without network access or large downloads.
-**Plans:** TBD
-
-### Phase 22: Encode CPU Profiling
-
-**Goal:** Decide whether the dual encode pass in ordered string serialization is worth optimizing by measuring real CPU/allocation impact first.
-**Depends on:** Phase 21
-**Requirements:** PROF-01, PROF-02
-**Success Criteria:**
-1. Benchmarks cover UUID-heavy, timestamp/log-style, and mixed JSON workloads using Phase 21 fixture infrastructure.
-2. A profiling report quantifies encode CPU share, allocation share, and whether `writeOrderedStrings` is material on realistic inputs.
-3. The report makes an explicit go/no-go recommendation for Phase 24.
-**Plans:** TBD
-
-### Phase 23: Ingest Hotspot Profiling
-
-**Goal:** Decide which ingestion optimizations are worth implementing by measuring candidate hotspots before adding API or internal complexity.
-**Depends on:** Phase 21
-**Requirements:** PROF-03, PROF-04, PROF-05
-**Success Criteria:**
-1. Profiling quantifies `walkJSON` / `NormalizePath` cost on builder-generated canonical paths.
-2. Profiling quantifies bloom `AddString` allocation and hash-buffer cost on representative ingestion workloads.
-3. Profiling quantifies array wildcard double-staging cost on long-array fixtures.
-4. The report ranks candidates and recommends which, if any, should be implemented in Phase 25.
-**Plans:** TBD
-
-### Phase 24: Encode Strategy Option
-
-**Goal:** Add an explicit encode strategy knob only if Phase 22 shows that skipping the dual encode pass is worth API surface area.
-**Depends on:** Phase 22
-**Requirements:** ENC-01, ENC-02, ENC-03
-**Success Criteria:**
-1. `WithEncodeStrategy(Auto|RawOnly|FrontCodedOnly)` is additive and defaults to current behavior.
-2. Raw-only and front-coded-only strategies have deterministic format-version behavior and round-trip tests.
-3. Benchmarks prove the option improves the measured workload without weakening decode or query semantics.
-**Plans:** TBD
-
-### Phase 25: Measurement-Backed Ingest Optimizations
-
-**Goal:** Implement only the ingestion optimizations justified by Phase 23, preserving correctness and existing query semantics.
-**Depends on:** Phase 23
-**Requirements:** ING-01, ING-02, ING-03
-**Success Criteria:**
-1. `NormalizePath` fast-path, bloom allocation cleanup, and/or wildcard opt-out are implemented only if Phase 23 recommends them.
-2. Any public wildcard opt-out API is explicit, backwards-compatible by default, and covered by query behavior tests.
-3. Benchmarks demonstrate measured improvements on the triggering workload and no false-negative pruning regressions.
-**Plans:** TBD
-
-### Phase 26: SIMD Parser Adapter
-
-**Goal:** Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam once external dependency blockers are resolved.
-**Depends on:** Phase 13
-**Blocked on:** upstream `pure-simdjson` LICENSE file, version tag, and shared-library distribution decision
-**Requirements:** Deferred
-**Plans:** TBD
-
-### Phase 27: SIMD Validation, Datasets & CI
-
-**Goal:** Validate and operationalize the SIMD path with reproducible corpora, distribution guidance, and CI coverage after Phase 26.
-**Depends on:** Phase 26
-**Blocked on:** Phase 26 and final shared-library distribution contract
-**Requirements:** Deferred
+1. Profiling quantifies encode CPU, `NormalizePath`, bloom `AddString`, and wildcard staging costs on realistic fixtures.
+2. `WithEncodeStrategy` is implemented only if encode profiling justifies the API surface.
+3. `NormalizePath` fast-path, bloom allocation cleanup, and/or wildcard opt-out are implemented only if ingest profiling justifies them.
+4. Any implemented optimization has benchmark proof and no false-negative pruning regressions.
 **Plans:** TBD
 
 ## Progress
@@ -166,15 +146,13 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
-| 19. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
-| 20. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
-| 21. Realistic Benchmark Dataset Foundation | v1.3 | 0/- | Planned | - |
-| 22. Encode CPU Profiling | v1.3 | 0/- | Planned | - |
-| 23. Ingest Hotspot Profiling | v1.3 | 0/- | Planned | - |
-| 24. Encode Strategy Option | v1.3 | 0/- | Planned | - |
-| 25. Measurement-Backed Ingest Optimizations | v1.3 | 0/- | Planned | - |
-| 26. SIMD Parser Adapter | v1.4 preview | 0/- | Deferred | - |
-| 27. SIMD Validation, Datasets & CI | v1.4 preview | 0/- | Deferred | - |
+| 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 0/- | Planned | - |
+| 20. Realistic Benchmark Dataset Foundation | v1.3 | 0/- | Planned | - |
+| 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
+| 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
+| 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
+| 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
+| 25. Follow-On Profiling & Measurement-Backed Optimizations | v1.3 | 0/- | Planned | - |
 
 ---
-*v1.3 planned 2026-04-27 from backlog and SEED-001. Priority order: usefulness/positioning first, then developer safety, then benchmark infrastructure, then profiling, then only measurement-backed optimization/API work. SIMD remains deferred to v1.4 pending external dependency blockers.*
+*v1.3 reprioritized 2026-04-27: SIMD is the top priority. Phase 19 exists to clear the blocker as quickly as possible, Phase 21 implements the adapter, and Phase 22 validates/operationalizes it. Remaining backlog work follows SIMD.*

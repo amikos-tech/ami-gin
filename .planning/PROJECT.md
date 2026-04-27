@@ -7,21 +7,20 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.3 Performance Evidence & Positioning — Phases 19-25 planned from backlog and SEED-001
+- **Current milestone:** v1.3 SIMD-First Performance — Phases 19-25 prioritize SIMD unblock, implementation, and validation before lower-impact backlog work
 
-## Current Milestone: v1.3 Performance Evidence & Positioning
+## Current Milestone: v1.3 SIMD-First Performance
 
-**Goal:** Convert the backlog and SEED-001 into a prioritized milestone that improves user-facing positioning and contributor safety first, then builds realistic benchmark evidence before adding any performance API or optimization.
+**Goal:** Deliver SIMD parser integration as soon as possible while preserving correctness, default stdlib behavior, exact numeric semantics, and operational clarity for consumers.
 
 **Target themes:**
-- **User-facing positioning first** — clarify that GIN Index supports row-level pruning when callers choose `rg=1`, while preserving the pruning-first product scope and avoiding row-level storage/search claims.
-- **Contributor safety and maintainability** — add opt-in local pre-push quality gates and close low-risk Phase 06 clarity items before deeper performance work.
-- **Realistic benchmark foundation** — activate SEED-001 into governed fixture infrastructure with offline smoke fixtures and clear license/size policy.
-- **Measure before optimizing** — profile encode CPU, `NormalizePath`, bloom hashing/allocation, and wildcard staging before adding knobs or optimizations.
-- **Implementation only after evidence** — add `WithEncodeStrategy` and selected ingest optimizations only if profiling justifies the extra API or internal complexity.
+- **SIMD first** — resolve dependency/license/version/distribution blockers immediately, then implement the opt-in SIMD parser behind the Phase 13 parser seam.
+- **Correctness preserved** — keep stdlib as the default parser and preserve Phase 07 exact-int semantics on the SIMD path.
+- **Realistic validation** — activate SEED-001 benchmark fixtures early so SIMD parity and performance are measured against realistic JSON shapes.
+- **Operational readiness** — define build tags, unsupported-platform behavior, runtime loading guidance, and CI coverage before calling SIMD shippable.
+- **Lower-impact backlog follows SIMD** — row-level positioning, quality gates, encode profiling, and ingest optimizations remain in v1.3 but run after SIMD unblock/implementation/validation work.
 
 **Deferred beyond v1.3:**
-- SIMD parser implementation and validation — moved to v1.4 preview until upstream LICENSE, version tag, and shared-library distribution blockers are resolved.
 - `ValidateDocument` dry-run API — remains future scope until there is a concrete consumer.
 
 ## What This Is
@@ -63,7 +62,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 
 ### Active
 
-- **v1.3 Performance Evidence & Positioning.** POS-01..02, QG-01, CLAR-01, DATA-01..03, PROF-01..05, ENC-01..03, and ING-01..03 are planned across Phases 19-25.
+- **v1.3 SIMD-First Performance.** SIMD-01..11, DATA-01..03, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 are planned across Phases 19-25.
 
 ### Out of Scope
 
@@ -93,7 +92,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
 - Phase 18 completed structured `IngestError` + CLI integration on 2026-04-24: public structured errors cover parser/transformer/numeric/schema hard document failures, hard-ingest sites are guarded by behavior and AST tests, and the experiment CLI reports grouped structured failures in text and JSON modes
 - v1.2 shipped and archived on 2026-04-27 with 8/8 requirements complete and milestone archives in `.planning/milestones/`
-- v1.3 planned on 2026-04-27 from backlog and SEED-001. It prioritizes row-level pruning messaging, quality gates, realistic benchmark data, profiling, and measurement-backed performance work. SIMD parser work is deferred to v1.4 preview due unresolved external dependency blockers.
+- v1.3 planned on 2026-04-27 from backlog and SEED-001, then reprioritized the same day to make SIMD the soonest possible top priority: dependency decision, dataset foundation, SIMD adapter, SIMD validation/CI, then remaining backlog work.
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -118,9 +117,9 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 | Extract parser seam as a pure refactor before SIMD work | Land the seam in v1.1; allow SIMD to land in a later milestone without touching builder internals | Done |
 | Adopt validate-before-mutate atomicity (Strategy C) for v1.2 | Smallest diff that delivers the Lucene per-document contract; leverages existing two-phase architecture | Done in Phase 16 |
 | Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Done in Phase 17 |
-| Renumber SIMD work out of v1.3 to v1.4 preview | v1.3 now focuses on backlog/benchmark readiness while SIMD remains blocked on upstream dependency decisions | Planned |
-| Prioritize evidence before performance APIs in v1.3 | Avoid speculative knobs or optimizations; benchmark and profile first, then implement only justified changes | Planned |
-| Move SIMD work to v1.4 preview | External `pure-simdjson` blockers are unresolved; v1.3 can still improve performance readiness with datasets and profiling | Planned |
+| Make SIMD the first v1.3 priority | SIMD is the largest expected performance lever; resolve blockers immediately rather than hiding it behind lower-impact backlog work | Planned |
+| Keep stdlib as default while adding SIMD | Preserve compatibility and avoid forcing optional dependencies on default builds | Planned |
+| Prioritize evidence before non-SIMD performance APIs in v1.3 | Avoid speculative knobs or optimizations; benchmark and profile after SIMD is underway, then implement only justified changes | Planned |
 
 ## Evolution
 
@@ -138,4 +137,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-27 — v1.3 Performance Evidence & Positioning planned from backlog and SEED-001.*
+*Last updated: 2026-04-27 — v1.3 reprioritized to SIMD-first performance.*
