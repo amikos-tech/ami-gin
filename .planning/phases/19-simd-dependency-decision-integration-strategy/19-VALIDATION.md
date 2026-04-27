@@ -1,10 +1,11 @@
 ---
 phase: 19
 slug: simd-dependency-decision-integration-strategy
-status: draft
+status: validated
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-04-27
+updated: 2026-04-27
 ---
 
 # Phase 19 - Validation Strategy
@@ -17,9 +18,9 @@ created: 2026-04-27
 
 | Property | Value |
 |----------|-------|
-| **Framework** | Shell checks + Go `testing` sanity |
+| **Framework** | Go `testing` artifact checks + shell checks |
 | **Config file** | `go.mod` |
-| **Quick run command** | `test -f .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'SIMD-01' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'SIMD-02' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'SIMD-03' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'github.com/amikos-tech/pure-simdjson v0.1.4' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'Tag commit: 0f53f3f2e8bb9608d6b79211ffc5fc7b53298617' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'windows-amd64-msvc' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'NewSIMDParser() (Parser, error)' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'gin.NewBuilder(cfg, numRGs, gin.WithParser(p))' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q '//go:build simdjson' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'PURE_SIMDJSON_LIB_PATH' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q '/gsd-pause-work' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && ! grep -q 'SIMD is enabled by default' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && ! grep -q 'silently falls back to stdlib' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` |
+| **Quick run command** | `go test ./... -run TestPhase19SIMDStrategyArtifact` |
 | **Full suite command** | `go test ./...` |
 | **Estimated runtime** | ~1 second for focused artifact checks; full suite depends on local machine |
 
@@ -38,10 +39,10 @@ created: 2026-04-27
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 19-01-01 | 01 | 1 | SIMD-01 | T19-01 | Dependency source, license/NOTICE posture, and pinning are explicit before adoption. | artifact | `grep -q 'github.com/amikos-tech/pure-simdjson v0.1.4' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` | W0 | pending |
-| 19-01-02 | 01 | 1 | SIMD-02 | T19-02 | Runtime loading strategy documents env override, bootstrap delegation, platform set, asset labels, and tier-2 platform fallback. | artifact | `grep -q 'PURE_SIMDJSON_LIB_PATH' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'linux/amd64' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'windows/amd64' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'windows-amd64-msvc' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` | W0 | pending |
-| 19-01-03 | 01 | 1 | SIMD-03 | T19-03 | Build-tag and API strategy preserve default stdlib behavior, make fallback explicit, and include the success branch using `WithParser`. | artifact | `grep -q '//go:build simdjson' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'NewSIMDParser() (Parser, error)' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'gin.NewBuilder(cfg, numRGs, gin.WithParser(p))' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && ! grep -q 'SIMD is enabled by default' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && ! grep -q 'silently falls back to stdlib' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` | W0 | pending |
-| 19-01-04 | 01 | 1 | SIMD-03 | T19-04 | Stop/fallback table distinguishes correctness-breaking blockers from soft operational platform issues. | artifact | `grep -q 'HARD' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md && grep -q 'SOFT' .planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` | W0 | pending |
+| 19-01-01 | 01 | 1 | SIMD-01 | T19-01 | Dependency source, license/NOTICE posture, and pinning are explicit before adoption. | artifact-go | `go test ./... -run TestPhase19SIMDStrategyArtifact` | `phase19_validation_test.go` | covered |
+| 19-01-02 | 01 | 1 | SIMD-02 | T19-02 | Runtime loading strategy documents env override, bootstrap delegation, platform set, asset labels, and tier-2 platform fallback. | artifact-go | `go test ./... -run TestPhase19SIMDStrategyArtifact` | `phase19_validation_test.go` | covered |
+| 19-01-03 | 01 | 1 | SIMD-03 | T19-03 | Build-tag and API strategy preserve default stdlib behavior, make fallback explicit, and include the success branch using `WithParser`. | artifact-go | `go test ./... -run TestPhase19SIMDStrategyArtifact` | `phase19_validation_test.go` | covered |
+| 19-01-04 | 01 | 1 | SIMD-03 | T19-04 | Stop/fallback table distinguishes correctness-breaking blockers from soft operational platform issues. | artifact-go | `go test ./... -run TestPhase19SIMDStrategyArtifact` | `phase19_validation_test.go` | covered |
 
 ---
 
@@ -49,7 +50,8 @@ created: 2026-04-27
 
 Existing infrastructure covers all phase requirements:
 
-- Shell `test` and `grep` are enough to verify the strategy artifact.
+- `phase19_validation_test.go` codifies the strategy artifact checks in the repository test suite.
+- Shell `test` and `grep` remain useful as one-off verification commands.
 - `go test ./...` remains the sanity check that planning-only changes did not disturb the repository.
 - No new test framework or external service is required.
 
@@ -72,4 +74,14 @@ Existing infrastructure covers all phase requirements:
 - [x] Feedback latency target < 60s for focused checks.
 - [x] `nyquist_compliant: true` set in frontmatter.
 
-**Approval:** pending
+**Approval:** automated audit 2026-04-27
+
+## Validation Audit 2026-04-27
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 4 |
+| Resolved | 4 |
+| Escalated | 0 |
+
+Resolved by adding `phase19_validation_test.go`, which covers SIMD-01, SIMD-02, and both SIMD-03 validation rows through durable Go artifact checks.
