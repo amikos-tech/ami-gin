@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Ingest Correctness & Per-Document Isolation
-status: archived
-stopped_at: v1.2 archived; ready for next milestone
+milestone: v1.3
+milestone_name: Performance Evidence & Positioning
+status: planning
+stopped_at: Phase 19 ready for discussion
 last_updated: "2026-04-27T00:00:00Z"
-last_activity: "2026-04-27 - Archived v1.2 milestone"
+last_activity: "2026-04-27 - Planned v1.3 milestone from backlog and SEED-001"
 progress:
-  total_phases: 15
-  completed_phases: 10
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_phases: 7
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Planning the next milestone
+**Current focus:** v1.3 Performance Evidence & Positioning
 
 ## Current Position
 
-Phase: 18
-Plan: 4/4 plans complete
-Status: v1.2 archived; ready for next milestone definition
-Last activity: 2026-04-27 - v1.2 milestone archived
+Phase: 19
+Plan: Not started
+Status: Ready to discuss Phase 19
+Last activity: 2026-04-27 - v1.3 milestone planned
 
-Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
+Progress: [----------] 0% for v1.3 (0/7 phases complete)
 
 ## Performance Metrics
 
@@ -102,10 +102,19 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - Phase 17 completed 2026-04-23 with 4/4 plans complete, verification passed, and FAIL-01/FAIL-02 satisfied.
 - v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
+- v1.3 milestone planned 2026-04-27 from backlog and SEED-001:
+  - Phase 19: Row-Level Pruning Positioning — POS-01..02
+  - Phase 20: Developer Quality Gates & Janitorial Clarity — QG-01, CLAR-01
+  - Phase 21: Realistic Benchmark Dataset Foundation — DATA-01..03
+  - Phase 22: Encode CPU Profiling — PROF-01..02
+  - Phase 23: Ingest Hotspot Profiling — PROF-03..05
+  - Phase 24: Encode Strategy Option — ENC-01..03
+  - Phase 25: Measurement-Backed Ingest Optimizations — ING-01..03
+  - SIMD work moved to v1.4 preview phases 26-27 because external blockers remain unresolved.
 
 ### Pending Todos
 
-- Start the next milestone with `$gsd-new-milestone`.
+- Discuss and plan Phase 19: Row-Level Pruning Positioning.
 
 ### Blockers/Concerns
 
@@ -142,10 +151,10 @@ Items deferred to v1.3 or later:
 
 | Category | Item | Status | Note |
 |----------|------|--------|------|
-| requirement | pure-simdjson parser implementation | v1.3 (was v1.2) | Blocked on upstream LICENSE file, version tag, shared-library distribution decision |
-| requirement | SIMD parser benchmarks vs stdlib | v1.3 | Depends on SIMD implementation |
-| requirement | CI matrix for `-tags simdjson` builds | v1.3 | Depends on SIMD implementation |
-| seed | SEED-001-simdjson-test-datasets | v1.3 | Activate alongside SIMD parser implementation |
+| requirement | pure-simdjson parser implementation | v1.4 preview | Blocked on upstream LICENSE file, version tag, shared-library distribution decision |
+| requirement | SIMD parser benchmarks vs stdlib | v1.4 preview | Depends on SIMD implementation |
+| requirement | CI matrix for `-tags simdjson` builds | v1.4 preview | Depends on SIMD implementation |
+| seed | SEED-001-simdjson-test-datasets | v1.3 | Activated as benchmark dataset foundation before SIMD implementation |
 | feature | `ValidateDocument` dry-run API | future | Architectural prerequisite (Phase 16 atomicity) lands in v1.2; landing the API is a separate milestone with a real consumer |
 | feature | Snapshot-and-restore atomicity (Strategy A) | reserve | Held in case a future failure mode cannot be pre-validated |
 | feature | Bloom `AddString` allocation cleanup | 999.x | Perf-shaped; profile before optimizing per project precedent |
@@ -161,4 +170,4 @@ Last session: 2026-04-24T14:46:00Z
 Stopped at: Phase 18 verified
 Resume file: .planning/phases/18-structured-ingesterror-cli-integration/18-VERIFICATION.md
 
-**Next step:** Run milestone completion or shipping workflow for v1.2.
+**Next step:** `$gsd-discuss-phase 19` to gather context for row-level pruning positioning, or `$gsd-plan-phase 19` to plan directly.

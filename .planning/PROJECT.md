@@ -7,26 +7,22 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** none active — ready to define the next milestone
+- **Current milestone:** v1.3 Performance Evidence & Positioning — Phases 19-25 planned from backlog and SEED-001
 
-## Current Milestone: v1.2 Ingest Correctness & Per-Document Isolation
+## Current Milestone: v1.3 Performance Evidence & Positioning
 
-**Goal:** Bring `AddDocument` in line with the Lucene per-document contract — a failed ingest leaves the builder consistent and usable; only genuinely unrecoverable internal-invariant violations close the builder ("tragic"). Make the failure observable to callers through a unified failure-mode taxonomy and a structured error type.
+**Goal:** Convert the backlog and SEED-001 into a prioritized milestone that improves user-facing positioning and contributor safety first, then builds realistic benchmark evidence before adding any performance API or optimization.
 
 **Target themes:**
-- **AddDocument atomicity (Lucene contract)** — extend the existing two-phase `validateStagedPaths` / `mergeStagedPaths` pattern so the merge step becomes infallible by construction. Rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations only. `recover()` belt-and-suspenders converts any reachable panic to `tragicErr`. Verified by an atomicity property test that interleaves guaranteed-failing documents with a clean corpus and asserts byte-identical encoded output.
-- **Failure-mode taxonomy unification** — complete in Phase 17. The existing `TransformerFailureMode` public symbols were replaced by unified `IngestFailureMode` (`Hard`/`Soft`) across parser, transformer, and numeric-promotion layers. New `WithParserFailureMode` and `WithNumericFailureMode` config knobs default `Hard` and opt-in `Soft` skips whole failed documents.
-- **Structured `IngestError` + CLI integration** — complete in Phase 18. The exported error type carries `Path`, `Layer`, `Cause`, and verbatim `Value`; it is `errors.As`-friendly. The `gin-index experiment --on-error continue` summary reports failures grouped by `Layer` with structured samples in both text and `--json` modes.
+- **User-facing positioning first** — clarify that GIN Index supports row-level pruning when callers choose `rg=1`, while preserving the pruning-first product scope and avoiding row-level storage/search claims.
+- **Contributor safety and maintainability** — add opt-in local pre-push quality gates and close low-risk Phase 06 clarity items before deeper performance work.
+- **Realistic benchmark foundation** — activate SEED-001 into governed fixture infrastructure with offline smoke fixtures and clear license/size policy.
+- **Measure before optimizing** — profile encode CPU, `NormalizePath`, bloom hashing/allocation, and wildcard staging before adding knobs or optimizations.
+- **Implementation only after evidence** — add `WithEncodeStrategy` and selected ingest optimizations only if profiling justifies the extra API or internal complexity.
 
-**Architectural strategy:** validate-before-mutate (Strategy C from brainstorming), with Lucene's per-document contract as the target. Industry precedents reviewed: Lucene IndexWriter (closest analog), Tantivy, Bleve, RocksDB WriteBatch, PostgreSQL GIN.
-
-**Deferred to v1.3 (SIMD work) or future milestones:**
-- SIMD parser implementation (`pure-simdjson` adapter), benchmarks, CI matrix — blocked on upstream LICENSE, version tag, and shared-library distribution decision (v1.3, was v1.2)
-- `ValidateDocument` dry-run API — becomes possible post-v1.2; deserves its own milestone with a real consumer
-- Snapshot-and-restore atomicity (Strategy A) — held in reserve only if a future failure mode cannot be pre-validated
-- Bloom `AddString` allocation cleanup, per-path `[*]` opt-out — routed to 999.x backlog (perf-shaped)
-
-**Active seeds:** SEED-001 (simdjson test datasets) — deferred to v1.3 alongside the SIMD parser impl.
+**Deferred beyond v1.3:**
+- SIMD parser implementation and validation — moved to v1.4 preview until upstream LICENSE, version tag, and shared-library distribution blockers are resolved.
+- `ValidateDocument` dry-run API — remains future scope until there is a concrete consumer.
 
 ## What This Is
 
@@ -67,7 +63,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 
 ### Active
 
-- **Next milestone definition.** Start `$gsd-new-milestone` to decide whether v1.3 should activate the deferred SIMD path or pull forward a different backlog item.
+- **v1.3 Performance Evidence & Positioning.** POS-01..02, QG-01, CLAR-01, DATA-01..03, PROF-01..05, ENC-01..03, and ING-01..03 are planned across Phases 19-25.
 
 ### Out of Scope
 
@@ -97,6 +93,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
 - Phase 18 completed structured `IngestError` + CLI integration on 2026-04-24: public structured errors cover parser/transformer/numeric/schema hard document failures, hard-ingest sites are guarded by behavior and AST tests, and the experiment CLI reports grouped structured failures in text and JSON modes
 - v1.2 shipped and archived on 2026-04-27 with 8/8 requirements complete and milestone archives in `.planning/milestones/`
+- v1.3 planned on 2026-04-27 from backlog and SEED-001. It prioritizes row-level pruning messaging, quality gates, realistic benchmark data, profiling, and measurement-backed performance work. SIMD parser work is deferred to v1.4 preview due unresolved external dependency blockers.
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -121,7 +118,9 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 | Extract parser seam as a pure refactor before SIMD work | Land the seam in v1.1; allow SIMD to land in a later milestone without touching builder internals | Done |
 | Adopt validate-before-mutate atomicity (Strategy C) for v1.2 | Smallest diff that delivers the Lucene per-document contract; leverages existing two-phase architecture | Done in Phase 16 |
 | Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Done in Phase 17 |
-| Renumber SIMD work to v1.3 phases 19–20 | v1.3 SIMD remains blocked on upstream; preserve chronological phase numbering for v1.2 ship-order | Done |
+| Renumber SIMD work out of v1.3 to v1.4 preview | v1.3 now focuses on backlog/benchmark readiness while SIMD remains blocked on upstream dependency decisions | Planned |
+| Prioritize evidence before performance APIs in v1.3 | Avoid speculative knobs or optimizations; benchmark and profile first, then implement only justified changes | Planned |
+| Move SIMD work to v1.4 preview | External `pure-simdjson` blockers are unresolved; v1.3 can still improve performance readiness with datasets and profiling | Planned |
 
 ## Evolution
 
@@ -139,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-27 — v1.2 milestone shipped and archived; ready for next milestone definition.*
+*Last updated: 2026-04-27 — v1.3 Performance Evidence & Positioning planned from backlog and SEED-001.*
