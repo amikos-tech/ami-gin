@@ -12,9 +12,9 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 
 ### SIMD Unblock And Strategy
 
-- [ ] **SIMD-01**: The project has an explicit decision on the SIMD dependency source, license/NOTICE obligations, version/tag pinning, and whether the dependency is acceptable for this repository.
-- [ ] **SIMD-02**: The project has an explicit shared-library distribution/loading strategy, including unsupported-platform behavior and release guidance.
-- [ ] **SIMD-03**: The implementation plan specifies build tags, default stdlib behavior, opt-in API shape, CI expectations, and a stop/fallback path if blockers remain unresolved.
+- [x] **SIMD-01**: The project has an explicit decision on the SIMD dependency source, license/NOTICE obligations, version/tag pinning, and whether the dependency is acceptable for this repository.
+- [x] **SIMD-02**: The project has an explicit shared-library distribution/loading strategy, including unsupported-platform behavior and release guidance.
+- [x] **SIMD-03**: The implementation plan specifies build tags, default stdlib behavior, opt-in API shape, CI expectations, and a stop/fallback path if blockers remain unresolved.
 
 ### Benchmark Dataset Foundation
 
@@ -77,9 +77,9 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| SIMD-01 | Phase 19 | Planned |
-| SIMD-02 | Phase 19 | Planned |
-| SIMD-03 | Phase 19 | Planned |
+| SIMD-01 | Phase 19 | Complete |
+| SIMD-02 | Phase 19 | Complete |
+| SIMD-03 | Phase 19 | Complete |
 | DATA-01 | Phase 20 | Planned |
 | DATA-02 | Phase 20 | Planned |
 | DATA-03 | Phase 20 | Planned |

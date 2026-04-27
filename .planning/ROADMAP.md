@@ -39,7 +39,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 ### 🚧 v1.3 SIMD-First Performance (Phases 19-25)
 
-- [ ] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
+- [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
 - [ ] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
 - [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
 - [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
@@ -62,7 +62,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 Plans:
 
-- [ ] 19-01: Finalize SIMD strategy artifact and update planning state
+- [x] 19-01: Finalize SIMD strategy artifact and update planning state
 
 ### Phase 20: Realistic Benchmark Dataset Foundation
 
@@ -150,7 +150,7 @@ Plans:
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
-| 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 0/1 | Ready to execute | - |
+| 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 0/- | Planned | - |
 | 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
