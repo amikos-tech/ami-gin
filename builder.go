@@ -150,6 +150,7 @@ type stagedNumericValue struct {
 	isInt    bool
 	intVal   int64
 	floatVal float64
+	raw      string
 }
 
 type stagedPathData struct {
@@ -397,8 +398,9 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 		}
 	}
 
-	// Return parser errors verbatim; do not wrap here. Reset the handoff
-	// fields before dispatch so AddDocument can verify Parse called
+	// Parse errors become parser-layer IngestErrors unless soft-mode or a
+	// stage-callback error takes the document down a different path. Reset the
+	// handoff fields before dispatch so AddDocument can verify Parse called
 	// BeginDocument exactly once with the expected row-group id.
 	b.currentDocState = nil
 	b.beginDocumentCalls = 0
@@ -428,7 +430,7 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 			b.recordSoftDocumentSkip(softSkipKindParser)
 			return nil
 		}
-		return err
+		return newIngestErrorString(IngestLayerParser, "", string(jsonDoc), err)
 	}
 
 	if b.beginDocumentCalls == 0 {
@@ -541,7 +543,12 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 	case json.Number:
 		return b.stageJSONNumberLiteral(canonicalPath, v.String(), state)
 	default:
-		return errors.Errorf("unsupported JSON token type %T at %s", token, canonicalPath)
+		return newIngestError(
+			IngestLayerSchema,
+			canonicalPath,
+			token,
+			errors.Errorf("unsupported JSON token type %T", token),
+		)
 	}
 }
 
@@ -613,7 +620,12 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 		}
 		return nil
 	default:
-		return errors.Errorf("unsupported transformed value type %T at %s", value, canonicalPath)
+		return newIngestError(
+			IngestLayerSchema,
+			canonicalPath,
+			value,
+			errors.Errorf("unsupported transformed value type %T", value),
+		)
 	}
 }
 
@@ -638,14 +650,44 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 				)
 				continue
 			}
-			return errors.Errorf("companion transformer %q on %s failed to produce a value", registration.Alias, canonicalPath)
+			return newIngestError(
+				IngestLayerTransformer,
+				canonicalPath,
+				value,
+				errors.Errorf("companion transformer %q failed to produce a value", registration.Alias),
+			)
 		}
 		if err := b.stageMaterializedValue(registration.TargetPath, transformed, state, false); err != nil {
+			remapCompanionIngestErrorPath(err, canonicalPath, registration.TargetPath)
 			return err
 		}
 	}
 
 	return nil
+}
+
+// remapCompanionIngestErrorPath hides internal derived-path names from
+// user-facing ingest errors by rewriting any leaked companion target path back
+// to the source path in place via the caller's error pointer discovered through
+// errors.As. The offending Value is left untouched because it still reflects
+// the transformed representation that actually failed. Returns without effect
+// when err does not unwrap to *IngestError, when the path is empty, or when the
+// path does not match the companion target/internal-prefix shape.
+func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
+	var ingestErr *IngestError
+	if !errors.As(err, &ingestErr) || ingestErr == nil {
+		return
+	}
+	path := ingestErr.Path()
+	if path == "" {
+		return
+	}
+	if path == targetPath ||
+		strings.HasPrefix(path, targetPath+".") ||
+		strings.HasPrefix(path, targetPath+"[") ||
+		strings.HasPrefix(path, internalRepresentationPathPrefix) {
+		ingestErr.path = sourcePath
+	}
 }
 
 func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBuildState) error {
@@ -654,12 +696,13 @@ func (b *GINBuilder) stageJSONNumberLiteral(path, raw string, state *documentBui
 		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
-		return errors.Wrapf(err, "parse numeric at %s", path)
+		return newIngestErrorString(IngestLayerNumeric, path, raw, errors.Wrap(err, "parse numeric"))
 	}
 	return b.stageNumericObservation(path, stagedNumericValue{
 		isInt:    isInt,
 		intVal:   intVal,
 		floatVal: floatVal,
+		raw:      raw,
 	}, state)
 }
 
@@ -688,7 +731,7 @@ func (b *GINBuilder) stageNativeNumeric(path string, value any, state *documentB
 		if b.config.NumericFailureMode == IngestFailureSoft {
 			return newSoftSkipNumericDocumentError(path)
 		}
-		return errors.Wrapf(err, "parse numeric at %s", path)
+		return newIngestError(IngestLayerNumeric, path, value, errors.Wrap(err, "parse numeric"))
 	}
 	return b.stageNumericObservation(path, obs, state)
 }
@@ -718,6 +761,16 @@ func stagedNumericFromValue(value any) (stagedNumericValue, error) {
 	default:
 		return stagedNumericValue{}, errors.Errorf("unsupported numeric type %T", value)
 	}
+}
+
+func formatStagedNumericValue(value stagedNumericValue) string {
+	if value.raw != "" {
+		return value.raw
+	}
+	if value.isInt {
+		return strconv.FormatInt(value.intVal, 10)
+	}
+	return strconv.FormatFloat(value.floatVal, 'g', -1, 64)
 }
 
 func (b *GINBuilder) stageNumericObservation(path string, observation stagedNumericValue, state *documentBuildState) error {
@@ -759,7 +812,12 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			return newIngestErrorString(
+				IngestLayerNumeric,
+				path,
+				formatStagedNumericValue(observation),
+				errors.New("unsupported mixed numeric promotion"),
+			)
 		}
 
 		pathState.numericSimValueType = NumericValueTypeFloatMixed
@@ -775,7 +833,12 @@ func (b *GINBuilder) stageNumericObservation(path string, observation stagedNume
 			if b.config.NumericFailureMode == IngestFailureSoft {
 				return newSoftSkipNumericDocumentError(path)
 			}
-			return errors.Errorf("unsupported mixed numeric promotion at %s", path)
+			return newIngestErrorString(
+				IngestLayerNumeric,
+				path,
+				formatStagedNumericValue(observation),
+				errors.New("unsupported mixed numeric promotion"),
+			)
 		}
 		floatVal := float64(observation.intVal)
 		if floatVal < pathState.numericSimFloatMin {
@@ -943,6 +1006,10 @@ func (b *GINBuilder) recordSoftDocumentSkip(kind softSkipKind) {
 	)
 }
 
+// +hard-ingest
+// validateStagedPaths replays buffered numeric observations through a fresh
+// preview state so cross-document promotions or unrepresentable transitions
+// surface before merge.
 func (b *GINBuilder) validateStagedPaths(state *documentBuildState) error {
 	preview := newDocumentBuildState(state.rgID)
 	paths := make([]string, 0, len(state.paths))

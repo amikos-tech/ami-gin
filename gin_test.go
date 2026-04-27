@@ -15,7 +15,7 @@ import (
 	"github.com/amikos-tech/ami-gin/logging"
 )
 
-const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion at $.score"
+const mixedNumericPromotionScoreErr = "unsupported mixed numeric promotion"
 
 func mustNewBuilder(t *testing.T, config GINConfig, numRGs int) *GINBuilder {
 	t.Helper()

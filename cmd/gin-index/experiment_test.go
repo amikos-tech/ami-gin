@@ -125,6 +125,147 @@ func decodeJSONFloat(t *testing.T, raw json.RawMessage) float64 {
 	return out
 }
 
+func decodeExperimentFailures(t *testing.T, raw json.RawMessage) []experimentFailureGroup {
+	t.Helper()
+
+	var out []experimentFailureGroup
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("json.Unmarshal(failures): %v\n%s", err, string(raw))
+	}
+	return out
+}
+
+func withExperimentDefaultConfig(t *testing.T, fn func() gin.GINConfig) {
+	t.Helper()
+
+	// This helper overrides a package-global seam; callers must not run in
+	// parallel while the override is active.
+	original := experimentDefaultConfig
+	experimentDefaultConfig = fn
+	t.Cleanup(func() {
+		experimentDefaultConfig = original
+	})
+}
+
+func withExperimentBuilderFactory(t *testing.T, fn func(gin.GINConfig, int) (experimentBuilder, error)) {
+	t.Helper()
+
+	// This helper overrides a package-global seam; callers must not run in
+	// parallel while the override is active.
+	original := newExperimentBuilder
+	newExperimentBuilder = fn
+	t.Cleanup(func() {
+		newExperimentBuilder = original
+	})
+}
+
+type tragicExperimentBuilder struct {
+	addCalls  int
+	tragicErr error
+	finalized bool
+}
+
+func (b *tragicExperimentBuilder) AddDocument(gin.DocID, []byte) error {
+	b.addCalls++
+	switch b.addCalls {
+	case 1:
+		return nil
+	case 2:
+		return errors.New("builder tragic: recovered panic in merge: simulated")
+	default:
+		return errors.New("unexpected AddDocument call after tragic closure")
+	}
+}
+
+func (b *tragicExperimentBuilder) Finalize() *gin.GINIndex {
+	b.finalized = true
+	return nil
+}
+
+func (b *tragicExperimentBuilder) Err() error {
+	if b.addCalls >= 2 {
+		return b.tragicErr
+	}
+	return nil
+}
+
+type scriptedExperimentBuilder struct {
+	addCalls  int
+	addErrs   []error
+	tragicAt  int
+	tragicErr error
+	finalized bool
+}
+
+func (b *scriptedExperimentBuilder) AddDocument(gin.DocID, []byte) error {
+	b.addCalls++
+	if b.addCalls <= len(b.addErrs) {
+		return b.addErrs[b.addCalls-1]
+	}
+	return nil
+}
+
+func (b *scriptedExperimentBuilder) Finalize() *gin.GINIndex {
+	b.finalized = true
+	return nil
+}
+
+func (b *scriptedExperimentBuilder) Err() error {
+	if b.tragicAt > 0 && b.addCalls >= b.tragicAt {
+		return b.tragicErr
+	}
+	return nil
+}
+
+func newParserIngestFailure(t *testing.T) error {
+	t.Helper()
+	builder, err := gin.NewBuilder(gin.DefaultConfig(), 2)
+	if err != nil {
+		t.Fatalf("NewBuilder(parser): %v", err)
+	}
+	return builder.AddDocument(gin.DocID(0), []byte("not-json"))
+}
+
+func newTransformerIngestFailure(t *testing.T) error {
+	t.Helper()
+	cfg, err := gin.NewConfig(gin.WithEmailDomainTransformer("$.email", "domain"))
+	if err != nil {
+		t.Fatalf("NewConfig(transformer): %v", err)
+	}
+	builder, err := gin.NewBuilder(cfg, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder(transformer): %v", err)
+	}
+	return builder.AddDocument(gin.DocID(0), []byte(`{"email":42}`))
+}
+
+func newNumericIngestFailure(t *testing.T) error {
+	t.Helper()
+	builder, err := gin.NewBuilder(gin.DefaultConfig(), 3)
+	if err != nil {
+		t.Fatalf("NewBuilder(numeric): %v", err)
+	}
+	if err := builder.AddDocument(gin.DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+		t.Fatalf("seed numeric AddDocument: %v", err)
+	}
+	return builder.AddDocument(gin.DocID(1), []byte(`{"score":1.5}`))
+}
+
+func newSchemaIngestFailure(t *testing.T) error {
+	t.Helper()
+	cfg, err := gin.NewConfig(gin.WithCustomTransformer("$.email", "broken", func(any) (any, bool) {
+		return complex(1, 2), true
+	}))
+	if err != nil {
+		t.Fatalf("NewConfig(schema): %v", err)
+	}
+	builder, err := gin.NewBuilder(cfg, 2)
+	if err != nil {
+		t.Fatalf("NewBuilder(schema): %v", err)
+	}
+	return builder.AddDocument(gin.DocID(0), []byte(`{"email":"schema@example.com"}`))
+}
+
 func TestRunExperimentJSONGolden(t *testing.T) {
 	t.Parallel()
 
@@ -187,6 +328,280 @@ func TestRunExperimentJSONGolden(t *testing.T) {
 	}
 	if trimmed := string(bytes.TrimSpace(representations)); trimmed != "[]" {
 		t.Fatalf("$.status representations = %s, want []", trimmed)
+	}
+}
+
+func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
+	t.Parallel()
+
+	result := experimentBuildResult{}
+	recordExperimentIngestFailure(&result, 8, newNumericIngestFailure(t), false)
+	recordExperimentIngestFailure(&result, 2, newParserIngestFailure(t), false)
+	recordExperimentIngestFailure(&result, 6, newTransformerIngestFailure(t), false)
+	recordExperimentIngestFailure(&result, 10, newSchemaIngestFailure(t), false)
+	recordExperimentIngestFailure(&result, 12, errors.New("blank JSONL line"), false)
+
+	failures := experimentIngestFailureGroups(result.ingestFailures)
+	if len(failures) != 5 {
+		t.Fatalf("len(failures) = %d, want 5", len(failures))
+	}
+	wantLayers := []string{"parser", "transformer", "numeric", "schema", string(experimentUnknownFailureLayer)}
+	for i, want := range wantLayers {
+		if failures[i].Layer != want {
+			t.Fatalf("failures[%d].Layer = %q, want %q", i, failures[i].Layer, want)
+		}
+	}
+
+	parser := failures[0]
+	const parserSampleValue = "not-json"
+	if parser.Count != 1 {
+		t.Fatalf("parser.Count = %d, want 1", parser.Count)
+	}
+	if len(parser.Samples) != 1 {
+		t.Fatalf("len(parser.Samples) = %d, want 1", len(parser.Samples))
+	}
+	sample := parser.Samples[0]
+	if sample.Line != 2 || sample.InputIndex != 1 || sample.Path != "" || sample.Value != parserSampleValue || sample.Message == "" {
+		t.Fatalf("parser sample = %+v, want structured parser sample", sample)
+	}
+
+	unknown := failures[4]
+	if unknown.Count != 1 {
+		t.Fatalf("unknown.Count = %d, want 1", unknown.Count)
+	}
+	if got := unknown.Samples[0].Message; got != "blank JSONL line" {
+		t.Fatalf("unknown sample message = %q, want blank JSONL line", got)
+	}
+}
+
+func TestRecordExperimentIngestFailureCapsSamplesInArrivalOrder(t *testing.T) {
+	t.Parallel()
+
+	result := experimentBuildResult{}
+	err := newParserIngestFailure(t)
+	for _, line := range []int{4, 7, 9, 11, 15, 18, 20, 22, 24, 27} {
+		recordExperimentIngestFailure(&result, line, err, false)
+	}
+
+	failures := experimentIngestFailureGroups(result.ingestFailures)
+	if len(failures) != 1 {
+		t.Fatalf("len(failures) = %d, want 1", len(failures))
+	}
+	group := failures[0]
+	if group.Count != 10 {
+		t.Fatalf("group.Count = %d, want 10", group.Count)
+	}
+	if len(group.Samples) != experimentFailureSampleLimit {
+		t.Fatalf("len(group.Samples) = %d, want %d", len(group.Samples), experimentFailureSampleLimit)
+	}
+	wantLines := []int{4, 7, 9}
+	for i, want := range wantLines {
+		if group.Samples[i].Line != want {
+			t.Fatalf("group.Samples[%d].Line = %d, want %d", i, group.Samples[i].Line, want)
+		}
+	}
+}
+
+func TestRecordExperimentIngestFailureTragicSampleBypassesCap(t *testing.T) {
+	t.Parallel()
+
+	result := experimentBuildResult{}
+	normalErr := errors.New("blank JSONL line")
+	for _, line := range []int{4, 7, 9} {
+		recordExperimentIngestFailure(&result, line, normalErr, false)
+	}
+	recordExperimentIngestFailure(&result, 11, normalErr, true)
+
+	failures := experimentIngestFailureGroups(result.ingestFailures)
+	if len(failures) != 1 {
+		t.Fatalf("len(failures) = %d, want 1", len(failures))
+	}
+	group := failures[0]
+	if group.Count != 4 {
+		t.Fatalf("group.Count = %d, want 4", group.Count)
+	}
+	if len(group.Samples) != 4 {
+		t.Fatalf("len(group.Samples) = %d, want 4 after tragic bypass", len(group.Samples))
+	}
+	if last := group.Samples[len(group.Samples)-1]; last.Line != 11 {
+		t.Fatalf("last sample = %+v, want triggering tragic line 11", last)
+	}
+}
+
+func TestHandleExperimentLineErrorAbortsOnTragicBuilder(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	result := experimentBuildResult{}
+	lineErr := errors.New("builder tragic: recovered panic in merge: simulated")
+	builderErr := errors.New("simulated tragic failure")
+	err := handleExperimentLineError(&result, 4, lineErr, builderErr, experimentOnErrorContinue, &stderr)
+	if err == nil {
+		t.Fatal("handleExperimentLineError() error = nil, want tragic abort")
+	}
+	if !strings.Contains(err.Error(), experimentStatusTragic) {
+		t.Fatalf("handleExperimentLineError() error = %q, want %q", err.Error(), experimentStatusTragic)
+	}
+	if !strings.Contains(stderr.String(), "line 4:") {
+		t.Fatalf("stderr = %q, want line-numbered tragic failure", stderr.String())
+	}
+	if result.errorCount != 1 || result.skippedLines != 1 {
+		t.Fatalf("result = %+v, want one skipped/error line", result)
+	}
+	var tragicErr *experimentTragicAbortError
+	if !errors.As(err, &tragicErr) {
+		t.Fatalf("handleExperimentLineError() error = %T, want *experimentTragicAbortError", err)
+	}
+	if !errors.Is(err, builderErr) {
+		t.Fatalf("handleExperimentLineError() error = %v, want errors.Is(..., %v)", err, builderErr)
+	}
+}
+
+func TestExperimentTragicAbortErrorUnwrapExposesOnlyBuilderErr(t *testing.T) {
+	t.Parallel()
+
+	lineErr := errors.New("line ingest failure")
+	builderErr := errors.New("simulated tragic failure")
+
+	err := newExperimentTragicAbortError(7, lineErr, builderErr)
+	if !errors.Is(err, builderErr) {
+		t.Fatalf("errors.Is(err, builderErr) = false, want true")
+	}
+	if errors.Is(err, lineErr) {
+		t.Fatalf("errors.Is(err, lineErr) = true, want false")
+	}
+}
+
+func TestRunExperimentOnErrorContinueTragicAbortJSON(t *testing.T) {
+	fakeBuilder := &tragicExperimentBuilder{tragicErr: errors.New("simulated tragic failure")}
+	withExperimentBuilderFactory(t, func(gin.GINConfig, int) (experimentBuilder, error) {
+		return fakeBuilder, nil
+	})
+
+	input := "{\"status\":\"ok\"}\n{\"status\":\"boom\"}\n{\"status\":\"later\"}\n"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("runExperiment() code = %d, want 1 for tragic abort; stderr=%q", code, stderr.String())
+	}
+	if fakeBuilder.addCalls != 2 {
+		t.Fatalf("fakeBuilder.addCalls = %d, want 2 (stop after tragic failure)", fakeBuilder.addCalls)
+	}
+	if fakeBuilder.finalized {
+		t.Fatal("fakeBuilder.Finalize() was called, want tragic abort before finalize")
+	}
+	if !strings.Contains(stderr.String(), "line 2:") {
+		t.Fatalf("stderr = %q, want tragic line-numbered failure", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), experimentStatusTragic) {
+		t.Fatalf("stderr = %q, want tragic status marker", stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	requireJSONKeys(t, root, []string{"source", "summary", "paths"}, []string{"predicate_test"})
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONString(t, summary["status"]); got != experimentStatusTragic {
+		t.Fatalf("summary.status = %q, want %q", got, experimentStatusTragic)
+	}
+	if got := decodeJSONInt(t, summary["documents"]); got != 1 {
+		t.Fatalf("summary.documents = %d, want 1", got)
+	}
+	if got := decodeJSONInt(t, summary["processed_lines"]); got != 2 {
+		t.Fatalf("summary.processed_lines = %d, want 2", got)
+	}
+	if got := decodeJSONInt(t, summary["skipped_lines"]); got != 1 {
+		t.Fatalf("summary.skipped_lines = %d, want 1", got)
+	}
+	if got := decodeJSONInt(t, summary["error_count"]); got != 1 {
+		t.Fatalf("summary.error_count = %d, want 1", got)
+	}
+	failures := decodeExperimentFailures(t, summary["failures"])
+	if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 1 {
+		t.Fatalf("summary.failures = %#v, want one preserved tragic unknown failure", failures)
+	}
+	if len(failures[0].Samples) != 1 || failures[0].Samples[0].Line != 2 {
+		t.Fatalf("summary.failures[0].Samples = %#v, want one tragic sample on line 2", failures[0].Samples)
+	}
+	parserPaths := decodeJSONArray(t, root["paths"])
+	if len(parserPaths) != 0 {
+		t.Fatalf("len(paths) = %d, want 0 for tragic report without finalized index", len(parserPaths))
+	}
+}
+
+func TestRunExperimentOnErrorContinueTragicAbortJSONPreservesTriggeringSamplePastCap(t *testing.T) {
+	fakeBuilder := &scriptedExperimentBuilder{
+		addErrs: []error{
+			nil,
+			errors.New("blank JSONL line"),
+			errors.New("blank JSONL line"),
+			errors.New("blank JSONL line"),
+			errors.New("builder tragic: recovered panic in merge: simulated"),
+		},
+		tragicAt:  5,
+		tragicErr: errors.New("simulated tragic failure"),
+	}
+	withExperimentBuilderFactory(t, func(gin.GINConfig, int) (experimentBuilder, error) {
+		return fakeBuilder, nil
+	})
+
+	input := "{\"status\":\"ok\"}\nnot-json-2\nnot-json-3\nnot-json-4\n{\"status\":\"boom\"}\n{\"status\":\"later\"}\n"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("runExperiment() code = %d, want 1 for tragic abort; stderr=%q", code, stderr.String())
+	}
+	if fakeBuilder.addCalls != 5 {
+		t.Fatalf("fakeBuilder.addCalls = %d, want 5 through tragic trigger", fakeBuilder.addCalls)
+	}
+	if fakeBuilder.finalized {
+		t.Fatal("fakeBuilder.Finalize() was called, want tragic abort before finalize")
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	requireJSONKeys(t, root, []string{"source", "summary", "paths"}, []string{"predicate_test"})
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONString(t, summary["status"]); got != experimentStatusTragic {
+		t.Fatalf("summary.status = %q, want %q", got, experimentStatusTragic)
+	}
+	failures := decodeExperimentFailures(t, summary["failures"])
+	if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 4 {
+		t.Fatalf("summary.failures = %#v, want one tragic unknown bucket with count 4", failures)
+	}
+	if len(failures[0].Samples) != 4 {
+		t.Fatalf("len(summary.failures[0].Samples) = %d, want 4 with tragic bypass", len(failures[0].Samples))
+	}
+	wantLines := []int{2, 3, 4, 5}
+	for i, want := range wantLines {
+		if failures[0].Samples[i].Line != want {
+			t.Fatalf("summary.failures[0].Samples[%d].Line = %d, want %d", i, failures[0].Samples[i].Line, want)
+		}
+	}
+}
+
+func TestRunExperimentOnErrorContinueTragicAbortText(t *testing.T) {
+	fakeBuilder := &tragicExperimentBuilder{tragicErr: errors.New("simulated tragic failure")}
+	withExperimentBuilderFactory(t, func(gin.GINConfig, int) (experimentBuilder, error) {
+		return fakeBuilder, nil
+	})
+
+	input := "{\"status\":\"ok\"}\n{\"status\":\"boom\"}\n{\"status\":\"later\"}\n"
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("runExperiment() code = %d, want 1 for tragic abort; stderr=%q", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Status: "+experimentStatusTragic) {
+		t.Fatalf("stdout = %q, want tragic status", out)
+	}
+	if !strings.Contains(out, "GIN Index Info: unavailable (build aborted before finalize)") {
+		t.Fatalf("stdout = %q, want unavailable index sentinel", out)
+	}
+	if count := strings.Count(out, "GIN Index Info:"); count != 1 {
+		t.Fatalf("strings.Count(stdout, %q) = %d, want 1\nstdout=%q", "GIN Index Info:", count, out)
 	}
 }
 
@@ -470,6 +885,28 @@ func TestRunExperimentOnErrorAbortFromStdinFailsFastBeforeDrain(t *testing.T) {
 	}
 }
 
+func TestRunExperimentOnErrorAbortIngestErrorDoesNotEmitGroupedSummary(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "malformed.jsonl", []string{"not-json"}, true)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", experimentOnErrorAbort, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for abort mode")
+	}
+	for _, want := range []string{"line 1:", "ingest parser failure"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+		}
+	}
+	if strings.Contains(stdout.String(), "Failures:") {
+		t.Fatalf("stdout = %q, want no grouped summary after abort", stdout.String())
+	}
+}
+
 func TestRunExperimentOnErrorContinue(t *testing.T) {
 	t.Parallel()
 
@@ -528,7 +965,180 @@ func TestRunExperimentOnErrorContinue(t *testing.T) {
 		if got := decodeJSONString(t, summary["status"]); got != experimentStatusPartial {
 			t.Fatalf("summary.status = %q, want %s", got, experimentStatusPartial)
 		}
+		failures := decodeExperimentFailures(t, summary["failures"])
+		if len(failures) != 1 || failures[0].Layer != string(experimentUnknownFailureLayer) || failures[0].Count != 1 {
+			t.Fatalf("summary.failures = %#v, want one unknown grouped failure", failures)
+		}
 	})
+}
+
+func TestRunExperimentOnErrorContinueIngestFailuresText(t *testing.T) {
+	t.Parallel()
+
+	input := "{\"status\":\"ok\"}\nnot-json\n{\"status\":\"error\"}\n"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "line 2:") {
+		t.Fatalf("stderr = %q, want line-numbered continue error", stderr.String())
+	}
+
+	out := stdout.String()
+	for _, want := range []string{
+		"Documents: 2",
+		"Skipped Lines: 1",
+		"Error Count: 1",
+		"Failures:",
+		"parser: 1",
+		"line 2",
+		"input_index 1",
+		`path ""`,
+		`value "not-json"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stdout missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestRunExperimentOnErrorContinueIngestFailuresJSON(t *testing.T) {
+	t.Parallel()
+
+	input := "{\"score\":9007199254740993}\nnot-json\n{\"score\":1.5}\n{\"score\":7}\n"
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "-"}, strings.NewReader(input), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	failures := decodeExperimentFailures(t, summary["failures"])
+	if len(failures) != 2 {
+		t.Fatalf("len(summary.failures) = %d, want 2: %#v", len(failures), failures)
+	}
+	if failures[0].Layer != "parser" {
+		t.Fatalf("first failure layer = %q, want parser", failures[0].Layer)
+	}
+	if failures[1].Layer != "numeric" {
+		t.Fatalf("second failure layer = %q, want numeric", failures[1].Layer)
+	}
+	for _, group := range failures {
+		if len(group.Samples) > 3 {
+			t.Fatalf("%s samples = %d, want <= 3", group.Layer, len(group.Samples))
+		}
+		if len(group.Samples) == 0 {
+			t.Fatalf("%s samples empty", group.Layer)
+		}
+	}
+	parserSample := failures[0].Samples[0]
+	if parserSample.Line != 2 || parserSample.InputIndex != 1 || parserSample.Path != "" || parserSample.Value != "not-json" || parserSample.Message == "" {
+		t.Fatalf("parser sample = %+v, want structured parser sample", parserSample)
+	}
+}
+
+func TestRunExperimentHundredDocsKnownIngestFailuresJSON(t *testing.T) {
+	cfg, err := gin.NewConfig(
+		gin.WithEmailDomainTransformer("$.email", "domain"),
+		gin.WithCustomTransformer("$.bad", "broken", func(any) (any, bool) {
+			return struct{ Broken bool }{Broken: true}, true
+		}),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig(): %v", err)
+	}
+	withExperimentDefaultConfig(t, func() gin.GINConfig {
+		return cfg
+	})
+
+	lines := makeHundredDocKnownIngestFailureFixture()
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "hundred-docs.jsonl", lines, true)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--json", "--on-error", experimentOnErrorContinue, "--rg-size", "10", inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	root := decodeJSONMap(t, stdout.Bytes())
+	summary := decodeJSONMap(t, root["summary"])
+	if got := decodeJSONInt(t, summary["documents"]); got != 87 {
+		t.Fatalf("summary.documents = %d, want 87", got)
+	}
+	if got := decodeJSONInt(t, summary["error_count"]); got != 13 {
+		t.Fatalf("summary.error_count = %d, want 13", got)
+	}
+	if got := decodeJSONInt(t, summary["row_groups"]); got != 9 {
+		t.Fatalf("summary.row_groups = %d, want 9", got)
+	}
+
+	failures := decodeExperimentFailures(t, summary["failures"])
+	const (
+		wantParserFailures      = 3
+		wantTransformerFailures = 4
+		wantNumericFailures     = 3
+		wantSchemaFailures      = 3
+	)
+	wantLayers := []string{"parser", "transformer", "numeric", "schema"}
+	wantCounts := []int{wantParserFailures, wantTransformerFailures, wantNumericFailures, wantSchemaFailures}
+	if len(failures) != len(wantLayers) {
+		t.Fatalf("len(summary.failures) = %d, want %d: %#v", len(failures), len(wantLayers), failures)
+	}
+	for i, group := range failures {
+		if group.Layer != wantLayers[i] {
+			t.Fatalf("failures[%d].Layer = %q, want %q", i, group.Layer, wantLayers[i])
+		}
+		if group.Count != wantCounts[i] {
+			t.Fatalf("%s count = %d, want %d", group.Layer, group.Count, wantCounts[i])
+		}
+		if len(group.Samples) > 3 {
+			t.Fatalf("%s samples = %d, want <= 3", group.Layer, len(group.Samples))
+		}
+		hasMessage := false
+		for _, sample := range group.Samples {
+			if sample.Message != "" {
+				hasMessage = true
+				break
+			}
+		}
+		if !hasMessage {
+			t.Fatalf("%s samples have no non-empty message: %#v", group.Layer, group.Samples)
+		}
+	}
+}
+
+func makeHundredDocKnownIngestFailureFixture() []string {
+	lines := make([]string, 100)
+	parserFailures := map[int]bool{2: true, 25: true, 50: true}
+	transformerFailures := map[int]bool{10: true, 30: true, 60: true, 80: true}
+	numericFailures := map[int]bool{40: true, 70: true, 90: true}
+	schemaFailures := map[int]bool{15: true, 55: true, 95: true}
+	for lineNumber := 1; lineNumber <= 100; lineNumber++ {
+		switch {
+		case lineNumber == 1:
+			// Line 1 seeds the large integer path before every numeric-promotion failure.
+			lines[lineNumber-1] = `{"email":"seed@example.com","score":9007199254740993}`
+		case parserFailures[lineNumber]:
+			lines[lineNumber-1] = `not-json`
+		case transformerFailures[lineNumber]:
+			lines[lineNumber-1] = `{"email":42,"score":7}`
+		case numericFailures[lineNumber]:
+			lines[lineNumber-1] = `{"email":"num@example.com","score":1.5}`
+		case schemaFailures[lineNumber]:
+			lines[lineNumber-1] = `{"email":"schema@example.com","bad":"trigger","score":7}`
+		default:
+			lines[lineNumber-1] = fmt.Sprintf(`{"email":"user%03d@example.com","score":%d}`, lineNumber, lineNumber)
+		}
+	}
+	return lines
 }
 
 func TestRunExperimentOnErrorContinueMalformedJSONFromFile(t *testing.T) {

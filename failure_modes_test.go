@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	stderrors "errors"
 	"math"
 	"strings"
 	"testing"
@@ -11,6 +12,280 @@ import (
 	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/amikos-tech/ami-gin/telemetry"
 )
+
+func TestIngestErrorWrappingContract(t *testing.T) {
+	cause := errors.New("unsupported mixed numeric promotion")
+	ingestErr := &IngestError{
+		path:  "$.score",
+		layer: IngestLayerNumeric,
+		value: "9007199254740993",
+		err:   cause,
+	}
+	outer := errors.Wrap(ingestErr, "outer context")
+
+	var extracted *IngestError
+	if !stderrors.As(outer, &extracted) {
+		t.Fatal("errors.As failed to extract *IngestError")
+	}
+	if extracted != ingestErr {
+		t.Fatalf("extracted IngestError = %p, want %p", extracted, ingestErr)
+	}
+	if !stderrors.Is(errors.Cause(outer), cause) {
+		t.Fatalf("pkg/errors.Cause(outer) = %v, want %v", errors.Cause(outer), cause)
+	}
+	if !stderrors.Is(stderrors.Unwrap(ingestErr), cause) {
+		t.Fatalf("errors.Unwrap(ingestErr) = %v, want %v", stderrors.Unwrap(ingestErr), cause)
+	}
+	const want = "ingest numeric failure at $.score: unsupported mixed numeric promotion"
+	if got := ingestErr.Error(); got != want {
+		t.Fatalf("IngestError.Error() = %q, want %q", got, want)
+	}
+	if got := (*IngestError)(nil).Error(); got != "<nil>" {
+		t.Fatalf("nil IngestError.Error() = %q, want <nil>", got)
+	}
+	if got := (*IngestError)(nil).Path(); got != "" {
+		t.Fatalf("nil IngestError.Path() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Layer(); got != "" {
+		t.Fatalf("nil IngestError.Layer() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Value(); got != "" {
+		t.Fatalf("nil IngestError.Value() = %q, want empty", got)
+	}
+	if got := (*IngestError)(nil).Unwrap(); got != nil {
+		t.Fatalf("nil IngestError.Unwrap() = %v, want nil", got)
+	}
+	if got := (*IngestError)(nil).Cause(); got != nil {
+		t.Fatalf("nil IngestError.Cause() = %v, want nil", got)
+	}
+	if got := (&IngestError{layer: IngestLayerParser, err: errors.New("bad json")}).Error(); got != "ingest parser failure: bad json" {
+		t.Fatalf("empty-path IngestError.Error() = %q", got)
+	}
+
+	stagedInt := stagedNumericValue{isInt: true, intVal: 9007199254740993}
+	if got := formatStagedNumericValue(stagedInt); got != "9007199254740993" {
+		t.Fatalf("formatStagedNumericValue(int) = %q, want 9007199254740993", got)
+	}
+	stagedFloat := stagedNumericValue{floatVal: 1.5}
+	if got := formatStagedNumericValue(stagedFloat); got != "1.5" {
+		t.Fatalf("formatStagedNumericValue(float) = %q, want 1.5", got)
+	}
+}
+
+func requireIngestError(t *testing.T, err error, wantLayer IngestLayer, wantPath string) *IngestError {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want *IngestError")
+	}
+	var ingestErr *IngestError
+	wrapped := errors.Wrap(err, "outer")
+	if !stderrors.As(wrapped, &ingestErr) {
+		t.Fatalf("errors.As(errors.Wrap(%v, outer)) failed to extract *IngestError", err)
+	}
+	if ingestErr.Layer() != wantLayer {
+		t.Fatalf("IngestError.Layer() = %q, want %q", ingestErr.Layer(), wantLayer)
+	}
+	if ingestErr.Path() != wantPath {
+		t.Fatalf("IngestError.Path() = %q, want %q", ingestErr.Path(), wantPath)
+	}
+	if ingestErr.Cause() == nil {
+		t.Fatal("IngestError.Cause() = nil, want cause")
+	}
+	return ingestErr
+}
+
+func requireNonIngestError(t *testing.T, err error, context string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s error = nil, want hard non-IngestError", context)
+	}
+	var ingestErr *IngestError
+	if stderrors.As(errors.Wrap(err, "outer"), &ingestErr) {
+		t.Fatalf("%s error extracted as *IngestError through outer wrap: %+v", context, ingestErr)
+	}
+}
+
+func requireBuilderUsableAfterHardFailure(t *testing.T, builder *GINBuilder, docID DocID) {
+	t.Helper()
+	builder.parser = stdlibParser{}
+	builder.parserName = stdlibParserName
+	if err := builder.AddDocument(docID, []byte(`{"ok":"after-failure"}`)); err != nil {
+		t.Fatalf("builder not usable after hard failure: %v", err)
+	}
+}
+
+func TestHardIngestFailuresReturnIngestError(t *testing.T) {
+	t.Run("parser_unknown_path", func(t *testing.T) {
+		builder := mustNewBuilder(t, DefaultConfig(), 2)
+		err := builder.AddDocument(DocID(0), []byte("not-json"))
+
+		ingestErr := requireIngestError(t, err, IngestLayerParser, "")
+		if ingestErr.Value() != "not-json" {
+			t.Fatalf("IngestError.Value() = %q, want not-json", ingestErr.Value())
+		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
+	})
+
+	t.Run("transformer_source_path", func(t *testing.T) {
+		config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain"))
+		builder := mustNewBuilder(t, config, 2)
+		err := builder.AddDocument(DocID(0), []byte(`{"email":42}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerTransformer, "$.email")
+		if ingestErr.Value() != "42" {
+			t.Fatalf("IngestError.Value() = %q, want 42", ingestErr.Value())
+		}
+		if strings.Contains(ingestErr.Path(), "__derived:") {
+			t.Fatalf("IngestError.Path() = %q, must not expose derived path", ingestErr.Path())
+		}
+		if err := builder.AddDocument(DocID(1), []byte(`{"email":"valid@example.com"}`)); err != nil {
+			t.Fatalf("builder not usable after transformer hard failure: %v", err)
+		}
+	})
+
+	t.Run("transformer_companion_unsupported_type_uses_source_path", func(t *testing.T) {
+		cases := []struct {
+			name        string
+			transformed any
+		}{
+			{name: "complex128", transformed: complex(1, 2)},
+			{name: "struct", transformed: struct{ Code string }{Code: "boom"}},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				config := softFailureConfig(t, WithCustomTransformer("$.email", "broken", func(any) (any, bool) {
+					return tc.transformed, true
+				}))
+				builder := mustNewBuilder(t, config, 2)
+				err := builder.AddDocument(DocID(0), []byte(`{"email":"valid@example.com"}`))
+
+				ingestErr := requireIngestError(t, err, IngestLayerSchema, "$.email")
+				if strings.Contains(ingestErr.Path(), "__derived:") {
+					t.Fatalf("IngestError.Path() = %q, must not expose derived path", ingestErr.Path())
+				}
+				if !strings.Contains(ingestErr.Error(), "unsupported transformed value type") {
+					t.Fatalf("IngestError.Error() = %q, want transformed-value failure", ingestErr.Error())
+				}
+			})
+		}
+	})
+
+	t.Run("schema_unsupported_token", func(t *testing.T) {
+		builder, err := NewBuilder(DefaultConfig(), 2, WithParser(unsupportedTokenAtomicityParser{}))
+		if err != nil {
+			t.Fatalf("NewBuilder: %v", err)
+		}
+		err = builder.AddDocument(DocID(0), []byte(`{"bad":true}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerSchema, "$.bad")
+		if ingestErr.Value() == "" {
+			t.Fatal("IngestError.Value() = empty, want offending token representation")
+		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
+	})
+
+	t.Run("numeric_malformed_literal", func(t *testing.T) {
+		builder, err := NewBuilder(DefaultConfig(), 2, WithParser(malformedNumericLiteralAtomicityParser{}))
+		if err != nil {
+			t.Fatalf("NewBuilder: %v", err)
+		}
+		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerNumeric, "$.score")
+		if ingestErr.Value() != "not-a-number" {
+			t.Fatalf("IngestError.Value() = %q, want not-a-number", ingestErr.Value())
+		}
+		requireBuilderUsableAfterHardFailure(t, builder, DocID(1))
+	})
+
+	t.Run("numeric_mixed_promotion", func(t *testing.T) {
+		builder := mustNewBuilder(t, DefaultConfig(), 3)
+		if err := builder.AddDocument(DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+			t.Fatalf("seed AddDocument: %v", err)
+		}
+		err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`))
+
+		ingestErr := requireIngestError(t, err, IngestLayerNumeric, "$.score")
+		switch ingestErr.Value() {
+		case "1.5", "9007199254740993":
+		default:
+			t.Fatalf("IngestError.Value() = %q, want doc-facing numeric string", ingestErr.Value())
+		}
+		if strings.Contains(ingestErr.Value(), "e+") || strings.Contains(ingestErr.Value(), "E+") {
+			t.Fatalf("IngestError.Value() = %q, must not use scientific notation", ingestErr.Value())
+		}
+		if !strings.Contains(ingestErr.Cause().Error(), "unsupported mixed numeric promotion") {
+			t.Fatalf("IngestError.Cause() = %v, want unsupported mixed numeric promotion", ingestErr.Cause())
+		}
+		if err := builder.AddDocument(DocID(2), []byte(`{"score":9007199254740992}`)); err != nil {
+			t.Fatalf("builder not usable after numeric hard failure: %v", err)
+		}
+	})
+}
+
+func TestParserContractErrorsRemainNonIngestError(t *testing.T) {
+	cases := []struct {
+		name   string
+		parser Parser
+	}{
+		{name: "missing-begin", parser: skipBeginDocumentParser{}},
+		{name: "double-begin", parser: doubleBeginDocumentParser{}},
+		{name: "wrong-rgid", parser: wrongRGIDParser{}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			builder, err := NewBuilder(DefaultConfig(), 2, WithParser(tc.parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+			err = builder.AddDocument(DocID(0), []byte(`{"name":"bad"}`))
+			requireNonIngestError(t, err, "parser contract")
+		})
+	}
+}
+
+func TestSoftFailureModesDoNotReturnIngestError(t *testing.T) {
+	t.Run("parser_soft", func(t *testing.T) {
+		config := softFailureConfig(t, WithParserFailureMode(IngestFailureSoft))
+		builder := mustNewBuilder(t, config, 2)
+		if err := builder.AddDocument(DocID(0), []byte("not-json")); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft parser error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft parser AddDocument error = %v, want nil", err)
+		}
+	})
+
+	t.Run("numeric_soft_mixed_promotion", func(t *testing.T) {
+		config := softFailureConfig(t, WithNumericFailureMode(IngestFailureSoft))
+		builder := mustNewBuilder(t, config, 3)
+		if err := builder.AddDocument(DocID(0), []byte(`{"score":9007199254740993}`)); err != nil {
+			t.Fatalf("seed AddDocument: %v", err)
+		}
+		if err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`)); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft numeric error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft numeric AddDocument error = %v, want nil", err)
+		}
+	})
+
+	t.Run("transformer_soft", func(t *testing.T) {
+		config := softFailureConfig(t, WithEmailDomainTransformer("$.email", "domain", WithTransformerFailureMode(IngestFailureSoft)))
+		builder := mustNewBuilder(t, config, 2)
+		if err := builder.AddDocument(DocID(0), []byte(`{"email":42}`)); err != nil {
+			var ingestErr *IngestError
+			if stderrors.As(err, &ingestErr) {
+				t.Fatalf("soft transformer error extracted as *IngestError: %+v", ingestErr)
+			}
+			t.Fatalf("soft transformer AddDocument error = %v, want nil", err)
+		}
+	})
+}
 
 func TestIngestFailureModeDefaultsAndValidation(t *testing.T) {
 	defaults := DefaultConfig()
@@ -358,8 +633,8 @@ func TestParserFailureModeSoftDoesNotSwallowStageHardErrors(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddDocument hard stage error = nil, want numeric error")
 	}
-	if !strings.Contains(err.Error(), "parse numeric at $.score") {
-		t.Fatalf("AddDocument hard stage error = %v, want parse numeric at $.score", err)
+	if !strings.Contains(err.Error(), "ingest numeric failure at $.score: parse numeric") {
+		t.Fatalf("AddDocument hard stage error = %v, want structured numeric parse error", err)
 	}
 	if builder.tragicErr != nil {
 		t.Fatalf("builder.tragicErr = %v, want nil", builder.tragicErr)
@@ -386,6 +661,7 @@ func TestParserFailureModeSoftKeepsTragicStateHard(t *testing.T) {
 	if !strings.Contains(err.Error(), "builder closed by prior tragic failure") {
 		t.Fatalf("AddDocument after tragic state = %v, want tragic refusal", err)
 	}
+	requireNonIngestError(t, err, "tragic state refusal")
 }
 
 func TestParserFailureModeStageProvenanceDoesNotLeakAcrossDocuments(t *testing.T) {
@@ -436,8 +712,8 @@ func TestNumericFailureModeHardReturnsErrors(t *testing.T) {
 			t.Fatalf("NewBuilder: %v", err)
 		}
 		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
-		if err == nil || !strings.Contains(err.Error(), "parse numeric at $.score") {
-			t.Fatalf("AddDocument malformed literal error = %v, want parse numeric at $.score", err)
+		if err == nil || !strings.Contains(err.Error(), "ingest numeric failure at $.score: parse numeric") {
+			t.Fatalf("AddDocument malformed literal error = %v, want structured numeric parse error", err)
 		}
 	})
 
@@ -447,8 +723,9 @@ func TestNumericFailureModeHardReturnsErrors(t *testing.T) {
 			t.Fatalf("NewBuilder: %v", err)
 		}
 		err = builder.AddDocument(DocID(0), []byte(`{"score":1}`))
-		if err == nil || !strings.Contains(err.Error(), "non-finite numeric value") {
-			t.Fatalf("AddDocument non-finite error = %v, want non-finite numeric value", err)
+		ingestErr := requireIngestError(t, err, IngestLayerNumeric, "$.score")
+		if !strings.Contains(ingestErr.Cause().Error(), "non-finite numeric value") {
+			t.Fatalf("IngestError.Cause() = %v, want non-finite numeric value", ingestErr.Cause())
 		}
 	})
 
@@ -458,8 +735,8 @@ func TestNumericFailureModeHardReturnsErrors(t *testing.T) {
 			t.Fatalf("seed AddDocument: %v", err)
 		}
 		err := builder.AddDocument(DocID(1), []byte(`{"score":1.5}`))
-		if err == nil || !strings.Contains(err.Error(), mixedNumericPromotionScoreErr) {
-			t.Fatalf("AddDocument mixed promotion error = %v, want %q", err, mixedNumericPromotionScoreErr)
+		if err == nil || !strings.Contains(err.Error(), "ingest numeric failure at $.score: unsupported mixed numeric promotion") {
+			t.Fatalf("AddDocument mixed promotion error = %v, want structured mixed promotion error", err)
 		}
 	})
 }
@@ -561,6 +838,7 @@ func TestNumericFailureModeSoftKeepsMergeRecoveryTragic(t *testing.T) {
 	if !strings.Contains(err.Error(), "builder tragic: recovered panic in merge") {
 		t.Fatalf("AddDocument recovered merge panic error = %v, want tragic merge error", err)
 	}
+	requireNonIngestError(t, err, "recovered merge panic")
 	if builder.numDocs != 0 || builder.nextPos != 0 {
 		t.Fatalf("builder advanced after tragic merge: numDocs=%d nextPos=%d", builder.numDocs, builder.nextPos)
 	}
@@ -574,7 +852,7 @@ func TestTransformerFailureModeHardReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("AddDocument transformer rejection error = nil, want hard error")
 	}
-	if !strings.Contains(err.Error(), `companion transformer "domain" on $.email failed to produce a value`) {
+	if !strings.Contains(err.Error(), `ingest transformer failure at $.email: companion transformer "domain" failed to produce a value`) {
 		t.Fatalf("AddDocument transformer rejection error = %v, want companion transformer context", err)
 	}
 	if builder.tragicErr != nil {

@@ -24,15 +24,30 @@ type experimentSource struct {
 }
 
 type experimentSummary struct {
-	Documents      int    `json:"documents"`
-	RowGroups      int    `json:"row_groups"`
-	RGSize         int    `json:"rg_size"`
-	SampleLimit    int    `json:"sample_limit"`
-	ProcessedLines int    `json:"processed_lines"`
-	SkippedLines   int    `json:"skipped_lines"`
-	ErrorCount     int    `json:"error_count"`
-	Status         string `json:"status"`
-	SidecarPath    string `json:"sidecar_path"`
+	Documents      int                      `json:"documents"`
+	RowGroups      int                      `json:"row_groups"`
+	RGSize         int                      `json:"rg_size"`
+	SampleLimit    int                      `json:"sample_limit"`
+	ProcessedLines int                      `json:"processed_lines"`
+	SkippedLines   int                      `json:"skipped_lines"`
+	ErrorCount     int                      `json:"error_count"`
+	Failures       []experimentFailureGroup `json:"failures,omitempty"`
+	Status         string                   `json:"status"`
+	SidecarPath    string                   `json:"sidecar_path"`
+}
+
+type experimentFailureSample struct {
+	Line       int    `json:"line"`
+	InputIndex int    `json:"input_index"`
+	Path       string `json:"path,omitempty"`
+	Value      string `json:"value,omitempty"`
+	Message    string `json:"message"`
+}
+
+type experimentFailureGroup struct {
+	Layer   string                    `json:"layer"`
+	Count   int                       `json:"count"`
+	Samples []experimentFailureSample `json:"samples,omitempty"`
 }
 
 type experimentPathRow struct {
@@ -55,6 +70,9 @@ type experimentPredicateResult struct {
 }
 
 func collectExperimentPathRows(idx *gin.GINIndex) []experimentPathRow {
+	if idx == nil {
+		return nil
+	}
 	rows := make([]experimentPathRow, 0, len(idx.PathDirectory))
 	for _, pe := range idx.PathDirectory {
 		if strings.HasPrefix(pe.PathName, "__derived:") {
@@ -118,10 +136,24 @@ func writeExperimentText(stdout io.Writer, report experimentReport, idx *gin.GIN
 		fmt.Fprintf(stdout, "  Skipped Lines: %d\n", report.Summary.SkippedLines)
 		fmt.Fprintf(stdout, "  Error Count: %d\n", report.Summary.ErrorCount)
 	}
+	if len(report.Summary.Failures) > 0 {
+		fmt.Fprintln(stdout, "  Failures:")
+		for _, group := range report.Summary.Failures {
+			fmt.Fprintf(stdout, "    %s: %d\n", group.Layer, group.Count)
+			for _, sample := range group.Samples {
+				fmt.Fprintf(stdout, "      line %d input_index %d path %q value %q: %s\n", sample.Line, sample.InputIndex, sample.Path, sample.Value, sample.Message)
+			}
+		}
+	}
 	if report.Summary.SidecarPath != "" {
 		fmt.Fprintf(stdout, "  Sidecar Path: %s\n", report.Summary.SidecarPath)
 	}
 	fmt.Fprintln(stdout)
+
+	if idx == nil {
+		fmt.Fprintln(stdout, "GIN Index Info: unavailable (build aborted before finalize)")
+		return
+	}
 
 	writeIndexInfo(stdout, idx)
 

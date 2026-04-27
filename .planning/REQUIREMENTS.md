@@ -26,9 +26,9 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 
 ### Structured IngestError
 
-- [ ] **IERR-01**: Exported `IngestError` type carries `Path` (the JSONPath where the failure happened), `Layer` (parser / transformer / numeric / schema), `Cause` (the wrapped underlying error), and `Value` (verbatim string repr of the offending value — caller redacts as needed; the library does not redact). `errors.As`-friendly extraction tested.
-- [ ] **IERR-02**: All ingest-error sites (parser, transformer, numeric promotion) wrap their underlying error in `IngestError` with the four fields populated. Round-trip extraction via `errors.As` is covered by a per-layer test matrix.
-- [ ] **IERR-03**: `gin-index experiment --on-error continue` (shipped in Phase 15) reports per-document failures grouped by `Layer` plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes. Golden-tested.
+- [x] **IERR-01**: Exported `IngestError` type carries `Path` (the JSONPath where the failure happened), `Layer` (parser / transformer / numeric / schema), `Cause` (the wrapped underlying error), and `Value` (verbatim string repr of the offending value — caller redacts as needed; the library does not redact). `errors.As`-friendly extraction tested. Completed by Phase 18 Plan 01.
+- [x] **IERR-02**: All ingest-error sites (parser, transformer, numeric promotion) wrap their underlying error in `IngestError` with the four fields populated. Round-trip extraction via `errors.As` is covered by a per-layer test matrix. Library-side builder wrapping completed by Phase 18 Plan 01; Plan 18-02 adds enforcement hardening.
+- [x] **IERR-03**: `gin-index experiment --on-error continue` (shipped in Phase 15) reports per-document failures grouped by `Layer` plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes. Golden-tested. Completed by Phase 18 Plan 03.
 
 ## Out of Scope (deferred to a future milestone)
 
@@ -50,9 +50,9 @@ Once per-document failure is a first-class concept, the milestone unifies the fa
 | ATOMIC-03 | Phase 16 | Complete (16-02 recovery, 16-03 public catalog) |
 | FAIL-01 | Phase 17 | Complete |
 | FAIL-02 | Phase 17 | Complete |
-| IERR-01 | Phase 18 | Planned |
-| IERR-02 | Phase 18 | Planned |
-| IERR-03 | Phase 18 | Planned |
+| IERR-01 | Phase 18 | Complete (18-01 public API and wrapping contract) |
+| IERR-02 | Phase 18 | Complete (18-01 library wrapping and per-layer extraction matrix) |
+| IERR-03 | Phase 18 | Complete (18-03 CLI grouped reporting and 100-line fixture) |
 
 **Coverage:**
 - Requirements total: 8

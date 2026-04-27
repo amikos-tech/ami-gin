@@ -5,7 +5,7 @@
 - ✅ **v0.1.0 OSS Launch** — Phases 01-05 (shipped pre-v1.0)
 - ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (functionally complete 2026-04-22; PRs #29 and #30 merged)
-- 🚧 **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (started 2026-04-23)
+- ✅ **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (functionally complete 2026-04-24)
 - ⏸️ **v1.3 SIMD JSON Path** — Phases 19-20 (preview only; deferred 2026-04-21 pending `pure-simdjson` license/tag/distribution resolution; renumbered from v1.2 on 2026-04-23)
 
 ## Phases
@@ -34,11 +34,11 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — ACTIVE
+### ✅ v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — FUNCTIONALLY COMPLETE
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
 - [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
-- [ ] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes.
+- [x] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. Completed 2026-04-24.
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
 
@@ -143,10 +143,16 @@ Plans:
 **Success Criteria** (what must be TRUE):
   1. Exported `IngestError` type carries `Path` (JSONPath), `Layer` (parser / transformer / numeric / schema), `Cause` (wrapped underlying error), and `Value` (verbatim string repr — caller redacts as needed; the library does not redact).
   2. `errors.As`-friendly: callers can extract `IngestError` from anywhere in the wrap chain. Per-layer test matrix asserts round-trip extraction for every error site.
-  3. All ingest-error sites identified in Phases 16 and 17 wrap their underlying error in `IngestError` with the four fields populated; a grep+test enforces no plain `errors.New` / `errors.Wrap` returns from ingest sites.
+  3. All ingest-error sites identified in Phases 16 and 17 wrap their underlying error in `IngestError` with the four fields populated; focused behavior and AST tests enforce no plain `errors.New` / `errors.Wrap` returns from hard ingest sites.
   4. `gin-index experiment --on-error continue` reports per-document failures grouped by `Layer` (with counts) plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes; both modes are golden-tested.
   5. A test feeds 100 docs with 10 known failures (3 parser, 4 transformer, 3 numeric) through `gin-index experiment --on-error continue --json` and asserts the JSON output contains the correct grouped counts and a non-empty sample array with structured fields.
-**Plans**: TBD (planned during `/gsd-discuss-phase 18` and `/gsd-plan-phase 18`)
+**Plans**: 4 plans
+
+Plans:
+- [x] 18-01-PLAN.md — Public `IngestError` API, helper formatting, and builder hard-failure wrapping
+- [x] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
+- [x] 18-03-PLAN.md — Experiment CLI grouped failure aggregation, deterministic output, and 100-line fixture
+- [x] 18-04-PLAN.md — Public docs, changelog note, and final verification
 
 ### Phase 19: SIMD Parser Adapter
 **Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
@@ -193,12 +199,12 @@ Plans:
 | 15. Experimentation CLI | v1.1 | 3/3 | Complete | 2026-04-22 |
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
-| 18. Structured IngestError + CLI integration | v1.2 | 0/- | Planned | - |
+| 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Parser Adapter | v1.3 preview | 0/- | Deferred | - |
 | 20. SIMD Validation, Datasets & CI | v1.3 preview | 0/- | Deferred | - |
 
 ---
-*v1.2 started 2026-04-23 with 8 requirements across 3 phases (ATOMIC-01..03, FAIL-01..02, IERR-01..03). Architectural strategy: validate-before-mutate with Lucene's per-document contract as the target. v1.1 functionally complete 2026-04-22 (PRs #29, #30). v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
+*v1.2 functionally complete 2026-04-24 with 8 requirements across 3 phases (ATOMIC-01..03, FAIL-01..02, IERR-01..03). Architectural strategy: validate-before-mutate with Lucene's per-document contract as the target. v1.1 functionally complete 2026-04-22 (PRs #29, #30). v1.0 shipped 2026-04-21. Prior milestone v0.1.0 completed the OSS launch (phases 01-05).*
 *v1.3 (was v1.2) preview carries forward the deferred SIMD scope from original PARSER-02..05; exact requirement IDs will be restated when that milestone formally opens. Renumbered from v1.2 → v1.3 on 2026-04-23 to preserve chronological phase numbering.*
 
 ## Backlog

@@ -7,7 +7,7 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phases 16-17 complete; Phase 18 ready to discuss/plan
+- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phases 16-18 complete and verified
 
 ## Current Milestone: v1.2 Ingest Correctness & Per-Document Isolation
 
@@ -16,7 +16,7 @@
 **Target themes:**
 - **AddDocument atomicity (Lucene contract)** — extend the existing two-phase `validateStagedPaths` / `mergeStagedPaths` pattern so the merge step becomes infallible by construction. Rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations only. `recover()` belt-and-suspenders converts any reachable panic to `tragicErr`. Verified by an atomicity property test that interleaves guaranteed-failing documents with a clean corpus and asserts byte-identical encoded output.
 - **Failure-mode taxonomy unification** — complete in Phase 17. The existing `TransformerFailureMode` public symbols were replaced by unified `IngestFailureMode` (`Hard`/`Soft`) across parser, transformer, and numeric-promotion layers. New `WithParserFailureMode` and `WithNumericFailureMode` config knobs default `Hard` and opt-in `Soft` skips whole failed documents.
-- **Structured `IngestError` + CLI integration** — exported error type carrying `Path`, `Layer`, `Cause`, `Value`; `errors.As`-friendly. The `gin-index experiment --on-error continue` summary reports failures grouped by `Layer` with a structured sample, in both text and `--json` modes.
+- **Structured `IngestError` + CLI integration** — complete in Phase 18. The exported error type carries `Path`, `Layer`, `Cause`, and verbatim `Value`; it is `errors.As`-friendly. The `gin-index experiment --on-error continue` summary reports failures grouped by `Layer` with structured samples in both text and `--json` modes.
 
 **Architectural strategy:** validate-before-mutate (Strategy C from brainstorming), with Lucene's per-document contract as the target. Industry precedents reviewed: Lucene IndexWriter (closest analog), Tantivy, Bleve, RocksDB WriteBatch, PostgreSQL GIN.
 
@@ -67,7 +67,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 
 ### Active
 
-- **v1.2 remaining — IERR-01..03.** FAIL-01 and FAIL-02 were validated in Phase 17; see `.planning/REQUIREMENTS.md` for the current status.
+- **v1.2 milestone wrap-up.** ATOMIC-01..03, FAIL-01..02, and IERR-01..03 are validated; Phase 18 verification passed 16/16 must-haves on 2026-04-24.
 
 ### Out of Scope
 
@@ -95,6 +95,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - v1.2 opened 2026-04-23 with brainstorming-locked design: validate-before-mutate atomicity strategy, Lucene per-document contract target, deliberate `TransformerFailureMode` → `IngestFailureMode` rename, `IngestError.Value` not redacted by library
 - Phase 16 completed AddDocument atomicity on 2026-04-23: ordinary public failures are non-tragic, failed documents are isolated by encoded-byte property tests, and marker checks enforce the validator/merge contract locally and in CI
 - Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
+- Phase 18 completed structured `IngestError` + CLI integration on 2026-04-24: public structured errors cover parser/transformer/numeric/schema hard document failures, hard-ingest sites are guarded by behavior and AST tests, and the experiment CLI reports grouped structured failures in text and JSON modes
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -137,4 +138,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-23 — Phase 17 failure-mode taxonomy complete and verified; v1.2 continues with structured IngestError work.*
+*Last updated: 2026-04-24 — Phase 18 structured IngestError + CLI integration complete and verified; v1.2 functionally complete.*

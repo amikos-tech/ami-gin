@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/pkg/errors"
@@ -30,7 +31,10 @@ const (
 	experimentStatusComplete  = "complete"
 	experimentStatusPartial   = "partial"
 	experimentStatusTruncated = "truncated"
+	experimentStatusTragic    = "aborted:tragic"
 )
+
+const experimentUnknownFailureLayer gin.IngestLayer = "unknown"
 
 func cmdExperiment(args []string) {
 	if code := runExperiment(args, os.Stdin, os.Stdout, os.Stderr); code != 0 {
@@ -102,31 +106,27 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 
 	result, err := buildExperimentIndex(source.open, config, *rgSize, estimatedRGs, *sampleLimit, *onError, stderr)
-	if err != nil {
-		if errors.Is(err, errExperimentAbort) {
-			return 1
-		}
+	var tragicErr *experimentTragicAbortError
+	if err != nil && !errors.Is(err, errExperimentAbort) && !errors.As(err, &tragicErr) {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
+	if errors.Is(err, errExperimentAbort) {
+		return 1
+	}
 
-	report := experimentReport{
-		Source: experimentSource{
-			Input: source.displayName,
-			Stdin: source.isStdin(),
-		},
-		Summary: experimentSummary{
-			Documents:      result.ingestedDocs,
-			RowGroups:      result.rowGroups,
-			RGSize:         *rgSize,
-			SampleLimit:    *sampleLimit,
-			ProcessedLines: result.processedLines,
-			SkippedLines:   result.skippedLines,
-			ErrorCount:     result.errorCount,
-			Status:         experimentSummaryStatus(source, result),
-			SidecarPath:    "",
-		},
-		Paths: collectExperimentPathRows(result.idx),
+	report := newExperimentReport(source, result, *rgSize, *sampleLimit)
+	if tragicErr != nil {
+		if *jsonOutput {
+			if err := writeExperimentJSON(stdout, report); err != nil {
+				fmt.Fprintf(stderr, "Error: %v\n", err)
+				return 1
+			}
+		} else {
+			writeExperimentText(stdout, report, result.idx)
+		}
+		fmt.Fprintf(stderr, "Error: %v\n", tragicErr)
+		return 1
 	}
 
 	if *outputPath != "" {
@@ -182,14 +182,34 @@ type experimentBuildResult struct {
 	skippedLines   int
 	errorCount     int
 	sampleCapped   bool
+	terminalStatus string
+	ingestFailures map[gin.IngestLayer]*experimentFailureGroup
 }
 
 var errExperimentAbort = errors.New("experiment ingest aborted")
+
+const experimentFailureSampleLimit = 3
+
+// experimentDefaultConfig is overridden in tests; tests that replace it must
+// not use t.Parallel while the override is active.
+var experimentDefaultConfig = gin.DefaultConfig
 
 // newExperimentInterruptContext is overridable in tests to inject a
 // pre-canceled context without delivering a real SIGINT to the process.
 var newExperimentInterruptContext = func(parent context.Context) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(parent, os.Interrupt)
+}
+
+type experimentBuilder interface {
+	AddDocument(docID gin.DocID, jsonDoc []byte) error
+	Finalize() *gin.GINIndex
+	Err() error
+}
+
+// newExperimentBuilder is overridable in tests so runExperiment can exercise
+// tragic-builder behavior without depending on gin package internals.
+var newExperimentBuilder = func(config gin.GINConfig, numRGs int) (experimentBuilder, error) {
+	return gin.NewBuilder(config, numRGs)
 }
 
 func newExperimentInputSource(displayName, inputPath string, candidateRecords int, openFn func() (io.ReadCloser, error), cleanupFn func() error) experimentInputSource {
@@ -367,7 +387,7 @@ func countExperimentRecords(r io.Reader, spool io.Writer, validator experimentRe
 }
 
 func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConfig, rgSize, estimatedRGs, sampleLimit int, onError string, stderr io.Writer) (experimentBuildResult, error) {
-	builder, err := gin.NewBuilder(config, estimatedRGs)
+	builder, err := newExperimentBuilder(config, estimatedRGs)
 	if err != nil {
 		return experimentBuildResult{}, errors.Wrap(err, "create builder")
 	}
@@ -399,12 +419,14 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 		// rgID is derived from accepted documents rather than source line numbers.
 		lineErr := validateExperimentRecord(builder, record, result.ingestedDocs/rgSize)
 		if lineErr != nil {
-			fmt.Fprintf(stderr, "line %d: %v\n", lineNumber, lineErr)
-			if onError == experimentOnErrorAbort {
-				return experimentBuildResult{}, errExperimentAbort
+			if err := handleExperimentLineError(&result, lineNumber, lineErr, builder.Err(), onError, stderr); err != nil {
+				result.rowGroups = experimentUsedRowGroups(result.ingestedDocs, rgSize)
+				var tragicErr *experimentTragicAbortError
+				if errors.As(err, &tragicErr) {
+					result.terminalStatus = experimentStatusTragic
+				}
+				return result, err
 			}
-			result.skippedLines++
-			result.errorCount++
 			if readErr == io.EOF {
 				break
 			}
@@ -432,6 +454,62 @@ func buildExperimentIndex(open func() (io.ReadCloser, error), config gin.GINConf
 	return result, nil
 }
 
+// handleExperimentLineError applies continue/abort policy for one failed input
+// line. Continue mode still aborts when builder.Err() reports a tragic builder
+// closure because subsequent AddDocument calls would only repeat that failure.
+func handleExperimentLineError(result *experimentBuildResult, lineNumber int, lineErr, builderErr error, onError string, stderr io.Writer) error {
+	fmt.Fprintf(stderr, "line %d: %v\n", lineNumber, lineErr)
+	if onError == experimentOnErrorAbort {
+		return errExperimentAbort
+	}
+
+	result.skippedLines++
+	result.errorCount++
+	// Must precede tragic wrap: Unwrap exposes builderErr only, not lineErr.
+	recordExperimentIngestFailure(result, lineNumber, lineErr, builderErr != nil)
+	if builderErr != nil {
+		return newExperimentTragicAbortError(lineNumber, lineErr, builderErr)
+	}
+	return nil
+}
+
+type experimentTragicAbortError struct {
+	lineNumber int
+	lineErr    error
+	builderErr error
+}
+
+func (e *experimentTragicAbortError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	message := fmt.Sprintf("%s after line %d", experimentStatusTragic, e.lineNumber)
+	if e.lineErr != nil && !errors.Is(e.lineErr, e.builderErr) {
+		message += fmt.Sprintf(" following ingest error: %v", e.lineErr)
+	}
+	if e.builderErr != nil {
+		message += ": " + e.builderErr.Error()
+	}
+	return message
+}
+
+// Unwrap intentionally exposes only the builder-closing tragic error. The
+// original lineErr has already been recorded into structured failure metadata
+// before wrapping and is not part of the returned error chain.
+func (e *experimentTragicAbortError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.builderErr
+}
+
+func (e *experimentTragicAbortError) Cause() error {
+	if e == nil {
+		return nil
+	}
+	return e.builderErr
+}
+
 func finalizeExperimentIndexResult(idx *gin.GINIndex, builderErr error, result experimentBuildResult) (experimentBuildResult, error) {
 	result.idx = idx
 	if idx != nil {
@@ -450,7 +528,122 @@ func experimentUsedRowGroups(ingestedDocs, rgSize int) int {
 	return ceilDiv(ingestedDocs, rgSize)
 }
 
+func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int, err error, forceSample bool) {
+	if result.ingestFailures == nil {
+		result.ingestFailures = make(map[gin.IngestLayer]*experimentFailureGroup)
+	}
+
+	layer := experimentUnknownFailureLayer
+	message := err.Error()
+	sample := experimentFailureSample{
+		Line:       lineNumber,
+		InputIndex: lineNumber - 1,
+		Message:    message,
+	}
+
+	var ingestErr *gin.IngestError
+	if errors.As(err, &ingestErr) && ingestErr != nil {
+		layer = ingestErr.Layer()
+		if cause := ingestErr.Cause(); cause != nil {
+			message = cause.Error()
+		}
+		sample.Path = ingestErr.Path()
+		sample.Value = ingestErr.Value()
+		sample.Message = message
+	}
+
+	group, ok := result.ingestFailures[layer]
+	if !ok {
+		group = &experimentFailureGroup{Layer: string(layer)}
+		result.ingestFailures[layer] = group
+	}
+	group.Count++
+	if len(group.Samples) >= experimentFailureSampleLimit && !forceSample {
+		return
+	}
+	// Values are captured verbatim per the library contract; report growth is
+	// bounded by sample count rather than by truncating individual values.
+	// Tragic builder-closing failures bypass the cap so the triggering sample is
+	// always retained in the emitted report.
+	group.Samples = append(group.Samples, sample)
+}
+
+func experimentIngestFailureGroups(groups map[gin.IngestLayer]*experimentFailureGroup) []experimentFailureGroup {
+	if len(groups) == 0 {
+		return nil
+	}
+
+	layers := make([]gin.IngestLayer, 0, len(groups))
+	for layer := range groups {
+		layers = append(layers, layer)
+	}
+	sort.Slice(layers, func(i, j int) bool {
+		left, right := layers[i], layers[j]
+		leftRank, leftKnown := experimentIngestLayerRank(left)
+		rightRank, rightKnown := experimentIngestLayerRank(right)
+		if leftKnown && rightKnown {
+			return leftRank < rightRank
+		}
+		if leftKnown != rightKnown {
+			return leftKnown
+		}
+		return string(left) < string(right)
+	})
+
+	out := make([]experimentFailureGroup, 0, len(layers))
+	for _, layer := range layers {
+		group := groups[layer]
+		if group == nil {
+			continue
+		}
+		samples := append([]experimentFailureSample(nil), group.Samples...)
+		out = append(out, experimentFailureGroup{
+			Layer:   group.Layer,
+			Count:   group.Count,
+			Samples: samples,
+		})
+	}
+	return out
+}
+
+func experimentIngestLayerRank(layer gin.IngestLayer) (int, bool) {
+	// Keep report order pinned as parser, transformer, numeric, schema, then
+	// unknown. Any future IngestLayer string not in this list sorts lexically
+	// after the pinned buckets in experimentIngestFailureGroups.
+	switch layer {
+	case gin.IngestLayerParser:
+		return 0, true
+	case gin.IngestLayerTransformer:
+		return 1, true
+	case gin.IngestLayerNumeric:
+		return 2, true
+	case gin.IngestLayerSchema:
+		return 3, true
+	case experimentUnknownFailureLayer:
+		return 4, true
+	default:
+		return 0, false
+	}
+}
+
+// newExperimentTragicAbortError preserves the underlying builder closure error
+// for errors.Is/errors.As while avoiding duplicate lineErr text when lineErr
+// already unwraps to builderErr.
+func newExperimentTragicAbortError(lineNumber int, lineErr, builderErr error) error {
+	if builderErr == nil {
+		return nil
+	}
+	return &experimentTragicAbortError{
+		lineNumber: lineNumber,
+		lineErr:    lineErr,
+		builderErr: builderErr,
+	}
+}
+
 func experimentSummaryStatus(source experimentInputSource, result experimentBuildResult) string {
+	if result.terminalStatus != "" {
+		return result.terminalStatus
+	}
 	// candidateRecords == 0 means the stdin direct-stream path was used; there is
 	// no way to know whether more input was queued past the cap, so sample-capped
 	// runs are always reported as truncated there.
@@ -461,6 +654,32 @@ func experimentSummaryStatus(source experimentInputSource, result experimentBuil
 		return experimentStatusPartial
 	}
 	return experimentStatusComplete
+}
+
+func newExperimentReport(source experimentInputSource, result experimentBuildResult, rgSize, sampleLimit int) experimentReport {
+	paths := collectExperimentPathRows(result.idx)
+	if paths == nil {
+		paths = []experimentPathRow{}
+	}
+	return experimentReport{
+		Source: experimentSource{
+			Input: source.displayName,
+			Stdin: source.isStdin(),
+		},
+		Summary: experimentSummary{
+			Documents:      result.ingestedDocs,
+			RowGroups:      result.rowGroups,
+			RGSize:         rgSize,
+			SampleLimit:    sampleLimit,
+			ProcessedLines: result.processedLines,
+			SkippedLines:   result.skippedLines,
+			ErrorCount:     result.errorCount,
+			Failures:       experimentIngestFailureGroups(result.ingestFailures),
+			Status:         experimentSummaryStatus(source, result),
+			SidecarPath:    "",
+		},
+		Paths: paths,
+	}
 }
 
 func evaluateExperimentPredicate(ctx context.Context, rowGroups int, idx *gin.GINIndex, predicateText string, pred gin.Predicate) (*experimentPredicateResult, error) {
@@ -563,7 +782,7 @@ func trimExperimentRGSet(rgSet *gin.RGSet, rowGroups int) {
 	rgSet.NumRGs = rowGroups
 }
 
-func validateExperimentRecord(builder *gin.GINBuilder, record []byte, rgID int) error {
+func validateExperimentRecord(builder experimentBuilder, record []byte, rgID int) error {
 	if len(record) == 0 {
 		return errors.New("blank JSONL line")
 	}
@@ -584,7 +803,7 @@ func trimExperimentLineEnding(line []byte) []byte {
 }
 
 func experimentConfigForLogLevel(level string, stderr io.Writer) (gin.GINConfig, error) {
-	config := gin.DefaultConfig()
+	config := experimentDefaultConfig()
 
 	switch level {
 	case experimentLogLevelOff:

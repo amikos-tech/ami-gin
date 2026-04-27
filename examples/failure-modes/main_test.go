@@ -22,7 +22,7 @@ func TestFailureModesExampleOutput(t *testing.T) {
 		t.Fatalf("stderr = %q, want empty", stderr.String())
 	}
 
-	const expected = "hard: stopped after 1 indexed document: companion transformer \"domain\" on $.email failed to produce a value\n" +
+	const expected = "hard: stopped after 1 indexed document: ingest transformer failure at $.email: companion transformer \"domain\" failed to produce a value\n" +
 		"soft: skipped 2 documents\n" +
 		"soft: indexed 3 documents\n" +
 		"soft: email-domain example.com row groups [0 2]\n"

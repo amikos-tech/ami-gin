@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Ingest Correctness & Per-Document Isolation
 status: shipped
-stopped_at: Phase 17 shipped - PR #32
-last_updated: "2026-04-24T07:04:51.000Z"
-last_activity: 2026-04-24
+stopped_at: Phase 18 shipped to PR #33
+last_updated: "2026-04-25T05:47:19Z"
+last_activity: "2026-04-25 - Completed quick task 260425a: PR #33 follow-ups items 4 and 5"
 progress:
   total_phases: 15
-  completed_phases: 9
-  total_plans: 28
-  completed_plans: 27
-  percent: 96
+  completed_phases: 10
+  total_plans: 32
+  completed_plans: 32
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-23)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 18 — structured-ingesterror-cli-integration
+**Current focus:** v1.2 milestone wrap-up after Phase 18 shipping
 
 ## Current Position
 
 Phase: 18
-Plan: Discuss phase scope
-Status: Phase 17 shipped - PR #32; PR #32 review feedback items 1-5 addressed (260424d); Phase 18 ready for discuss/planning
-Last activity: 2026-04-24 - Completed quick task 260424d: PR #32 review feedback items 1-5
+Plan: 4/4 plans complete
+Status: Phase 18 shipped to PR #33; v1.2 functionally complete
+Last activity: 2026-04-24 - Phase 18 shipped to PR #33
 
-Progress: [██████████] 100% for Phase 17 (4/4 plans executed; verification passed)
+Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
 
 ## Performance Metrics
 
@@ -58,7 +58,7 @@ Progress: [██████████] 100% for Phase 17 (4/4 plans executed
 |-------|-------|--------|
 | 16 | 4 | Complete (4/4 plans complete) |
 | 17 | 4 | Complete (4/4 plans complete) |
-| 18 | TBD | Planned (defining) |
+| 18 | 4 | Complete (4/4 plans complete) |
 
 ## Accumulated Context
 
@@ -83,6 +83,11 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **17 planning resolution**: public `IngestFailureMode` string values are planned as `hard` and `soft`, while transformer serialization preserves legacy v9 wire tokens `strict` and `soft_fail` through private mapping.
 - **17 test organization**: Phase 17 plans use a focused `failure_modes_test.go` for cross-layer hard/soft semantics, targeted serialization tests in `serialize_security_test.go`, and a rewrite of the obsolete transformer soft expectation in `transformers_test.go`.
 - **17 completion**: Phase 17 verified 15/15 must-haves on 2026-04-23. Public `IngestFailureMode` API, parser/numeric config knobs, whole-document soft skips, v9 transformer wire-token compatibility, changelog note, and deterministic failure-modes example are complete.
+- **18-01 completion**: Public `IngestLayer`/`IngestError` API and builder hard-failure wrapping are complete. Parser, transformer, numeric, schema, and validator-replayed numeric failures are extractable with `errors.As`; parser contract, tragic/internal, and soft-mode paths stay non-`IngestError`.
+- **18-02 completion**: The hard ingest behavior matrix now asserts extraction through an outer `errors.Wrap`, builder usability after public hard failures, and explicit non-`IngestError` exceptions. A focused stdlib AST guard protects named hard-ingest functions against direct plain error returns.
+- **18-03 completion**: `gin-index experiment --on-error continue` now reports grouped structured `IngestError` failures in text and JSON summaries. Failure groups are deterministic (`parser`, `transformer`, `numeric`, `schema`, then lexical unknowns), samples are capped at 3 per layer, and the 100-line fixture asserts 3 parser, 4 transformer, and 3 numeric failures with 90 accepted documents / 9 row groups.
+- **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
+- **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
 
 ### Roadmap Evolution
 
@@ -100,7 +105,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Discuss and plan Phase 18 structured `IngestError` + CLI integration
+- Complete v1.2 milestone wrap-up once PR #33 is merged
 - Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
 - Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
 
@@ -127,6 +132,11 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260424b | Phase 17 follow-up review: ErrNilIndex sentinel, builder Err propagation, soft-skip cleanup, and guard coverage | 2026-04-24 | this commit | [260424-follow-up-review-finalize-sentinels](./quick/260424-follow-up-review-finalize-sentinels/) |
 | 260424c | Phase 17 janitorial review suggestions: inline experiment finalize trampoline and document soft-skip fallback invariant | 2026-04-24 | this commit | [260424-janitorial-review-suggestions](./quick/260424-janitorial-review-suggestions/) |
 | 260424d | PR #32 review feedback items 1-5: drop redundant normalize calls, expand CHANGELOG, document parseFloat decimal-only, remove dead-code Group guard, document soft-skip parser remap invariant | 2026-04-24 | 9807748 | [260424-address-pr32-feedback-items-1-5](./quick/260424-address-pr32-feedback-items-1-5/) |
+| 260424e | Phase 18 review follow-ups: source-path remap, unknown CLI failures, tragic continue abort, unexported IngestError accessors, schema/sample-cap/guard coverage | 2026-04-24 | this commit | [260424e-phase18-review-followups](./quick/260424e-phase18-review-followups/) |
+| 260424f | Phase 18 re-review follow-ups: structured tragic status/reporting, end-to-end tragic CLI coverage, changelog/security refresh, helper docs, and nil-safe accessor tests | 2026-04-24 | this commit | [260424f-phase18-rereview-followups](./quick/260424f-phase18-rereview-followups/) |
+| 260424g | Phase 18 cycle 3 follow-ups: tragic sample-cap bypass, stronger tragic CLI assertions, text tragic coverage, SECURITY accessor/citation refresh, and remap godoc clarification | 2026-04-24 | this commit | [260424g-phase18-cycle3-followups](./quick/260424g-phase18-cycle3-followups/) |
+| 260424h | Phase 18 nit follow-ups: tragic wrap ordering comment, explicit Unwrap policy test, stronger tragic text-mode info count, and companion remap godoc clarification | 2026-04-24 | 72eea02 | [260424h-phase18-nit-followups](./quick/260424h-phase18-nit-followups/) |
+| 260425a | PR #33 follow-ups items 4 and 5: tighten +hard-ingest guard to require canonical standalone form and mirror no-parallel safety comment on withExperimentDefaultConfig | 2026-04-25 | 54b7e34 | [260425a-pr33-followups-4-5](./quick/260425a-pr33-followups-4-5/) |
 
 ## Deferred Items
 
@@ -149,8 +159,8 @@ Items deferred to v1.3 or later:
 
 ## Session Continuity
 
-Last session: 2026-04-23T17:08:48.000Z
-Stopped at: Phase 17 complete
-Resume file: .planning/phases/17-failure-mode-taxonomy-unification/17-VERIFICATION.md
+Last session: 2026-04-24T14:46:00Z
+Stopped at: Phase 18 verified
+Resume file: .planning/phases/18-structured-ingesterror-cli-integration/18-VERIFICATION.md
 
-**Next step:** Discuss Phase 18 structured `IngestError` + CLI integration.
+**Next step:** Run milestone completion or shipping workflow for v1.2.
