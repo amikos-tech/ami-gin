@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: ready_to_execute
-stopped_at: Phase 19 planned — ready for /gsd-execute-phase 19
+stopped_at: Phase 19 strategy complete — ready to plan Phase 20 or Phase 21 per roadmap order
 last_updated: "2026-04-27T14:49:11Z"
-last_activity: "2026-04-27 - Phase 19 plan revised from cross-AI reviews and ready to execute"
+last_activity: "2026-04-27 - Phase 19 strategy complete; SIMD dependency, distribution, API, CI, and stop/fallback decisions locked"
 progress:
   total_phases: 7
   completed_phases: 0
@@ -26,9 +26,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 19
-Plan: 19-01 ready to execute — SIMD strategy artifact and state handoff
-Status: Ready for /gsd-execute-phase 19
-Last activity: 2026-04-27 - Phase 19 plan revised from cross-AI reviews; added tag-SHA verification, `windows-amd64-msvc` asset label, full `WithParser` success/fallback recipe, HARD-trigger escalation, and Phase 20 independence note
+Plan: 19-01 complete — SIMD strategy locked
+Status: Phase 19 strategy complete; Phase 20 remains independent, and Phase 21 can consume this strategy when its turn starts
+Last activity: 2026-04-27 - Phase 19 strategy complete; no product code changed
 
 Progress: [----------] 0% for v1.3 (0/7 phases complete, 0/1 planned executions complete)
 
@@ -88,6 +88,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18-03 completion**: `gin-index experiment --on-error continue` now reports grouped structured `IngestError` failures in text and JSON summaries. Failure groups are deterministic (`parser`, `transformer`, `numeric`, `schema`, then lexical unknowns), samples are capped at 3 per layer, and the 100-line fixture asserts 3 parser, 4 transformer, and 3 numeric failures with 90 accepted documents / 9 row groups.
 - **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
 - **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
+- **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
 
 ### Roadmap Evolution
 
