@@ -58,7 +58,11 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 1. The milestone records a clear decision on the SIMD dependency source, license/NOTICE posture, version/tag pinning, and shared-library distribution/loading strategy.
 2. The build strategy is specified before implementation: build tags, default stdlib behavior, opt-in API shape, unsupported-platform behavior, and CI expectations.
 3. If a blocker remains unresolved, the phase produces an explicit fallback or stop condition rather than silently pushing SIMD behind unrelated work.
-**Plans:** TBD
+**Plans:** 1 plan
+
+Plans:
+
+- [ ] 19-01: Finalize SIMD strategy artifact and update planning state
 
 ### Phase 20: Realistic Benchmark Dataset Foundation
 
@@ -146,7 +150,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 | 16. AddDocument Atomicity (Lucene contract) | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
-| 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 0/- | Planned | - |
+| 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 0/1 | Ready to execute | - |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 0/- | Planned | - |
 | 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
