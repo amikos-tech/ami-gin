@@ -2,12 +2,12 @@
 
 ## Current State
 
-- **Shipped:** `v1.0` Query & Index Quality (2026-04-21); `v1.1` Performance, Observability & Experimentation (functionally complete 2026-04-22, PRs #29 and #30 merged)
-- **Tag:** `v1.0` on `main`
+- **Shipped:** `v1.0` Query & Index Quality (2026-04-21); `v1.1` Performance, Observability & Experimentation (functionally complete 2026-04-22, PRs #29 and #30 merged); `v1.2` Ingest Correctness & Per-Document Isolation (2026-04-27)
+- **Tag:** `v1.0` on `main`; `v1.2` created during milestone close
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phases 16-18 complete and verified
+- **Current milestone:** none active — ready to define the next milestone
 
 ## Current Milestone: v1.2 Ingest Correctness & Per-Document Isolation
 
@@ -67,7 +67,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 
 ### Active
 
-- **v1.2 milestone wrap-up.** ATOMIC-01..03, FAIL-01..02, and IERR-01..03 are validated; Phase 18 verification passed 16/16 must-haves on 2026-04-24.
+- **Next milestone definition.** Start `$gsd-new-milestone` to decide whether v1.3 should activate the deferred SIMD path or pull forward a different backlog item.
 
 ### Out of Scope
 
@@ -96,6 +96,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - Phase 16 completed AddDocument atomicity on 2026-04-23: ordinary public failures are non-tragic, failed documents are isolated by encoded-byte property tests, and marker checks enforce the validator/merge contract locally and in CI
 - Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
 - Phase 18 completed structured `IngestError` + CLI integration on 2026-04-24: public structured errors cover parser/transformer/numeric/schema hard document failures, hard-ingest sites are guarded by behavior and AST tests, and the experiment CLI reports grouped structured failures in text and JSON modes
+- v1.2 shipped and archived on 2026-04-27 with 8/8 requirements complete and milestone archives in `.planning/milestones/`
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -138,4 +139,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-24 — Phase 18 structured IngestError + CLI integration complete and verified; v1.2 functionally complete.*
+*Last updated: 2026-04-27 — v1.2 milestone shipped and archived; ready for next milestone definition.*

@@ -45,3 +45,28 @@
 - `gin-index experiment` subcommand: JSONL ingest from a file or stdin, per-path summary table (types, cardinality, mode, bloom occupancy, hot terms), inline `--test '<predicate>'` tester, `--json` mode, sample/error-tolerant flags, optional sidecar write — no new dependencies, no REPL, no TUI.
 
 ---
+
+## v1.2 Ingest Correctness & Per-Document Isolation (Shipped: 2026-04-27)
+
+**Phases completed:** 3 phases (16-18), 12 plans, 27 tasks including one integration lint deviation  
+**Known deferred items at close:** SIMD parser work, `ValidateDocument`, snapshot/restore reserve strategy, bloom allocation cleanup, and per-path wildcard opt-out (see STATE.md Deferred Items)  
+**Git tag:** `v1.2`
+
+**Archived artifacts:**
+
+- [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
+- [`milestones/v1.2-REQUIREMENTS.md`](./milestones/v1.2-REQUIREMENTS.md)
+- [`milestones/v1.2-MILESTONE-AUDIT.md`](./milestones/v1.2-MILESTONE-AUDIT.md)
+
+**Key accomplishments:**
+
+- `AddDocument` now has per-document atomicity: ordinary public failures leave the builder usable and indistinguishable from never receiving the failed document.
+- Merge-layer mutation is validator-backed and infallible by construction, with local and CI marker checks guarding the contract.
+- `poisonErr` was renamed to `tragicErr` and narrowed to internal-invariant or recovered merge-panic cases.
+- Public failure configuration is unified under `IngestFailureMode` with hard and soft modes across parser, transformer, and numeric layers.
+- Transformer v9 wire compatibility was preserved while moving the public API to the new failure-mode vocabulary.
+- Exported `IngestError` carries path, layer, cause, and verbatim value, and can be extracted through `errors.As`.
+- `gin-index experiment --on-error continue` now reports grouped structured failures in text and JSON, backed by deterministic 100-line fixture coverage.
+- Phase verification passed 8/8, 15/15, and 16/16 must-haves for Phases 16, 17, and 18 respectively.
+
+---

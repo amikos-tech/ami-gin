@@ -5,7 +5,7 @@
 - ✅ **v0.1.0 OSS Launch** — Phases 01-05 (shipped pre-v1.0)
 - ✅ **v1.0 Query & Index Quality** — Phases 06-12 (shipped 2026-04-21) — see [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 - ✅ **v1.1 Performance, Observability & Experimentation** — Phases 13-15 (functionally complete 2026-04-22; PRs #29 and #30 merged)
-- ✅ **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (functionally complete 2026-04-24)
+- ✅ **v1.2 Ingest Correctness & Per-Document Isolation** — Phases 16-18 (shipped 2026-04-27) — see [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 - ⏸️ **v1.3 SIMD JSON Path** — Phases 19-20 (preview only; deferred 2026-04-21 pending `pure-simdjson` license/tag/distribution resolution; renumbered from v1.2 on 2026-04-23)
 
 ## Phases
@@ -34,11 +34,16 @@ Full details: [`milestones/v1.0-ROADMAP.md`](./milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### ✅ v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — FUNCTIONALLY COMPLETE
+<details>
+<summary>✅ v1.2 Ingest Correctness & Per-Document Isolation (Phases 16-18) — SHIPPED 2026-04-27</summary>
 
 - [x] **Phase 16: AddDocument Atomicity (Lucene contract)** — Extend `validateStagedPaths` to cover every reason `mergeStagedPaths` / `mergeNumericObservation` could fail; make the merge step infallible by construction; rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations; `recover()`-in-merge belt-and-suspenders. Atomicity property test as merge gate. Completed 2026-04-23.
 - [x] **Phase 17: Failure-Mode Taxonomy Unification** — Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces `TransformerFailureMode` (deliberate breaking rename); extends to parser and numeric-promotion layers; new `WithParserFailureMode` / `WithNumericFailureMode` config knobs. Completed 2026-04-23.
 - [x] **Phase 18: Structured `IngestError` + CLI integration** — Exported `IngestError` carrying `Path`, `Layer`, `Cause`, `Value` (caller redacts); `errors.As`-friendly; `gin-index experiment --on-error continue` summary reports per-layer grouped failures with structured samples in text and `--json` modes. Completed 2026-04-24.
+
+Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
+
+</details>
 
 ### ⏸️ v1.3 SIMD JSON Path (Phases 19-20) — PREVIEW / DEFERRED
 
@@ -100,59 +105,9 @@ Plans:
 - [x] 15-02-PLAN.md — shared report model, JSON mode, predicate test, sidecar write, and log-level wiring
 - [x] 15-03-PLAN.md — sample/on-error semantics, counter reporting, and executable policy guards
 
-### Phase 16: AddDocument Atomicity (Lucene contract)
-**Goal**: `AddDocument` returning a non-tragic error leaves the builder in a state indistinguishable from never having received the failed call. Bring the builder in line with the Lucene per-document contract (*"if an Exception is hit, the index will be consistent, but this document may not have been added"*) without changing the builder's external API surface.
-**Depends on**: Nothing (first phase of v1.2)
-**Requirements**: ATOMIC-01, ATOMIC-02, ATOMIC-03
-**Success Criteria** (what must be TRUE):
-  1. `mergeStagedPaths` (`builder.go:743`) and `mergeNumericObservation` (`builder.go:799`) return no error in their new signatures; a compile-time check enforces the change.
-  2. `validateStagedPaths` (`builder.go:724`) is extended to fully simulate every reason the merge functions could fail, against the *real* `pathData` state (not a fresh preview). Per-failure-mode tests cover numeric promotion, transformer rejection, parser errors, and any other identified mode.
-  3. `tragicErr` (renamed from `poisonErr` at `builder.go:34`) is set in zero code paths reachable from user input. A unit test exhausts the public failure-mode catalog and asserts `tragicErr` stays nil throughout.
-  4. A `recover()`-in-merge belt-and-suspenders converts any reachable panic in `mergeStagedPaths` to `tragicErr` rather than letting it escape; an explicit test invokes the recovery path.
-  5. An atomicity property test (`atomicity_test.go`) ingests a `gopter`-generated corpus of ≥1000 documents with ≥10% guaranteed-failing documents (mixed parser/numeric/transformer failures) and asserts the encoded index is byte-identical to the same corpus without the failures.
-  6. A `// MUST_BE_CHECKED_BY_VALIDATOR` marker convention is established on merge-layer functions, with a CI grep that flags any reintroduction of merge-layer error returns.
-**Plans**: 4 plans
+### Phases 16-18: v1.2 Ingest Correctness & Per-Document Isolation
 
-Plans:
-- [x] 16-01-PLAN.md — Validator-complete numeric promotion hoisting and no-error merge signatures
-- [x] 16-02-PLAN.md — Tragic terminal state rename, merge recovery, and safe recovery logging
-- [x] 16-03-PLAN.md — Public failure catalog and AddDocument atomicity property tests
-- [x] 16-04-PLAN.md — Local lint and CI marker/signature enforcement
-
-### Phase 17: Failure-Mode Taxonomy Unification
-**Goal**: Provide one mental model for "what can go wrong with a document and how do I configure the response." Unify the existing transformer-only failure-mode concept into a single `IngestFailureMode` type that applies uniformly to parser, transformer, and numeric-promotion layers.
-**Depends on**: Phase 16 (per-document failure must be a first-class concept before the taxonomy can route it cleanly)
-**Requirements**: FAIL-01, FAIL-02
-**Success Criteria** (what must be TRUE):
-  1. New `IngestFailureMode` type (`Hard`/`Soft`) replaces the existing `TransformerFailureMode` constants; the rename is a deliberate breaking change documented in CHANGELOG with a one-line migration note.
-  2. New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` thread through to the parser and numeric layers; default `Hard` for both, preserving current behavior.
-  3. `Soft` mode at any layer skips the failing document silently and returns no error to the caller; per-layer test coverage matches the existing transformer-failure-mode tests.
-  4. An `examples/failure-modes/main.go` demonstrates one config that rejects on any failure and one that skips on any failure, with predictable output for both.
-**Plans**: 4 plans
-
-Plans:
-- [x] 17-01-PLAN.md — Unified public failure-mode API and parser/numeric config defaults
-- [x] 17-02-PLAN.md — v9 transformer failure-mode serialization compatibility
-- [x] 17-03-PLAN.md — Parser, transformer, and numeric soft-skip routing with atomicity tests
-- [x] 17-04-PLAN.md — Breaking-change changelog note and hard-vs-soft example
-
-### Phase 18: Structured `IngestError` + CLI integration
-**Goal**: Make per-document failures actionable by callers. Replace the current opaque wrapped-string error with a structured type that carries enough context to identify, classify, and act on failures programmatically; surface the same structure in the existing CLI summary.
-**Depends on**: Phase 16 (atomicity contract), Phase 17 (failure-mode taxonomy)
-**Requirements**: IERR-01, IERR-02, IERR-03
-**Success Criteria** (what must be TRUE):
-  1. Exported `IngestError` type carries `Path` (JSONPath), `Layer` (parser / transformer / numeric / schema), `Cause` (wrapped underlying error), and `Value` (verbatim string repr — caller redacts as needed; the library does not redact).
-  2. `errors.As`-friendly: callers can extract `IngestError` from anywhere in the wrap chain. Per-layer test matrix asserts round-trip extraction for every error site.
-  3. All ingest-error sites identified in Phases 16 and 17 wrap their underlying error in `IngestError` with the four fields populated; focused behavior and AST tests enforce no plain `errors.New` / `errors.Wrap` returns from hard ingest sites.
-  4. `gin-index experiment --on-error continue` reports per-document failures grouped by `Layer` (with counts) plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes; both modes are golden-tested.
-  5. A test feeds 100 docs with 10 known failures (3 parser, 4 transformer, 3 numeric) through `gin-index experiment --on-error continue --json` and asserts the JSON output contains the correct grouped counts and a non-empty sample array with structured fields.
-**Plans**: 4 plans
-
-Plans:
-- [x] 18-01-PLAN.md — Public `IngestError` API, helper formatting, and builder hard-failure wrapping
-- [x] 18-02-PLAN.md — Behavior matrix and focused AST enforcement for hard ingest sites
-- [x] 18-03-PLAN.md — Experiment CLI grouped failure aggregation, deterministic output, and 100-line fixture
-- [x] 18-04-PLAN.md — Public docs, changelog note, and final verification
+Archived to [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md).
 
 ### Phase 19: SIMD Parser Adapter
 **Goal**: Land an opt-in same-package SIMD parser implementation behind the Phase 13 seam, without changing the default `encoding/json` path or weakening the Phase 07 numeric-fidelity guarantees.
