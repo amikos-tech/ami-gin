@@ -1,65 +1,116 @@
-# Requirements: GIN Index v1.2 Ingest Correctness & Per-Document Isolation
+# Requirements: GIN Index v1.3 SIMD-First Performance
 
-**Defined:** 2026-04-23
-**Core Value:** Bring `AddDocument` in line with the Lucene per-document contract — a failed ingest leaves the builder consistent and usable; only genuinely unrecoverable internal-invariant violations close the builder. Make the failure observable to callers through a unified failure-mode taxonomy and a structured error type.
+**Defined:** 2026-04-27
+**Updated:** 2026-04-27
+**Core Value:** Deliver SIMD parser integration as soon as possible, while preserving correctness, default stdlib behavior, exact numeric semantics, and operational clarity for consumers.
 
 ## Scope Note
 
-v1.2 is correctness-first. The current `AddDocument` (`builder.go:304`) collapses every merge failure into a "poisoned" builder, even for class-1 failures (malformed input, schema mismatch, transformer rejection) that mature inverted-index libraries (Lucene, Elasticsearch, Tantivy) treat as per-document and isolated.
-
-The fix is structural, not cosmetic: extend the existing two-phase `validateStagedPaths` / `mergeStagedPaths` pattern (`builder.go:724`, `builder.go:743`) so the merge step becomes infallible by construction. The "tragic" path (renamed from `poisonErr`) survives but narrows to genuinely unrecoverable internal-invariant violations.
-
-Once per-document failure is a first-class concept, the milestone unifies the failure-mode taxonomy across parser, transformer, and numeric layers, and exposes a structured `IngestError` so callers can act on failures programmatically.
+SIMD is the highest-impact performance lever and is now the top priority. The first phase exists to clear the dependency and distribution blockers quickly, not to delay SIMD behind unrelated work. Dataset infrastructure follows immediately because it is required to validate SIMD impact. Lower-impact backlog items remain in v1.3 but run after SIMD decision, implementation, and validation.
 
 ## Requirements
 
-### Atomicity (Lucene contract)
+### SIMD Unblock And Strategy
 
-- [x] **ATOMIC-01**: `AddDocument` returning a non-tragic error leaves the builder in a state indistinguishable from never having received the failed call. Verified by an atomicity property test that ingests a corpus, interleaves guaranteed-failing documents, and asserts the encoded index is byte-identical to the same corpus without the failures. Completed by 16-03.
-- [x] **ATOMIC-02**: `mergeStagedPaths` and `mergeNumericObservation` become infallible — `validateStagedPaths` is extended to fully simulate every reason these merge functions could fail, against the *real* `pathData` state (not a fresh preview). The merge-layer error returns are removed and a compile-time check enforces the new signatures. Completed by 16-01; local and CI marker enforcement completed by 16-04.
-- [x] **ATOMIC-03**: `tragicErr` (renamed from `poisonErr` at `builder.go:34`) is reserved for internal-invariant violations only; no user-input failure mode reaches it. A `recover()`-in-merge belt-and-suspenders converts any reachable panic to `tragicErr`. A unit-test allowlist enforces that `tragicErr` stays nil across the full public failure-mode catalog. Completed by 16-02 and 16-03.
+- [x] **SIMD-01**: The project has an explicit decision on the SIMD dependency source, license/NOTICE obligations, version/tag pinning, and whether the dependency is acceptable for this repository.
+- [x] **SIMD-02**: The project has an explicit shared-library distribution/loading strategy, including unsupported-platform behavior and release guidance.
+- [x] **SIMD-03**: The implementation plan specifies build tags, default stdlib behavior, opt-in API shape, CI expectations, and a stop/fallback path if blockers remain unresolved.
 
-### Failure-Mode Taxonomy
+### Benchmark Dataset Foundation
 
-- [x] **FAIL-01**: Unified `IngestFailureMode` type (`Hard`/`Soft`) replaces the existing `TransformerFailureMode` constants (deliberate breaking rename for clarity over convenience) and extends to parser and numeric-promotion layers. CHANGELOG flags this as a breaking API change with a one-line migration note. Completed by Phase 17.
-- [x] **FAIL-02**: New config knobs `WithParserFailureMode(mode)` and `WithNumericFailureMode(mode)` added; default `Hard` for both, preserving current behavior. `Soft` mode skips the failing document at the configured layer and returns no error to the caller. Completed by Phase 17.
+- [ ] **DATA-01**: The project has a documented realistic JSON fixture policy covering source, license/NOTICE handling, size limits, and offline default behavior.
+- [ ] **DATA-02**: Smoke-scale fixtures cover nested/high-cardinality, mixed-type array, and number-heavy JSON shapes suitable for SIMD and stdlib benchmark comparison.
+- [ ] **DATA-03**: SEED-001 is activated into benchmark infrastructure without requiring network access for default tests.
 
-### Structured IngestError
+### SIMD Parser Adapter
 
-- [x] **IERR-01**: Exported `IngestError` type carries `Path` (the JSONPath where the failure happened), `Layer` (parser / transformer / numeric / schema), `Cause` (the wrapped underlying error), and `Value` (verbatim string repr of the offending value — caller redacts as needed; the library does not redact). `errors.As`-friendly extraction tested. Completed by Phase 18 Plan 01.
-- [x] **IERR-02**: All ingest-error sites (parser, transformer, numeric promotion) wrap their underlying error in `IngestError` with the four fields populated. Round-trip extraction via `errors.As` is covered by a per-layer test matrix. Library-side builder wrapping completed by Phase 18 Plan 01; Plan 18-02 adds enforcement hardening.
-- [x] **IERR-03**: `gin-index experiment --on-error continue` (shipped in Phase 15) reports per-document failures grouped by `Layer` plus a sample of the first N `IngestError`s with structured fields, in both text and `--json` output modes. Golden-tested. Completed by Phase 18 Plan 03.
+- [ ] **SIMD-04**: Callers can explicitly select a same-package SIMD parser through the existing parser seam without changing the default stdlib path.
+- [ ] **SIMD-05**: Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement unless the build tag and parser selection are explicit.
+- [ ] **SIMD-06**: SIMD parsing preserves Phase 07 exact-int numeric semantics and does not silently coerce overflow-sensitive values to `float64`.
+- [ ] **SIMD-07**: The parser sink exposes typed scalar fast paths where needed so SIMD scalar leaves do not round-trip through `any`.
 
-## Out of Scope (deferred to a future milestone)
+### SIMD Validation And Operations
 
-| Feature | Reason |
-|---------|--------|
-| `ValidateDocument` dry-run API | Powerful capability that becomes possible once `AddDocument` is atomic; deserves its own milestone with a real consumer in mind, not landed speculatively |
-| Builder snapshot / restore for batch ingestion | Over-engineered without a user request; the validate-before-mutate strategy makes per-document atomicity sufficient for the foreseeable use cases |
-| Snapshot-and-restore atomicity (Strategy A from brainstorming) | Held in reserve only if a future failure mode genuinely cannot be pre-validated; not built now |
-| Bloom `AddString` allocation cleanup | Perf-shaped; routed to backlog (new 999.x entry) per the project's "profile before optimizing" precedent (999.5) |
-| Per-path opt-out for `[*]` array wildcard | Disconnected from the correctness story; routed to backlog |
-| All other v1.1 follow-ons (perf, transformer registry expansion, etc.) | Outside the correctness theme |
+- [ ] **SIMD-08**: SIMD and stdlib paths produce identical encoded indexes and query results across authored parity fixtures and realistic benchmark fixtures.
+- [ ] **SIMD-09**: Benchmarks report stdlib vs SIMD CPU, allocation, and bytes/op deltas on realistic fixtures.
+- [ ] **SIMD-10**: CI covers default builds and `-tags simdjson` builds with explicit behavior when platform or shared-library requirements are unmet.
+- [ ] **SIMD-11**: Runtime loading and release/distribution guidance tells consumers how to enable SIMD safely.
+
+### Positioning
+
+- [ ] **POS-01**: Users can understand from README/docs that GIN Index supports both grouped pruning and row-level pruning when callers choose `rg=1`, without implying the library is a row-level document store or search engine.
+- [ ] **POS-02**: CLI and experimentation docs use consistent terminology for row groups, single-row groups, pruning, and row-level use cases.
+
+### Developer Safety And Clarity
+
+- [ ] **QG-01**: Contributors can enable a local pre-push quality gate that runs native repo checks such as `make lint` and `make test`, fails clearly when required tools are missing, and is documented for opt-in use.
+- [ ] **CLAR-01**: Phase 06 clarity backlog is closed with non-behavioral comments or test cleanup around path reference validation and benchmark fixture brittleness.
+
+### Follow-On Profiling And Measurement-Backed Implementation
+
+- [ ] **PROF-01**: Encode benchmarks measure `writeOrderedStrings` CPU and allocation cost on UUID-heavy, timestamp/log-style, and mixed JSON workloads.
+- [ ] **PROF-02**: A profiling report makes an explicit go/no-go recommendation for `WithEncodeStrategy` based on measured encode cost.
+- [ ] **PROF-03**: Ingest profiling quantifies `walkJSON` / `NormalizePath` cost on builder-generated canonical paths.
+- [ ] **PROF-04**: Ingest profiling quantifies bloom `AddString` allocation/hash-buffer cost on representative JSONL workloads.
+- [ ] **PROF-05**: Ingest profiling quantifies array wildcard double-staging cost on long-array fixtures.
+- [ ] **ENC-01**: If profiling justifies it, callers can configure `WithEncodeStrategy(Auto|RawOnly|FrontCodedOnly)` without changing default behavior.
+- [ ] **ENC-02**: Encode strategy behavior has explicit round-trip, format-version, and query-semantics coverage.
+- [ ] **ENC-03**: Benchmarks prove the encode strategy option improves the measured triggering workload.
+- [ ] **ING-01**: If profiling justifies it, `walkJSON` can skip `NormalizePath` for builder-generated canonical paths without changing accepted JSONPath semantics.
+- [ ] **ING-02**: If profiling justifies it, bloom insertion avoids measured per-insert allocation overhead without changing bloom membership semantics.
+- [ ] **ING-03**: If profiling justifies it, callers can opt out of implicit `[*]` wildcard staging with backwards-compatible defaults and query behavior tests.
+
+## Future Requirements
+
+- `ValidateDocument` dry-run API remains future scope until there is a concrete consumer.
+
+## Out of Scope
+
+- Making SIMD the default parser in v1.3.
+- Weakening exact numeric semantics to fit the SIMD parser.
+- Requiring SIMD dependencies for default builds.
+- Changing the public pruning API naming.
+- Building a row-level document store, ranked retrieval, or query service.
+- Implementing lower-priority performance optimizations before SIMD decision/implementation/validation work.
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ATOMIC-01 | Phase 16 | Complete (16-03 atomicity property) |
-| ATOMIC-02 | Phase 16 | Complete (16-01, 16-04 guard) |
-| ATOMIC-03 | Phase 16 | Complete (16-02 recovery, 16-03 public catalog) |
-| FAIL-01 | Phase 17 | Complete |
-| FAIL-02 | Phase 17 | Complete |
-| IERR-01 | Phase 18 | Complete (18-01 public API and wrapping contract) |
-| IERR-02 | Phase 18 | Complete (18-01 library wrapping and per-layer extraction matrix) |
-| IERR-03 | Phase 18 | Complete (18-03 CLI grouped reporting and 100-line fixture) |
+| SIMD-01 | Phase 19 | Complete |
+| SIMD-02 | Phase 19 | Complete |
+| SIMD-03 | Phase 19 | Complete |
+| DATA-01 | Phase 20 | Planned |
+| DATA-02 | Phase 20 | Planned |
+| DATA-03 | Phase 20 | Planned |
+| SIMD-04 | Phase 21 | Planned |
+| SIMD-05 | Phase 21 | Planned |
+| SIMD-06 | Phase 21 | Planned |
+| SIMD-07 | Phase 21 | Planned |
+| SIMD-08 | Phase 22 | Planned |
+| SIMD-09 | Phase 22 | Planned |
+| SIMD-10 | Phase 22 | Planned |
+| SIMD-11 | Phase 22 | Planned |
+| POS-01 | Phase 23 | Planned |
+| POS-02 | Phase 23 | Planned |
+| QG-01 | Phase 24 | Planned |
+| CLAR-01 | Phase 24 | Planned |
+| PROF-01 | Phase 25 | Planned |
+| PROF-02 | Phase 25 | Planned |
+| PROF-03 | Phase 25 | Planned |
+| PROF-04 | Phase 25 | Planned |
+| PROF-05 | Phase 25 | Planned |
+| ENC-01 | Phase 25 | Planned |
+| ENC-02 | Phase 25 | Planned |
+| ENC-03 | Phase 25 | Planned |
+| ING-01 | Phase 25 | Planned |
+| ING-02 | Phase 25 | Planned |
+| ING-03 | Phase 25 | Planned |
 
 **Coverage:**
-- Requirements total: 8
-- Mapped to phases: 8
+- Requirements total: 29
+- Mapped to phases: 29
 - Unmapped: 0
 
 ---
-*Requirements defined: 2026-04-23 for milestone v1.2 Ingest Correctness & Per-Document Isolation*
-*Architectural strategy: validate-before-mutate (Strategy C from brainstorming), with Lucene's per-document contract as the target — see `.planning/research/v1.2-atomicity-precedents.md` if generated, or the brainstorming transcript for industry-precedent grounding (Lucene IndexWriter, Tantivy, RocksDB, PostgreSQL GIN, Bleve).*
-*v1.1 (Phases 13–15) requirements live in MILESTONES.md and ROADMAP.md historical sections.*
+*Requirements updated: 2026-04-27 for milestone v1.3 SIMD-First Performance.*

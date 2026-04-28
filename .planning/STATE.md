@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.2
-milestone_name: Ingest Correctness & Per-Document Isolation
+milestone: v1.3
+milestone_name: SIMD-First Performance
 status: shipped
-stopped_at: Phase 18 shipped to PR #33
-last_updated: "2026-04-25T05:47:19Z"
-last_activity: "2026-04-25 - Completed quick task 260425a: PR #33 follow-ups items 4 and 5"
+stopped_at: Phase 19 shipped — PR #35 ready for review
+last_updated: "2026-04-28T00:00:00Z"
+last_activity: "2026-04-28 - Phase 19 shipped via PR #35; SIMD dependency, distribution, API, CI, and stop/fallback decisions locked"
 progress:
-  total_phases: 15
-  completed_phases: 10
-  total_plans: 32
-  completed_plans: 32
-  percent: 100
+  total_phases: 7
+  completed_phases: 1
+  total_plans: 1
+  completed_plans: 1
+  percent: 14
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-23)
+See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.2 milestone wrap-up after Phase 18 shipping
+**Current focus:** v1.3 SIMD-First Performance
 
 ## Current Position
 
-Phase: 18
-Plan: 4/4 plans complete
-Status: Phase 18 shipped to PR #33; v1.2 functionally complete
-Last activity: 2026-04-24 - Phase 18 shipped to PR #33
+Phase: 20
+Plan: Ready to plan — Realistic Benchmark Dataset Foundation
+Status: Phase 19 complete and verified; Phase 20 remains independent, and Phase 21 can consume the Phase 19 strategy when its turn starts
+Last activity: 2026-04-28 - Phase 19 shipped via PR #35; branch phase/19-simd-dependency pushed for review
 
-Progress: [██████████] 100% for Phase 18 (4/4 plans executed)
+Progress: [#---------] 14% for v1.3 (1/7 phases complete, 1/1 planned executions complete)
 
 ## Performance Metrics
 
@@ -74,7 +74,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **`IngestError.Value` not redacted by library** — callers redact themselves ("cleaner DX with less surprises").
 - **Industry-precedent grounded**: Lucene IndexWriter's per-document isolation contract is the target. Tantivy/Bleve/PostgreSQL GIN/RocksDB also reviewed; Lucene is the closest analog.
 - **Scope explicitly tight (Shape 1 from brainstorming)**: 3 phases — atomicity, failure-mode taxonomy, structured IngestError + CLI. No `ValidateDocument` dry-run, no snapshot/restore, no perf items.
-- **Numbering = Option B**: v1.2 takes phases 16–18 (chronological); SIMD renumbered to v1.3 phases 19–20.
+- **Numbering = Option B**: v1.2 took phases 16–18 (chronological); SIMD is now first-class v1.3 scope starting at Phase 19.
 - **16-01 pre-check result**: `validateStagedPaths` already covered both lossy mixed numeric promotion directions before merge signature edits; `builder.go` validator logic was left unchanged.
 - **16-01 test isolation**: focused validator tests seed staged numeric observations directly because `stageJSONNumberLiteral` already rejects these lossy promotions before `validateStagedPaths` can be isolated.
 - **16-02 tragic recovery**: `runMergeWithRecover` wraps only `mergeStagedPaths`; recovered merge panics set `tragicErr`, log through the logger seam with `error.type` and `panic_type`, and skip document bookkeeping.
@@ -88,6 +88,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18-03 completion**: `gin-index experiment --on-error continue` now reports grouped structured `IngestError` failures in text and JSON summaries. Failure groups are deterministic (`parser`, `transformer`, `numeric`, `schema`, then lexical unknowns), samples are capped at 3 per layer, and the 100-line fixture asserts 3 parser, 4 transformer, and 3 numeric failures with 90 accepted documents / 9 row groups.
 - **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
 - **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
+- **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
 
 ### Roadmap Evolution
 
@@ -100,14 +101,19 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - DAG: 16 → 17 → 18 (strict sequence; Phases 17 and 18 only become possible because Phase 16 makes per-document failure first-class).
 - Phase 16 completed 2026-04-23 with ATOMIC-01, ATOMIC-02, and ATOMIC-03 fully covered.
 - Phase 17 completed 2026-04-23 with 4/4 plans complete, verification passed, and FAIL-01/FAIL-02 satisfied.
-- v1.3 (was v1.2) SIMD work renumbered: Phases 16/17 → 19/20. Same scope, blocked on the same upstream items.
 - 100% requirement coverage — no orphans
+- v1.3 milestone planned 2026-04-27 from backlog and SEED-001, then reprioritized SIMD-first:
+  - Phase 19: SIMD Dependency Decision & Integration Strategy — SIMD-01..03 (complete 2026-04-27)
+  - Phase 20: Realistic Benchmark Dataset Foundation — DATA-01..03
+  - Phase 21: SIMD Parser Adapter — SIMD-04..07
+  - Phase 22: SIMD Validation, Benchmarks & CI — SIMD-08..11
+  - Phase 23: Row-Level Pruning Positioning — POS-01..02
+  - Phase 24: Developer Quality Gates & Janitorial Clarity — QG-01, CLAR-01
+  - Phase 25: Follow-On Profiling & Measurement-Backed Optimizations — PROF-01..05, ENC-01..03, ING-01..03
 
 ### Pending Todos
 
-- Complete v1.2 milestone wrap-up once PR #33 is merged
-- Address Phase 17 advisory code review warnings if desired before or during Phase 18: regex transformer negative group validation, empty `RegexExtractInt` capture rejection, and oversized config decode `ErrInvalidFormat` wrapping
-- Add new 999.x backlog entries for the perf items considered and deferred during v1.2 brainstorming (bloom AddString allocation cleanup; per-path `[*]` opt-out)
+- Discuss or plan Phase 20: Realistic Benchmark Dataset Foundation.
 
 ### Blockers/Concerns
 
@@ -115,7 +121,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - Phase 16 integration gate is green: `make test`, `make lint`, and `go build ./...` passed after all four plans.
 - Phase 17 integration gate is green: `go test ./...`, `make test`, `make lint`, and `go build ./...` passed. Advisory review warnings are documented in `17-REVIEW.md` and residual risks in `17-VERIFICATION.md`.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
-- v1.3 SIMD blockers (`pure-simdjson` LICENSE / tag / distribution) remain unresolved and do not gate v1.2.
+- Phase 19 resolved the v1.3 SIMD dependency blockers; Phase 21 must consume `19-SIMD-STRATEGY.md` before adding product code.
 
 ### Quick Tasks Completed (v1.1, retained for reference)
 
@@ -138,17 +144,19 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260424h | Phase 18 nit follow-ups: tragic wrap ordering comment, explicit Unwrap policy test, stronger tragic text-mode info count, and companion remap godoc clarification | 2026-04-24 | 72eea02 | [260424h-phase18-nit-followups](./quick/260424h-phase18-nit-followups/) |
 | 260425a | PR #33 follow-ups items 4 and 5: tighten +hard-ingest guard to require canonical standalone form and mirror no-parallel safety comment on withExperimentDefaultConfig | 2026-04-25 | 54b7e34 | [260425a-pr33-followups-4-5](./quick/260425a-pr33-followups-4-5/) |
 
+### Quick Tasks Completed (v1.3)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260428a | Phase 19 validation review feedback: remove root test coupled to archivable planning artifacts | 2026-04-28 | 390b669 | [260428a-address-phase19-validation-review](./quick/260428a-address-phase19-validation-review/) |
+
 ## Deferred Items
 
-Items deferred to v1.3 or later:
+Items deferred to current or later milestones:
 
 | Category | Item | Status | Note |
 |----------|------|--------|------|
-| requirement | pure-simdjson parser implementation | v1.3 (was v1.2) | Blocked on upstream LICENSE file, version tag, shared-library distribution decision |
-| requirement | SIMD parser benchmarks vs stdlib | v1.3 | Depends on SIMD implementation |
-| requirement | CI matrix for `-tags simdjson` builds | v1.3 | Depends on SIMD implementation |
-| seed | SEED-001-simdjson-test-datasets | v1.3 | Activate alongside SIMD parser implementation |
-| feature | `ValidateDocument` dry-run API | future | Architectural prerequisite (Phase 16 atomicity) lands in v1.2; landing the API is a separate milestone with a real consumer |
+| feature | `ValidateDocument` dry-run API | future | Architectural prerequisite (Phase 16 atomicity) landed in v1.2; landing the API is a separate milestone with a real consumer |
 | feature | Snapshot-and-restore atomicity (Strategy A) | reserve | Held in case a future failure mode cannot be pre-validated |
 | feature | Bloom `AddString` allocation cleanup | 999.x | Perf-shaped; profile before optimizing per project precedent |
 | feature | Per-path `[*]` array wildcard opt-out | 999.x | Disconnected from correctness theme |
@@ -163,4 +171,4 @@ Last session: 2026-04-24T14:46:00Z
 Stopped at: Phase 18 verified
 Resume file: .planning/phases/18-structured-ingesterror-cli-integration/18-VERIFICATION.md
 
-**Next step:** Run milestone completion or shipping workflow for v1.2.
+**Next step:** `$gsd-discuss-phase 19` to resolve SIMD dependency and integration strategy, or `$gsd-plan-phase 19` to plan directly.

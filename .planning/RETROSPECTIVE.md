@@ -53,6 +53,54 @@
 
 ---
 
+## Milestone: v1.2 — Ingest Correctness & Per-Document Isolation
+
+**Shipped:** 2026-04-27
+**Phases:** 3 (16-18) | **Plans:** 12 | **Tasks:** 27 including one integration lint deviation
+**Timeline:** 2026-04-23 → 2026-04-25
+
+### What Was Built
+
+- **AddDocument atomicity** (Phase 16): validator-backed merge path, `tragicErr` terminal state, merge-panic recovery, public failure catalog, and full-vs-clean encoded-byte property coverage.
+- **Failure-mode taxonomy** (Phase 17): unified `IngestFailureMode` API across parser, transformer, and numeric failures; hard defaults; whole-document soft skips; v9 transformer wire-token compatibility.
+- **Structured ingest errors** (Phase 18): exported `IngestError` with path, layer, cause, and verbatim value; hard-ingest behavior matrix; AST guard against plain hard-ingest errors.
+- **CLI failure reporting** (Phase 18): `gin-index experiment --on-error continue` grouped structured failures in text and JSON, with deterministic layer ordering and bounded samples.
+
+### What Worked
+
+- **Validate-before-mutate matched the existing builder shape.** The existing staged-document architecture made the Lucene-style contract achievable without snapshot/restore machinery.
+- **Property tests made atomicity falsifiable.** Comparing encoded full-vs-clean corpora caught the exact behavior the milestone cared about instead of asserting incidental internal counters.
+- **Behavior matrix plus AST guard kept `IngestError` focused.** Tests verified both what became structured and what deliberately stayed outside the public document-failure type.
+- **Quick follow-up loops worked for review feedback.** The post-Phase 18 quick tasks tightened guard semantics and tragic reporting without reopening the milestone shape.
+
+### What Was Inefficient
+
+- **The local `gsd-sdk` lacked documented query commands.** Several workflow steps had to be executed by direct artifact inspection and manual document updates.
+- **Milestone audit was reconstructed late.** Phase verification and UAT artifacts were strong, but the milestone-level audit file did not exist until close.
+- **Review follow-ups accumulated as many quick tasks.** The feedback was useful, but closure required several small passes after the main phase execution.
+
+### Patterns Established
+
+- **Per-document failure contract.** User-input ingest failures should be isolated and observable; only internal invariants should close the builder.
+- **Unified failure vocabulary.** Failure-mode knobs should describe behavior across layers, not implementation origin.
+- **Caller-owned redaction.** Library errors can carry verbatim value context while documentation makes logging policy explicit.
+- **Guard public guarantees with executable structure checks.** AST tests are a good fit for narrow "do not return plain errors here" policies.
+
+### Key Lessons
+
+1. **Milestone audits should be created before close, not during close.** Phase verification does not replace a current milestone audit artifact.
+2. **Soft failure semantics need whole-document language everywhere.** Partial staging is the confusing failure mode; tests and docs should state that soft skips discard the whole failed document.
+3. **CLI JSON schema changes should stay nested under existing report objects.** Adding `summary.failures` avoided a report-shape break while still exposing structured failures.
+4. **Keep deferred performance ideas in 999.x until profiling exists.** v1.2 stayed correctness-focused because allocation cleanup and wildcard opt-out were parked explicitly.
+
+### Cost Observations
+
+- Model mix: quality profile; no explicit budget tracking
+- Sessions: main Phase 16-18 work plus several quick review follow-ups
+- Notable: The most valuable checks were full-vs-clean property testing, per-layer behavior matrices, and focused AST enforcement.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -61,6 +109,7 @@
 |-----------|--------|-------|------------|
 | v0.1.0 (OSS launch) | 5 | — | Treat planning dir as private (`.planning/` gitignored, force-add for commits) |
 | v1.0 (Query & Index Quality) | 7 | 19 | Added evidence reconciliation as a numbered phase; external PR review for doc-only changes |
+| v1.2 (Ingest Correctness) | 3 | 12 | Established per-document ingest atomicity, unified failure modes, and structured ingest error reporting |
 
 ### Cumulative Quality
 
@@ -68,6 +117,7 @@
 |-----------|--------|-----------|--------------|--------------|-----------|
 | v0.1.0 | ~12,000 | 12 | 5 | v8 | ~8 |
 | v1.0 | ~25,500 | 12 | 13 + 3 helpers | v9 | ~15 |
+| v1.2 | ~36,000 | 12 | 13 + 3 helpers | v9 | ~25 |
 
 ### Top Lessons (Verified Across Milestones)
 

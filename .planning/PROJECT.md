@@ -2,31 +2,26 @@
 
 ## Current State
 
-- **Shipped:** `v1.0` Query & Index Quality (2026-04-21); `v1.1` Performance, Observability & Experimentation (functionally complete 2026-04-22, PRs #29 and #30 merged)
-- **Tag:** `v1.0` on `main`
+- **Shipped:** `v1.0` Query & Index Quality (2026-04-21); `v1.1` Performance, Observability & Experimentation (functionally complete 2026-04-22, PRs #29 and #30 merged); `v1.2` Ingest Correctness & Per-Document Isolation (2026-04-27)
+- **Tag:** `v1.0` on `main`; `v1.2` created during milestone close
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.2 Ingest Correctness & Per-Document Isolation — Phases 16-18 complete and verified
+- **Current milestone:** v1.3 SIMD-First Performance — Phase 19 completed SIMD unblock decisions; Phases 20-25 continue dataset foundation, SIMD implementation/validation, and lower-impact backlog work
 
-## Current Milestone: v1.2 Ingest Correctness & Per-Document Isolation
+## Current Milestone: v1.3 SIMD-First Performance
 
-**Goal:** Bring `AddDocument` in line with the Lucene per-document contract — a failed ingest leaves the builder consistent and usable; only genuinely unrecoverable internal-invariant violations close the builder ("tragic"). Make the failure observable to callers through a unified failure-mode taxonomy and a structured error type.
+**Goal:** Deliver SIMD parser integration as soon as possible while preserving correctness, default stdlib behavior, exact numeric semantics, and operational clarity for consumers.
 
 **Target themes:**
-- **AddDocument atomicity (Lucene contract)** — extend the existing two-phase `validateStagedPaths` / `mergeStagedPaths` pattern so the merge step becomes infallible by construction. Rename `poisonErr` → `tragicErr` and narrow it to internal-invariant violations only. `recover()` belt-and-suspenders converts any reachable panic to `tragicErr`. Verified by an atomicity property test that interleaves guaranteed-failing documents with a clean corpus and asserts byte-identical encoded output.
-- **Failure-mode taxonomy unification** — complete in Phase 17. The existing `TransformerFailureMode` public symbols were replaced by unified `IngestFailureMode` (`Hard`/`Soft`) across parser, transformer, and numeric-promotion layers. New `WithParserFailureMode` and `WithNumericFailureMode` config knobs default `Hard` and opt-in `Soft` skips whole failed documents.
-- **Structured `IngestError` + CLI integration** — complete in Phase 18. The exported error type carries `Path`, `Layer`, `Cause`, and verbatim `Value`; it is `errors.As`-friendly. The `gin-index experiment --on-error continue` summary reports failures grouped by `Layer` with structured samples in both text and `--json` modes.
+- **SIMD first** — resolve dependency/license/version/distribution blockers immediately, then implement the opt-in SIMD parser behind the Phase 13 parser seam.
+- **Correctness preserved** — keep stdlib as the default parser and preserve Phase 07 exact-int semantics on the SIMD path.
+- **Realistic validation** — activate SEED-001 benchmark fixtures early so SIMD parity and performance are measured against realistic JSON shapes.
+- **Operational readiness** — define build tags, unsupported-platform behavior, runtime loading guidance, and CI coverage before calling SIMD shippable.
+- **Lower-impact backlog follows SIMD** — row-level positioning, quality gates, encode profiling, and ingest optimizations remain in v1.3 but run after SIMD unblock/implementation/validation work.
 
-**Architectural strategy:** validate-before-mutate (Strategy C from brainstorming), with Lucene's per-document contract as the target. Industry precedents reviewed: Lucene IndexWriter (closest analog), Tantivy, Bleve, RocksDB WriteBatch, PostgreSQL GIN.
-
-**Deferred to v1.3 (SIMD work) or future milestones:**
-- SIMD parser implementation (`pure-simdjson` adapter), benchmarks, CI matrix — blocked on upstream LICENSE, version tag, and shared-library distribution decision (v1.3, was v1.2)
-- `ValidateDocument` dry-run API — becomes possible post-v1.2; deserves its own milestone with a real consumer
-- Snapshot-and-restore atomicity (Strategy A) — held in reserve only if a future failure mode cannot be pre-validated
-- Bloom `AddString` allocation cleanup, per-path `[*]` opt-out — routed to 999.x backlog (perf-shaped)
-
-**Active seeds:** SEED-001 (simdjson test datasets) — deferred to v1.3 alongside the SIMD parser impl.
+**Deferred beyond v1.3:**
+- `ValidateDocument` dry-run API — remains future scope until there is a concrete consumer.
 
 ## What This Is
 
@@ -64,10 +59,11 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - ✓ Streaming JSONL `experiment` CLI subcommand with summary, predicate test, JSON mode, sample/error-tolerant flags — validated in Phase 15
 - ✓ AddDocument atomicity with validator-backed infallible merge, `tragicErr` recovery, marker enforcement, and full-vs-clean encoded property coverage — validated in Phase 16
 - ✓ Unified ingest failure-mode taxonomy with `IngestFailureMode`, parser/numeric config knobs, v9 transformer metadata compatibility, whole-document soft skips, changelog migration note, and deterministic failure-modes example — validated in Phase 17
+- ✓ SIMD dependency source, license/NOTICE posture, version/tag pin, shared-library loading strategy, opt-in API shape, CI expectations, and stop/fallback policy — validated in Phase 19
 
 ### Active
 
-- **v1.2 milestone wrap-up.** ATOMIC-01..03, FAIL-01..02, and IERR-01..03 are validated; Phase 18 verification passed 16/16 must-haves on 2026-04-24.
+- **v1.3 SIMD-First Performance.** DATA-01..03, SIMD-04..11, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 remain active across Phases 20-25.
 
 ### Out of Scope
 
@@ -96,6 +92,9 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - Phase 16 completed AddDocument atomicity on 2026-04-23: ordinary public failures are non-tragic, failed documents are isolated by encoded-byte property tests, and marker checks enforce the validator/merge contract locally and in CI
 - Phase 17 completed failure-mode taxonomy unification on 2026-04-23: public `IngestFailureMode` replaces the old transformer-only taxonomy, parser/numeric/transformer soft modes skip whole documents without durable mutation, v9 transformer wire tokens stay compatible, and the hard-vs-soft example is regression-tested
 - Phase 18 completed structured `IngestError` + CLI integration on 2026-04-24: public structured errors cover parser/transformer/numeric/schema hard document failures, hard-ingest sites are guarded by behavior and AST tests, and the experiment CLI reports grouped structured failures in text and JSON modes
+- v1.2 shipped and archived on 2026-04-27 with 8/8 requirements complete and milestone archives in `.planning/milestones/`
+- v1.3 planned on 2026-04-27 from backlog and SEED-001, then reprioritized the same day to make SIMD the soonest possible top priority: dependency decision, dataset foundation, SIMD adapter, SIMD validation/CI, then remaining backlog work.
+- Phase 19 completed on 2026-04-27: `19-SIMD-STRATEGY.md` locks `pure-simdjson v0.1.4`, MIT/NOTICE posture, upstream loading delegation, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI, and hard/soft stop policy.
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -120,7 +119,9 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 | Extract parser seam as a pure refactor before SIMD work | Land the seam in v1.1; allow SIMD to land in a later milestone without touching builder internals | Done |
 | Adopt validate-before-mutate atomicity (Strategy C) for v1.2 | Smallest diff that delivers the Lucene per-document contract; leverages existing two-phase architecture | Done in Phase 16 |
 | Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Done in Phase 17 |
-| Renumber SIMD work to v1.3 phases 19–20 | v1.3 SIMD remains blocked on upstream; preserve chronological phase numbering for v1.2 ship-order | Done |
+| Make SIMD the first v1.3 priority | SIMD is the largest expected performance lever; resolve blockers immediately rather than hiding it behind lower-impact backlog work | Done in Phase 19 |
+| Keep stdlib as default while adding SIMD | Preserve compatibility and avoid forcing optional dependencies on default builds | Locked in Phase 19 |
+| Prioritize evidence before non-SIMD performance APIs in v1.3 | Avoid speculative knobs or optimizations; benchmark and profile after SIMD is underway, then implement only justified changes | Planned |
 
 ## Evolution
 
@@ -138,4 +139,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-24 — Phase 18 structured IngestError + CLI integration complete and verified; v1.2 functionally complete.*
+*Last updated: 2026-04-27 — Phase 19 completed SIMD dependency and integration strategy.*
