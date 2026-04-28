@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 20
 Plan: Ready to plan — Realistic Benchmark Dataset Foundation
 Status: Phase 19 complete and verified; Phase 20 remains independent, and Phase 21 can consume the Phase 19 strategy when its turn starts
-Last activity: 2026-04-27 - Phase 19 verified complete; no product code changed
+Last activity: 2026-04-28 - Completed quick task 260428a: address Phase 19 validation review feedback
 
 Progress: [#---------] 14% for v1.3 (1/7 phases complete, 1/1 planned executions complete)
 
@@ -143,6 +143,12 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260424g | Phase 18 cycle 3 follow-ups: tragic sample-cap bypass, stronger tragic CLI assertions, text tragic coverage, SECURITY accessor/citation refresh, and remap godoc clarification | 2026-04-24 | this commit | [260424g-phase18-cycle3-followups](./quick/260424g-phase18-cycle3-followups/) |
 | 260424h | Phase 18 nit follow-ups: tragic wrap ordering comment, explicit Unwrap policy test, stronger tragic text-mode info count, and companion remap godoc clarification | 2026-04-24 | 72eea02 | [260424h-phase18-nit-followups](./quick/260424h-phase18-nit-followups/) |
 | 260425a | PR #33 follow-ups items 4 and 5: tighten +hard-ingest guard to require canonical standalone form and mirror no-parallel safety comment on withExperimentDefaultConfig | 2026-04-25 | 54b7e34 | [260425a-pr33-followups-4-5](./quick/260425a-pr33-followups-4-5/) |
+
+### Quick Tasks Completed (v1.3)
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260428a | Phase 19 validation review feedback: remove root test coupled to archivable planning artifacts | 2026-04-28 | 390b669 | [260428a-address-phase19-validation-review](./quick/260428a-address-phase19-validation-review/) |
 
 ## Deferred Items
 
