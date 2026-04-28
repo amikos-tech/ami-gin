@@ -160,3 +160,16 @@ Plans:
 
 ---
 *v1.3 reprioritized 2026-04-27: SIMD is the top priority. Phase 19 exists to clear the blocker as quickly as possible, Phase 21 implements the adapter, and Phase 22 validates/operationalizes it. Remaining backlog work follows SIMD.*
+
+## Backlog
+
+### Phase 999.7: SIMD Parser Runtime Fallback DX (BACKLOG)
+
+**Goal:** Revisit the Phase 21 SIMD parser activation model before implementation and decide whether a generic opt-in parser factory should include SIMD support when available while falling back to stdlib on unsupported CPU features, native-library loading failure, or unavailable build/runtime prerequisites.
+**Requirements:** TBD
+**Plans:** 0 plans
+
+**Context:** Build tags are a valid Go pattern for optional compile-time feature surfaces, especially when dependency, binary, licensing, or platform shape changes. For JSON/SIMD parser UX, runtime dispatch/fallback can reduce consumer friction once the dependency is acceptable. This backlog item should compare the current `-tags simdjson` + `NewSIMDParser` contract against an alternative such as `NewAutoParser` / `NewBestAvailableParser` with explicit observability and no silent correctness changes.
+
+Plans:
+- [ ] TBD (promote with $gsd-review-backlog when ready)
