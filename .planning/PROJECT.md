@@ -7,7 +7,7 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.3 SIMD-First Performance — Phase 19 completed SIMD unblock decisions; Phases 20-25 continue dataset foundation, SIMD implementation/validation, and lower-impact backlog work
+- **Current milestone:** v1.3 SIMD-First Performance — Phases 19 and 20 completed the SIMD unblock decisions and realistic offline benchmark dataset foundation; Phases 21-25 continue SIMD implementation/validation and lower-impact backlog work
 
 ## Current Milestone: v1.3 SIMD-First Performance
 
@@ -60,10 +60,11 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - ✓ AddDocument atomicity with validator-backed infallible merge, `tragicErr` recovery, marker enforcement, and full-vs-clean encoded property coverage — validated in Phase 16
 - ✓ Unified ingest failure-mode taxonomy with `IngestFailureMode`, parser/numeric config knobs, v9 transformer metadata compatibility, whole-document soft skips, changelog migration note, and deterministic failure-modes example — validated in Phase 17
 - ✓ SIMD dependency source, license/NOTICE posture, version/tag pin, shared-library loading strategy, opt-in API shape, CI expectations, and stop/fallback policy — validated in Phase 19
+- ✓ Governed, deterministic JSONL benchmark corpus with offline Build/Encode/Query smoke coverage and a strictly opt-in local external-data tier — validated in Phase 20 (DATA-01..03)
 
 ### Active
 
-- **v1.3 SIMD-First Performance.** DATA-01..03, SIMD-04..11, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 remain active across Phases 20-25.
+- **v1.3 SIMD-First Performance.** SIMD-04..11, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 remain active across Phases 21-25.
 
 ### Out of Scope
 
@@ -139,4 +140,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-04-27 — Phase 19 completed SIMD dependency and integration strategy.*
+*Last updated: 2026-07-21 — Phase 20 completed the realistic benchmark dataset foundation.*
