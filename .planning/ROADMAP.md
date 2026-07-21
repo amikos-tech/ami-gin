@@ -73,7 +73,7 @@ Plans:
 1. Dataset policy defines whether fixtures are vendored, generated, or downloaded, including license/NOTICE handling and size limits.
 2. Smoke fixtures cover at least nested/high-cardinality, mixed-type array, and number-heavy cases.
 3. Benchmarks can run in a default smoke mode without network access or large downloads.
-**Plans:** 2 plans
+**Plans:** 2/2 plans complete
 
 Plans:
 
@@ -156,7 +156,7 @@ Plans:
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
-| 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete | 2026-07-21 |
+| 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
