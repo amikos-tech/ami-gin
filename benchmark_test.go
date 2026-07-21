@@ -1765,12 +1765,16 @@ const (
 	GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
 	GIN_PHASE20_SIMDJSON_DIR             = "GIN_PHASE20_SIMDJSON_DIR"
 
-	phase20ExternalEnableEnvVar    = GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL
-	phase20ExternalDirectoryEnvVar = GIN_PHASE20_SIMDJSON_DIR
-	phase20NestedSourceKind        = "nested-high-cardinality"
-	phase20MixedArraySourceKind    = "mixed-type-arrays"
-	phase20NumberSourceKind        = "number-heavy"
-	phase20CombinedSourceKind      = "combined"
+	phase20ExternalEnableEnvVar     = GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL
+	phase20ExternalDirectoryEnvVar  = GIN_PHASE20_SIMDJSON_DIR
+	phase20NestedSourceKind         = "nested-high-cardinality"
+	phase20MixedArraySourceKind     = "mixed-type-arrays"
+	phase20NumberSourceKind         = "number-heavy"
+	phase20CombinedSourceKind       = "combined"
+	phase20MaxExternalFiles         = 64
+	phase20MaxExternalBytes         = 8 * 1024 * 1024
+	phase20MaxExternalDocumentBytes = 1024 * 1024
+	phase20MaxExternalJSONDepth     = 64
 )
 
 type phase20SmokeQuery struct {
@@ -1943,7 +1947,7 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 	}
 	paths := make([]string, 0, len(entries))
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || !entry.Type().IsRegular() {
 			continue
 		}
 		extension := strings.ToLower(filepath.Ext(entry.Name()))
@@ -1955,6 +1959,9 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 	sort.Strings(paths)
 	if len(paths) == 0 {
 		return nil, true, phase20ExternalInputError("%q contains no supported top-level files", directory)
+	}
+	if len(paths) > phase20MaxExternalFiles {
+		return nil, true, phase20ExternalInputError("%q contains %d supported files, maximum is %d", directory, len(paths), phase20MaxExternalFiles)
 	}
 	return paths, true, nil
 }
@@ -1973,11 +1980,13 @@ func phase20DiscoverExternalDocuments() ([][]byte, bool, error) {
 	}
 
 	docs := make([][]byte, 0)
+	remainingBytes := int64(phase20MaxExternalBytes)
 	for _, path := range paths {
-		fileDocs, err := phase20LoadExternalDocuments(path)
+		fileDocs, bytesRead, err := phase20LoadExternalDocuments(path, remainingBytes)
 		if err != nil {
 			return nil, true, err
 		}
+		remainingBytes -= bytesRead
 		docs = append(docs, fileDocs...)
 	}
 	if len(docs) == 0 {
@@ -1986,37 +1995,66 @@ func phase20DiscoverExternalDocuments() ([][]byte, bool, error) {
 	return docs, true, nil
 }
 
-func phase20LoadExternalDocuments(path string) ([][]byte, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, phase20ExternalInputError("cannot read %q: %v", path, err)
+func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, int64, error) {
+	if remainingBytes <= 0 {
+		return nil, 0, phase20ExternalInputError("external input exceeds the %d-byte total limit", phase20MaxExternalBytes)
 	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, phase20ExternalInputError("cannot read %q: %v", path, err)
+	}
+	defer file.Close()
+	limit := min(int64(phase20MaxExternalDocumentBytes), remainingBytes)
 	if strings.EqualFold(filepath.Ext(path), ".json") {
-		if !json.Valid(data) {
-			return nil, phase20ExternalInputError("%q is not valid JSON", path)
+		data, err := io.ReadAll(io.LimitReader(file, limit+1))
+		if err != nil {
+			return nil, 0, phase20ExternalInputError("cannot read %q: %v", path, err)
 		}
-		return [][]byte{append([]byte(nil), data...)}, nil
+		if int64(len(data)) > limit {
+			return nil, 0, phase20ExternalInputError("%q exceeds the %d-byte document or remaining input limit", path, limit)
+		}
+		if !json.Valid(data) {
+			return nil, 0, phase20ExternalInputError("%q is not valid JSON", path)
+		}
+		return [][]byte{append([]byte(nil), data...)}, int64(len(data)), nil
 	}
 
-	scanner := bufio.NewScanner(bytes.NewReader(data))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner := bufio.NewScanner(file)
+	scanner.Split(phase20ScanLineWithDelimiter)
+	scanner.Buffer(make([]byte, 0, 64*1024), min(phase20MaxExternalDocumentBytes, int(remainingBytes)))
 	docs := make([][]byte, 0)
 	lineNumber := 0
+	var bytesRead int64
 	for scanner.Scan() {
 		lineNumber++
-		line := bytes.TrimSpace(scanner.Bytes())
+		rawLine := scanner.Bytes()
+		bytesRead += int64(len(rawLine))
+		if bytesRead > remainingBytes {
+			return nil, 0, phase20ExternalInputError("%q exceeds the %d-byte remaining input limit", path, remainingBytes)
+		}
+		line := bytes.TrimSpace(rawLine)
 		if len(line) == 0 {
 			continue
 		}
 		if !json.Valid(line) {
-			return nil, phase20ExternalInputError("%q line %d is not valid JSON", path, lineNumber)
+			return nil, 0, phase20ExternalInputError("%q line %d is not valid JSON", path, lineNumber)
 		}
 		docs = append(docs, append([]byte(nil), line...))
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, phase20ExternalInputError("cannot scan %q: %v", path, err)
+		return nil, 0, phase20ExternalInputError("cannot scan %q: %v", path, err)
 	}
-	return docs, nil
+	return docs, bytesRead, nil
+}
+
+func phase20ScanLineWithDelimiter(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if index := bytes.IndexByte(data, '\n'); index >= 0 {
+		return index + 1, data[:index+1], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
 }
 
 func phase20ExternalBenchmarkFixture(b *testing.B) phase20BenchmarkFixture {
@@ -2043,14 +2081,17 @@ func phase20DeriveScalarPathPredicate(docs [][]byte) (Predicate, error) {
 		if err := decoder.Decode(&value); err != nil {
 			return Predicate{}, errors.Wrap(err, "decode local external JSON document")
 		}
-		if path, ok := phase20FirstScalarPath("$", value); ok {
+		if path, ok := phase20FirstScalarPath("$", value, 0); ok {
 			return IsNotNull(path), nil
 		}
 	}
 	return Predicate{}, phase20ExternalInputError("no supported non-null scalar leaf was found")
 }
 
-func phase20FirstScalarPath(path string, value any) (string, bool) {
+func phase20FirstScalarPath(path string, value any, depth int) (string, bool) {
+	if depth > phase20MaxExternalJSONDepth {
+		return "", false
+	}
 	switch value := value.(type) {
 	case nil:
 		return "", false
@@ -2058,13 +2099,13 @@ func phase20FirstScalarPath(path string, value any) (string, bool) {
 		return path, ValidateJSONPath(path) == nil
 	case map[string]any:
 		for _, key := range sortedObjectKeys(value) {
-			if childPath, ok := phase20FirstScalarPath(phase20JSONPathChild(path, key), value[key]); ok {
+			if childPath, ok := phase20FirstScalarPath(phase20JSONPathChild(path, key), value[key], depth+1); ok {
 				return childPath, true
 			}
 		}
 	case []any:
 		for _, element := range value {
-			if childPath, ok := phase20FirstScalarPath(path+"[*]", element); ok {
+			if childPath, ok := phase20FirstScalarPath(path+"[*]", element, depth+1); ok {
 				return childPath, true
 			}
 		}
@@ -2159,6 +2200,46 @@ func TestPhase20ExternalTier(t *testing.T) {
 		predicate, err := phase20DeriveScalarPathPredicate(docs)
 		if err != nil || predicate.Operator != OpIsNotNull || predicate.Path != "$.nested.leaf" {
 			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.nested.leaf)", predicate, err)
+		}
+	})
+
+	t.Run("external-input-resource-limits", func(t *testing.T) {
+		directory := t.TempDir()
+		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
+		t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory)
+
+		for i := 0; i <= phase20MaxExternalFiles; i++ {
+			path := filepath.Join(directory, fmt.Sprintf("%03d.jsonl", i))
+			if err := os.WriteFile(path, []byte("{\"ok\":true}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, _, err := phase20ExternalBenchmarkPaths(); err == nil {
+			t.Fatal("phase20ExternalBenchmarkPaths() error = nil, want file-count limit rejection")
+		}
+
+		path := filepath.Join(t.TempDir(), "large.json")
+		if err := os.WriteFile(path, append([]byte(`{"value":"`), append(bytes.Repeat([]byte("x"), phase20MaxExternalDocumentBytes), []byte(`"}`)...)...), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil {
+			t.Fatal("phase20LoadExternalDocuments() error = nil, want document-size limit rejection")
+		}
+
+		path = filepath.Join(t.TempDir(), "blank-lines.jsonl")
+		if err := os.WriteFile(path, []byte(strings.Repeat("\n", 17)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := phase20LoadExternalDocuments(path, 16); err == nil {
+			t.Fatal("phase20LoadExternalDocuments() error = nil, want aggregate byte-limit rejection")
+		}
+
+		path = filepath.Join(t.TempDir(), "blank-lines-crlf.jsonl")
+		if err := os.WriteFile(path, []byte(strings.Repeat("\r\n", 9)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := phase20LoadExternalDocuments(path, 16); err == nil {
+			t.Fatal("phase20LoadExternalDocuments() error = nil, want CRLF aggregate byte-limit rejection")
 		}
 	})
 }

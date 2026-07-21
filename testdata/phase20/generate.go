@@ -28,8 +28,8 @@ func main() {
 	for name, records := range map[string][]string{
 		"nested_high_cardinality.jsonl": nested,
 		"mixed_type_arrays.jsonl":       mixed,
-		"number_heavy.jsonl":             numbers,
-		"combined.jsonl":                 combined,
+		"number_heavy.jsonl":            numbers,
+		"combined.jsonl":                combined,
 	} {
 		if err := writeFixture(name, records); err != nil {
 			panic(err)
@@ -38,8 +38,46 @@ func main() {
 }
 
 func writeFixture(name string, records []string) error {
-	path := filepath.Join(fixtureDir, name)
-	return os.WriteFile(path, []byte(strings.Join(records, "\n")+"\n"), 0o644)
+	return writeFixtureToDir(fixtureDir, name, records)
+}
+
+func writeFixtureToDir(dir, name string, records []string) error {
+	if filepath.Base(name) != name {
+		return fmt.Errorf("fixture name %q is not a base filename", name)
+	}
+	path := filepath.Join(dir, name)
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to replace symlinked fixture %q", path)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("refusing to replace non-regular fixture %q", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("inspect fixture %q: %w", path, err)
+	}
+
+	temporary, err := os.CreateTemp(dir, ".phase20-fixture-*")
+	if err != nil {
+		return fmt.Errorf("create temporary fixture for %q: %w", path, err)
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o644); err != nil {
+		temporary.Close()
+		return fmt.Errorf("set permissions on temporary fixture for %q: %w", path, err)
+	}
+	if _, err := temporary.WriteString(strings.Join(records, "\n") + "\n"); err != nil {
+		temporary.Close()
+		return fmt.Errorf("write temporary fixture for %q: %w", path, err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close temporary fixture for %q: %w", path, err)
+	}
+	if err := os.Rename(temporaryPath, path); err != nil {
+		return fmt.Errorf("replace fixture %q: %w", path, err)
+	}
+	return nil
 }
 
 func nestedRecord(i int) string {
