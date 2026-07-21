@@ -1759,10 +1759,14 @@ func TestPhase20LoadRawJSONLRejectsMalformedLines(t *testing.T) {
 }
 
 const (
-	phase20DocsPerRowGroup         = 32
-	phase20ReadmePath              = "testdata/phase20/README.md"
-	phase20ExternalEnableEnvVar    = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
-	phase20ExternalDirectoryEnvVar = "GIN_PHASE20_SIMDJSON_DIR"
+	phase20DocsPerRowGroup = 32
+	phase20ReadmePath      = "testdata/phase20/README.md"
+
+	GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
+	GIN_PHASE20_SIMDJSON_DIR             = "GIN_PHASE20_SIMDJSON_DIR"
+
+	phase20ExternalEnableEnvVar    = GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL
+	phase20ExternalDirectoryEnvVar = GIN_PHASE20_SIMDJSON_DIR
 	phase20NestedSourceKind        = "nested-high-cardinality"
 	phase20MixedArraySourceKind    = "mixed-type-arrays"
 	phase20NumberSourceKind        = "number-heavy"
@@ -1829,6 +1833,362 @@ func phase20LoadRawJSONL(path string) ([][]byte, error) {
 		return nil, errors.Wrapf(err, "scan Phase 20 fixture %q", cleanedPath)
 	}
 	return docs, nil
+}
+
+type phase20BenchmarkFixture struct {
+	docs      [][]byte
+	predicate Predicate
+}
+
+func phase20BuildBenchmarkIndex(docs [][]byte) (*GINIndex, error) {
+	if len(docs) == 0 {
+		return nil, errors.New("Phase 20 benchmark fixture contains no documents")
+	}
+
+	rowGroups := (len(docs) + phase20DocsPerRowGroup - 1) / phase20DocsPerRowGroup
+	builder, err := NewBuilder(DefaultConfig(), rowGroups)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewBuilder")
+	}
+	for docIndex, doc := range docs {
+		if err := builder.AddDocument(DocID(docIndex/phase20DocsPerRowGroup), doc); err != nil {
+			return nil, errors.Wrapf(err, "AddDocument(doc=%d)", docIndex)
+		}
+	}
+	idx := builder.Finalize()
+	if idx == nil {
+		return nil, errors.New("Finalize returned nil Phase 20 benchmark index")
+	}
+	return idx, nil
+}
+
+func phase20RunBenchmarkActions(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+
+	b.Run("Build", func(b *testing.B) {
+		phase20BenchmarkBuild(b, fixture)
+	})
+
+	b.Run("Encode", func(b *testing.B) {
+		phase20BenchmarkEncode(b, fixture)
+	})
+
+	b.Run("Query", func(b *testing.B) {
+		phase20BenchmarkQuery(b, fixture)
+	})
+}
+
+func phase20BenchmarkBuild(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := phase20BuildBenchmarkIndex(fixture.docs); err != nil {
+			b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+		}
+	}
+}
+
+func phase20BenchmarkEncode(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	idx, err := phase20BuildBenchmarkIndex(fixture.docs)
+	if err != nil {
+		b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Encode(idx); err != nil {
+			b.Fatalf("Encode() error = %v", err)
+		}
+	}
+}
+
+func phase20BenchmarkQuery(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	idx, err := phase20BuildBenchmarkIndex(fixture.docs)
+	if err != nil {
+		b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+	}
+	if got := idx.Evaluate([]Predicate{fixture.predicate}).Count(); got == 0 {
+		b.Fatalf("query for %q returned 0 candidate row groups", fixture.predicate.Path)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = idx.Evaluate([]Predicate{fixture.predicate})
+	}
+}
+
+func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
+	if os.Getenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL) != "1" {
+		return nil, false, nil
+	}
+
+	directory := strings.TrimSpace(os.Getenv(GIN_PHASE20_SIMDJSON_DIR))
+	if directory == "" {
+		return nil, true, phase20ExternalInputError("directory is not set")
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		return nil, true, phase20ExternalInputError("cannot access %q: %v", directory, err)
+	}
+	if !info.IsDir() {
+		return nil, true, phase20ExternalInputError("%q is not a directory", directory)
+	}
+
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		extension := strings.ToLower(filepath.Ext(entry.Name()))
+		if extension != ".ndjson" && extension != ".jsonl" && extension != ".json" {
+			continue
+		}
+		paths = append(paths, filepath.Join(directory, entry.Name()))
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		return nil, true, phase20ExternalInputError("%q contains no supported top-level files", directory)
+	}
+	return paths, true, nil
+}
+
+func phase20ExternalInputError(format string, args ...any) error {
+	return errors.Errorf(
+		"%s=1 with %s must provide readable top-level .ndjson, .jsonl, or .json files: "+format,
+		append([]any{GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, GIN_PHASE20_SIMDJSON_DIR}, args...)...,
+	)
+}
+
+func phase20DiscoverExternalDocuments() ([][]byte, bool, error) {
+	paths, enabled, err := phase20ExternalBenchmarkPaths()
+	if err != nil || !enabled {
+		return nil, enabled, err
+	}
+
+	docs := make([][]byte, 0)
+	for _, path := range paths {
+		fileDocs, err := phase20LoadExternalDocuments(path)
+		if err != nil {
+			return nil, true, err
+		}
+		docs = append(docs, fileDocs...)
+	}
+	if len(docs) == 0 {
+		return nil, true, phase20ExternalInputError("supported files contain no nonblank JSON documents")
+	}
+	return docs, true, nil
+}
+
+func phase20LoadExternalDocuments(path string) ([][]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, phase20ExternalInputError("cannot read %q: %v", path, err)
+	}
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		if !json.Valid(data) {
+			return nil, phase20ExternalInputError("%q is not valid JSON", path)
+		}
+		return [][]byte{append([]byte(nil), data...)}, nil
+	}
+
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	docs := make([][]byte, 0)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
+			continue
+		}
+		if !json.Valid(line) {
+			return nil, phase20ExternalInputError("%q line %d is not valid JSON", path, lineNumber)
+		}
+		docs = append(docs, append([]byte(nil), line...))
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, phase20ExternalInputError("cannot scan %q: %v", path, err)
+	}
+	return docs, nil
+}
+
+func phase20ExternalBenchmarkFixture(b *testing.B) phase20BenchmarkFixture {
+	b.Helper()
+	docs, enabled, err := phase20DiscoverExternalDocuments()
+	if !enabled {
+		b.Skipf("set %s=1 and %s=/path/to/simdjson/jsonexamples to enable local external input", GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, GIN_PHASE20_SIMDJSON_DIR)
+	}
+	if err != nil {
+		b.Fatal(err)
+	}
+	predicate, err := phase20DeriveScalarPathPredicate(docs)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return phase20BenchmarkFixture{docs: docs, predicate: predicate}
+}
+
+func phase20DeriveScalarPathPredicate(docs [][]byte) (Predicate, error) {
+	for _, doc := range docs {
+		decoder := json.NewDecoder(bytes.NewReader(doc))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return Predicate{}, errors.Wrap(err, "decode local external JSON document")
+		}
+		if path, ok := phase20FirstScalarPath("$", value); ok {
+			return IsNotNull(path), nil
+		}
+	}
+	return Predicate{}, phase20ExternalInputError("no supported non-null scalar leaf was found")
+}
+
+func phase20FirstScalarPath(path string, value any) (string, bool) {
+	switch value := value.(type) {
+	case nil:
+		return "", false
+	case bool, string, json.Number, float64:
+		return path, ValidateJSONPath(path) == nil
+	case map[string]any:
+		for _, key := range sortedObjectKeys(value) {
+			if childPath, ok := phase20FirstScalarPath(phase20JSONPathChild(path, key), value[key]); ok {
+				return childPath, true
+			}
+		}
+	case []any:
+		for _, element := range value {
+			if childPath, ok := phase20FirstScalarPath(path+"[*]", element); ok {
+				return childPath, true
+			}
+		}
+	}
+	return "", false
+}
+
+func phase20JSONPathChild(path, key string) string {
+	if phase20JSONPathIdentifier(key) {
+		return path + "." + key
+	}
+	return path + "[" + strconv.Quote(key) + "]"
+}
+
+func phase20JSONPathIdentifier(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		char := key[i]
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_' || (i > 0 && char >= '0' && char <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func TestPhase20ExternalTier(t *testing.T) {
+	t.Setenv(GIN_PHASE20_SIMDJSON_DIR, filepath.Join(t.TempDir(), "not-read"))
+	for _, enableValue := range []string{"", "true"} {
+		t.Run("disabled-"+fmt.Sprintf("%q", enableValue), func(t *testing.T) {
+			t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, enableValue)
+			paths, enabled, err := phase20ExternalBenchmarkPaths()
+			if err != nil || enabled || len(paths) != 0 {
+				t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+			}
+		})
+	}
+
+	t.Run("enabled-errors-name-configuration", func(t *testing.T) {
+		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
+		for _, directory := range []struct {
+			name  string
+			setup func(t *testing.T) string
+		}{
+			{name: "absent", setup: func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+			{name: "empty", setup: func(t *testing.T) string { return t.TempDir() }},
+			{name: "unsupported", setup: func(t *testing.T) string {
+				directory := t.TempDir()
+				if err := os.WriteFile(filepath.Join(directory, "input.txt"), []byte("not JSON"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return directory
+			}},
+			{name: "invalid", setup: func(t *testing.T) string {
+				directory := t.TempDir()
+				if err := os.WriteFile(filepath.Join(directory, "input.jsonl"), []byte("{\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return directory
+			}},
+		} {
+			directory := directory
+			t.Run(directory.name, func(t *testing.T) {
+				t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory.setup(t))
+				_, _, err := phase20DiscoverExternalDocuments()
+				if err == nil || !strings.Contains(err.Error(), GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL) || !strings.Contains(err.Error(), GIN_PHASE20_SIMDJSON_DIR) {
+					t.Fatalf("phase20DiscoverExternalDocuments() error = %v, want both environment variable names", err)
+				}
+			})
+		}
+	})
+
+	t.Run("valid-files-are-sorted-and-queryable", func(t *testing.T) {
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "a.jsonl"), []byte("{\"z\":null,\"nested\":{\"leaf\":false}}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "b.json"), []byte("{\"second\":true}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
+		t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory)
+		docs, enabled, err := phase20DiscoverExternalDocuments()
+		if err != nil || !enabled || len(docs) != 2 {
+			t.Fatalf("phase20DiscoverExternalDocuments() = (%d docs, %v, %v), want (2, true, nil)", len(docs), enabled, err)
+		}
+		if !bytes.Equal(docs[0], []byte("{\"z\":null,\"nested\":{\"leaf\":false}}")) || !bytes.Equal(docs[1], []byte("{\"second\":true}")) {
+			t.Fatalf("phase20DiscoverExternalDocuments() returned documents out of sorted path order: %q", docs)
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(docs)
+		if err != nil || predicate.Operator != OpIsNotNull || predicate.Path != "$.nested.leaf" {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.nested.leaf)", predicate, err)
+		}
+	})
+}
+
+func BenchmarkPhase20RealisticJSON(b *testing.B) {
+	for _, fixture := range phase20SmokeFixtures {
+		fixture := fixture
+		b.Run(fmt.Sprintf("tier=smoke/fixture=%s", fixture.name), func(b *testing.B) {
+			docs, err := phase20LoadRawJSONL(fixture.path)
+			if err != nil {
+				b.Fatalf("phase20LoadRawJSONL(%q) error = %v", fixture.path, err)
+			}
+			phase20RunBenchmarkActions(b, phase20BenchmarkFixture{docs: docs, predicate: fixture.query.predicate})
+		})
+	}
+
+	b.Run("tier=external/fixture=local-example", func(b *testing.B) {
+		b.Run("Build", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkBuild(b, fixture)
+		})
+		b.Run("Encode", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkEncode(b, fixture)
+		})
+		b.Run("Query", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkQuery(b, fixture)
+		})
+	})
 }
 
 func phase20RecordSourceKind(t *testing.T, doc []byte) string {
