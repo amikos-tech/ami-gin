@@ -18,9 +18,9 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 
 ### Benchmark Dataset Foundation
 
-- [ ] **DATA-01**: The project has a documented realistic JSON fixture policy covering source, license/NOTICE handling, size limits, and offline default behavior.
-- [ ] **DATA-02**: Smoke-scale fixtures cover nested/high-cardinality, mixed-type array, and number-heavy JSON shapes suitable for SIMD and stdlib benchmark comparison.
-- [ ] **DATA-03**: SEED-001 is activated into benchmark infrastructure without requiring network access for default tests.
+- [x] **DATA-01**: The project has a documented realistic JSON fixture policy covering source, license/NOTICE handling, size limits, and offline default behavior.
+- [x] **DATA-02**: Smoke-scale fixtures cover nested/high-cardinality, mixed-type array, and number-heavy JSON shapes suitable for SIMD and stdlib benchmark comparison.
+- [x] **DATA-03**: SEED-001 is activated into benchmark infrastructure without requiring network access for default tests.
 
 ### SIMD Parser Adapter
 
@@ -80,9 +80,9 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 | SIMD-01 | Phase 19 | Complete |
 | SIMD-02 | Phase 19 | Complete |
 | SIMD-03 | Phase 19 | Complete |
-| DATA-01 | Phase 20 | Planned |
-| DATA-02 | Phase 20 | Planned |
-| DATA-03 | Phase 20 | Planned |
+| DATA-01 | Phase 20 | Complete |
+| DATA-02 | Phase 20 | Complete |
+| DATA-03 | Phase 20 | Complete |
 | SIMD-04 | Phase 21 | Planned |
 | SIMD-05 | Phase 21 | Planned |
 | SIMD-06 | Phase 21 | Planned |

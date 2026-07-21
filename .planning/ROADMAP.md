@@ -40,7 +40,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 ### 🚧 v1.3 SIMD-First Performance (Phases 19-25)
 
 - [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
-- [ ] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
+- [x] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
 - [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
 - [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
 - [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
@@ -73,7 +73,12 @@ Plans:
 1. Dataset policy defines whether fixtures are vendored, generated, or downloaded, including license/NOTICE handling and size limits.
 2. Smoke fixtures cover at least nested/high-cardinality, mixed-type array, and number-heavy cases.
 3. Benchmarks can run in a default smoke mode without network access or large downloads.
-**Plans:** TBD
+**Plans:** 2 plans
+
+Plans:
+
+- [x] 20-01: Generate governed synthesized JSONL smoke fixtures and integrity coverage
+- [x] 20-02: Add offline and optional-local realistic JSON benchmark workflows
 
 ### Phase 21: SIMD Parser Adapter
 
@@ -151,7 +156,7 @@ Plans:
 | 17. Failure-Mode Taxonomy Unification | v1.2 | 4/4 | Complete | 2026-04-23 |
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
-| 20. Realistic Benchmark Dataset Foundation | v1.3 | 0/- | Planned | - |
+| 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
