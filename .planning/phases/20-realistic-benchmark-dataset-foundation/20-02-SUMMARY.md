@@ -77,7 +77,7 @@ None - plan executed exactly as written.
 
 ## Issues Encountered
 
-None.
+`make lint` reports 50 pre-existing `goconst` findings across unrelated test and production files. The Phase-20 additions do not appear in that output; no unrelated lint cleanup was made.
 
 ## User Setup Required
 
@@ -93,6 +93,7 @@ Phase 21 can add the opt-in SIMD parser independently. Phase 22 can reuse the es
 - The offline smoke benchmark command ran all four fixtures and their Build, Encode, and Query leaves.
 - The disabled external benchmark command listed and skipped its Build, Encode, and Query leaves successfully.
 - `go test ./... -count=1` and `go build ./...` passed.
+- `make lint` remains blocked by the repository's pre-existing `goconst` baseline.
 
 ---
 *Phase: 20-realistic-benchmark-dataset-foundation*
