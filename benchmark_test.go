@@ -1642,6 +1642,314 @@ func TestPhase11LoadBenchmarkFixtureUsesCeilRowGroupCount(t *testing.T) {
 	}
 }
 
+func TestPhase20SmokeFixtures(t *testing.T) {
+	focused := make(map[string][][]byte, 3)
+	var combined [][]byte
+
+	for _, fixture := range phase20SmokeFixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			info, err := os.Stat(fixture.path)
+			if err != nil {
+				t.Fatalf("Stat(%q) error = %v", fixture.path, err)
+			}
+			if info.Size() > fixture.byteCap {
+				t.Fatalf("Stat(%q).Size() = %d, cap %d", fixture.path, info.Size(), fixture.byteCap)
+			}
+
+			docs, err := phase20LoadRawJSONL(fixture.path)
+			if err != nil {
+				t.Fatalf("phase20LoadRawJSONL(%q) error = %v", fixture.path, err)
+			}
+			if got := len(docs); got != fixture.recordCount {
+				t.Fatalf("len(phase20LoadRawJSONL(%q)) = %d, want %d", fixture.path, got, fixture.recordCount)
+			}
+			if rowGroups := (len(docs) + phase20DocsPerRowGroup - 1) / phase20DocsPerRowGroup; rowGroups <= 1 {
+				t.Fatalf("%q packs into %d row groups, want more than one", fixture.path, rowGroups)
+			}
+			for lineNumber, doc := range docs {
+				if !json.Valid(doc) {
+					t.Fatalf("%q line %d is not valid JSON", fixture.path, lineNumber+1)
+				}
+				if fixture.sourceKind != phase20CombinedSourceKind && phase20RecordSourceKind(t, doc) != fixture.sourceKind {
+					got := phase20RecordSourceKind(t, doc)
+					t.Fatalf("%q line %d source kind = %q, want %q", fixture.path, lineNumber+1, got, fixture.sourceKind)
+				}
+			}
+
+			switch fixture.sourceKind {
+			case phase20NestedSourceKind:
+				assertPhase20NestedShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20MixedArraySourceKind:
+				assertPhase20MixedArrayShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20NumberSourceKind:
+				assertPhase20NumberShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20CombinedSourceKind:
+				combined = docs
+			}
+		})
+	}
+
+	if len(combined) == 0 {
+		t.Fatal("combined Phase 20 fixture was not loaded")
+	}
+	for i := 0; i < 96; i++ {
+		for offset, sourceKind := range []string{phase20NestedSourceKind, phase20MixedArraySourceKind, phase20NumberSourceKind} {
+			got := combined[i*3+offset]
+			want := focused[sourceKind][i]
+			if !bytes.Equal(got, want) {
+				t.Fatalf("combined line %d is not the raw %s record %d", i*3+offset+1, sourceKind, i+1)
+			}
+			if gotKind := phase20RecordSourceKind(t, got); gotKind != sourceKind {
+				t.Fatalf("combined line %d source kind = %q, want %q", i*3+offset+1, gotKind, sourceKind)
+			}
+		}
+	}
+
+	readme, err := os.ReadFile(phase20ReadmePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", phase20ReadmePath, err)
+	}
+	for _, marker := range []string{
+		"synthesized-from-shape",
+		"simdjson `jsonexamples`",
+		"no upstream rows or text are copied",
+		"offline default",
+		"do not download data",
+		"pinned revision",
+		"LICENSE",
+		"NOTICE",
+		phase20ExternalEnableEnvVar,
+		phase20ExternalDirectoryEnvVar,
+	} {
+		if !strings.Contains(string(readme), marker) {
+			t.Fatalf("%q does not contain required policy marker %q", phase20ReadmePath, marker)
+		}
+	}
+}
+
+func TestPhase20LoadRawJSONLRejectsMalformedLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		line     int
+	}{
+		{name: "blank", contents: "{\"ok\":true}\n\n", line: 2},
+		{name: "malformed", contents: "{\"ok\":true}\n{\n", line: 2},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "fixture.jsonl")
+			if err := os.WriteFile(path, []byte(tt.contents), 0o644); err != nil {
+				t.Fatalf("WriteFile(%q) error = %v", path, err)
+			}
+			_, err := phase20LoadRawJSONL(path)
+			if err == nil {
+				t.Fatal("phase20LoadRawJSONL() error = nil, want invalid line rejection")
+			}
+			if !strings.Contains(err.Error(), filepath.Clean(path)) || !strings.Contains(err.Error(), fmt.Sprintf("line %d", tt.line)) {
+				t.Fatalf("phase20LoadRawJSONL() error = %q, want cleaned path and line %d", err, tt.line)
+			}
+		})
+	}
+}
+
+const (
+	phase20DocsPerRowGroup         = 32
+	phase20ReadmePath              = "testdata/phase20/README.md"
+	phase20ExternalEnableEnvVar    = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
+	phase20ExternalDirectoryEnvVar = "GIN_PHASE20_SIMDJSON_DIR"
+	phase20NestedSourceKind        = "nested-high-cardinality"
+	phase20MixedArraySourceKind    = "mixed-type-arrays"
+	phase20NumberSourceKind        = "number-heavy"
+	phase20CombinedSourceKind      = "combined"
+)
+
+type phase20SmokeQuery struct {
+	name      string
+	predicate Predicate
+}
+
+type phase20SmokeFixture struct {
+	name        string
+	path        string
+	recordCount int
+	byteCap     int64
+	sourceKind  string
+	query       phase20SmokeQuery
+}
+
+var phase20SmokeFixtures = []phase20SmokeFixture{
+	{
+		name: "nested-high-cardinality", path: "testdata/phase20/nested_high_cardinality.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20NestedSourceKind,
+		query: phase20SmokeQuery{name: "event-category", predicate: EQ("$.event_category", "issue-comment")},
+	},
+	{
+		name: "mixed-type-arrays", path: "testdata/phase20/mixed_type_arrays.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20MixedArraySourceKind,
+		query: phase20SmokeQuery{name: "source-kind", predicate: EQ("$.phase20_source_kind", phase20MixedArraySourceKind)},
+	},
+	{
+		name: "number-heavy", path: "testdata/phase20/number_heavy.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20NumberSourceKind,
+		query: phase20SmokeQuery{name: "range-cohort", predicate: EQ("$.range_cohort", "high")},
+	},
+	{
+		name: "combined", path: "testdata/phase20/combined.jsonl", recordCount: 288, byteCap: 384 * 1024, sourceKind: phase20CombinedSourceKind,
+		query: phase20SmokeQuery{name: "source-kind", predicate: EQ("$.phase20_source_kind", phase20NestedSourceKind)},
+	},
+}
+
+func phase20LoadRawJSONL(path string) ([][]byte, error) {
+	cleanedPath := filepath.Clean(path)
+	file, err := os.Open(cleanedPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "open Phase 20 fixture %q", cleanedPath)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	docs := make([][]byte, 0)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			return nil, errors.Errorf("read Phase 20 fixture %q line %d: blank JSONL line", cleanedPath, lineNumber)
+		}
+		if !json.Valid(line) {
+			return nil, errors.Errorf("read Phase 20 fixture %q line %d: invalid JSON record", cleanedPath, lineNumber)
+		}
+		docs = append(docs, append([]byte(nil), line...))
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, errors.Wrapf(err, "scan Phase 20 fixture %q", cleanedPath)
+	}
+	return docs, nil
+}
+
+func phase20RecordSourceKind(t *testing.T, doc []byte) string {
+	t.Helper()
+	var record struct {
+		SourceKind string `json:"phase20_source_kind"`
+	}
+	if err := json.Unmarshal(doc, &record); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	return record.SourceKind
+}
+
+func assertPhase20NestedShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	categories := make(map[string]struct{})
+	users := make(map[string]struct{})
+	repositories := make(map[string]struct{})
+	urls := make(map[string]struct{})
+	for _, doc := range docs {
+		var record struct {
+			EventCategory  string `json:"event_category"`
+			Timestamp      string `json:"timestamp"`
+			URL            string `json:"url"`
+			SearchableText string `json:"searchable_text"`
+			Actor          struct {
+				User struct {
+					Login string `json:"login"`
+				} `json:"user"`
+			} `json:"actor"`
+			Repository struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"repository"`
+		}
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(nested record) error = %v", err)
+		}
+		if record.EventCategory == "" || record.Timestamp == "" || record.URL == "" || record.SearchableText == "" || record.Actor.User.Login == "" || record.Repository.Name == "" || record.Repository.URL == "" {
+			t.Fatalf("nested record misses required searchable or nested fields: %s", doc)
+		}
+		categories[record.EventCategory] = struct{}{}
+		users[record.Actor.User.Login] = struct{}{}
+		repositories[record.Repository.Name] = struct{}{}
+		urls[record.URL] = struct{}{}
+	}
+	if len(categories) < 2 || len(users) < 2 || len(repositories) < 2 || len(urls) < 2 {
+		t.Fatalf("nested fixture lacks variation: categories=%d users=%d repositories=%d urls=%d", len(categories), len(users), len(repositories), len(urls))
+	}
+}
+
+func assertPhase20MixedArrayShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, doc := range docs {
+		var record struct {
+			Values []json.RawMessage `json:"wildcard_values"`
+		}
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(mixed record) error = %v", err)
+		}
+		for _, value := range record.Values {
+			raw := string(value)
+			switch {
+			case raw == "null":
+				seen["null"] = true
+			case raw == "true" || raw == "false":
+				seen["boolean"] = true
+			case strings.HasPrefix(raw, "\""):
+				seen["string"] = true
+			case strings.HasPrefix(raw, "{"):
+				seen["object"] = true
+			case raw == "[]":
+				seen["empty-array"] = true
+			case strings.Contains(raw, "."):
+				seen["decimal"] = true
+			default:
+				seen["integer"] = true
+			}
+		}
+	}
+	for _, kind := range []string{"string", "integer", "decimal", "boolean", "null", "object", "empty-array"} {
+		if !seen[kind] {
+			t.Fatalf("mixed-array fixture is missing %s under wildcard_values", kind)
+		}
+	}
+}
+
+func assertPhase20NumberShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	cohorts := make(map[string]bool)
+	for _, doc := range docs {
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(number record) error = %v", err)
+		}
+		for field, want := range map[string]string{
+			"signed_int64_max":     "9223372036854775807",
+			"signed_int64_min":     "-9223372036854775807",
+			"exact_float_boundary": "9007199254740993",
+		} {
+			if got := string(record[field]); got != want {
+				t.Fatalf("number record %s = %q, want unquoted %q", field, got, want)
+			}
+		}
+		if !strings.Contains(string(record["decimal_value"]), ".") || string(record["timestamp"]) == "\"\"" || len(record["epoch_ms"]) == 0 {
+			t.Fatalf("number record is missing decimal, timestamp, or epoch fields: %s", doc)
+		}
+		var cohort string
+		if err := json.Unmarshal(record["range_cohort"], &cohort); err != nil {
+			t.Fatalf("json.Unmarshal(range_cohort) error = %v", err)
+		}
+		cohorts[cohort] = true
+	}
+	for _, cohort := range []string{"low", "mid", "high"} {
+		if !cohorts[cohort] {
+			t.Fatalf("number fixture is missing %s range cohort", cohort)
+		}
+	}
+}
+
 const (
 	phase11SmokeFixturePath      = "testdata/phase11/github_archive_smoke.jsonl"
 	phase11CorpusRootEnvVar      = "GIN_PHASE11_GITHUB_ARCHIVE_ROOT"
