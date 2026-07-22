@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
 stopped_at: Phase 21 planned (3 plans, 2 waves; plan-checker 0 blockers)
-last_updated: "2026-07-22T18:07:23.598Z"
-last_activity: 2026-07-22 -- Phase 21 planning complete
+last_updated: "2026-07-22T18:11:23.871Z"
+last_activity: 2026-07-22 -- Phase 21 execution started
 progress:
   total_phases: 8
   completed_phases: 2
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 21 — SIMD Parser Adapter
+**Current focus:** Phase 21 — simd-parser-adapter
 
 ## Current Position
 
-Phase: 21
-Plan: Planned — 21-01, 21-02, 21-03 (2 waves)
-Status: Ready to execute
-Last activity: 2026-07-22 -- Phase 21 planning complete
+Phase: 21 (simd-parser-adapter) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 21
+Last activity: 2026-07-22 -- Phase 21 execution started
 
 Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
 
