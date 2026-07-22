@@ -12,7 +12,7 @@ gotestsum-bin:
 test: gotestsum-bin
 	gotestsum \
 		--format short-verbose \
-		--packages="./..." \
+		--packages="./... ./testdata/phase20" \
 		--junitfile unit.xml \
 		-- \
 		-v \

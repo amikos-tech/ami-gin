@@ -6,11 +6,34 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
 const fixtureDir = "testdata/phase20"
 
+type generatedFixture struct {
+	name    string
+	records []string
+}
+
 func main() {
+	if err := run(); err != nil {
+		fmt.Fprintf(os.Stderr, "generate Phase 20 fixtures: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	for _, fixture := range generatedFixtures() {
+		if err := writeFixture(fixture.name, fixture.records); err != nil {
+			return errors.Wrapf(err, "generate fixture %q", fixture.name)
+		}
+	}
+	return nil
+}
+
+func generatedFixtures() []generatedFixture {
 	nested := make([]string, 0, 96)
 	mixed := make([]string, 0, 96)
 	numbers := make([]string, 0, 96)
@@ -25,16 +48,16 @@ func main() {
 		combined = append(combined, nested[i], mixed[i], numbers[i])
 	}
 
-	for name, records := range map[string][]string{
-		"nested_high_cardinality.jsonl": nested,
-		"mixed_type_arrays.jsonl":       mixed,
-		"number_heavy.jsonl":            numbers,
-		"combined.jsonl":                combined,
-	} {
-		if err := writeFixture(name, records); err != nil {
-			panic(err)
-		}
+	return []generatedFixture{
+		{name: "nested_high_cardinality.jsonl", records: nested},
+		{name: "mixed_type_arrays.jsonl", records: mixed},
+		{name: "number_heavy.jsonl", records: numbers},
+		{name: "combined.jsonl", records: combined},
 	}
+}
+
+func renderFixture(records []string) []byte {
+	return []byte(strings.Join(records, "\n") + "\n")
 }
 
 func writeFixture(name string, records []string) error {
@@ -43,39 +66,39 @@ func writeFixture(name string, records []string) error {
 
 func writeFixtureToDir(dir, name string, records []string) error {
 	if filepath.Base(name) != name {
-		return fmt.Errorf("fixture name %q is not a base filename", name)
+		return errors.Errorf("fixture name %q is not a base filename", name)
 	}
 	path := filepath.Join(dir, name)
 	if info, err := os.Lstat(path); err == nil {
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("refusing to replace symlinked fixture %q", path)
+			return errors.Errorf("refusing to replace symlinked fixture %q", path)
 		}
 		if !info.Mode().IsRegular() {
-			return fmt.Errorf("refusing to replace non-regular fixture %q", path)
+			return errors.Errorf("refusing to replace non-regular fixture %q", path)
 		}
 	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("inspect fixture %q: %w", path, err)
+		return errors.Wrapf(err, "inspect fixture %q", path)
 	}
 
 	temporary, err := os.CreateTemp(dir, ".phase20-fixture-*")
 	if err != nil {
-		return fmt.Errorf("create temporary fixture for %q: %w", path, err)
+		return errors.Wrapf(err, "create temporary fixture for %q", path)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
 	if err := temporary.Chmod(0o644); err != nil {
 		temporary.Close()
-		return fmt.Errorf("set permissions on temporary fixture for %q: %w", path, err)
+		return errors.Wrapf(err, "set permissions on temporary fixture for %q", path)
 	}
-	if _, err := temporary.WriteString(strings.Join(records, "\n") + "\n"); err != nil {
+	if _, err := temporary.Write(renderFixture(records)); err != nil {
 		temporary.Close()
-		return fmt.Errorf("write temporary fixture for %q: %w", path, err)
+		return errors.Wrapf(err, "write temporary fixture for %q", path)
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close temporary fixture for %q: %w", path, err)
+		return errors.Wrapf(err, "close temporary fixture for %q", path)
 	}
 	if err := os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("replace fixture %q: %w", path, err)
+		return errors.Wrapf(err, "replace fixture %q", path)
 	}
 	return nil
 }
