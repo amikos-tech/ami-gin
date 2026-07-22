@@ -90,7 +90,12 @@ Plans:
 2. Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement.
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
-**Plans:** TBD
+**Plans:** 3 plans (2 waves)
+
+Plans:
+- [ ] 21-01-PLAN.md — Typed sink contract, committed-state numeric tests, and buildable parity fixture/golden (SIMD-06, SIMD-07)
+- [ ] 21-02-PLAN.md — Pinned NOTICE, accurate deployment/BIGINT guidance, README activation, and CHANGELOG (SIMD-04, SIMD-05, SIMD-06)
+- [ ] 21-03-PLAN.md — Lifecycle-safe tagged adapter, transform/duplicate-key parity semantics, and default-graph isolation (SIMD-04..07)
 
 ### Phase 22: SIMD Validation, Benchmarks & CI
 
