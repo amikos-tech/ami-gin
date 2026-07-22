@@ -89,7 +89,7 @@ Each task was committed atomically:
 - `go vet -tags simdjson ./...`
 - `go test -tags simdjson -run '^$' ./...`
 - `make simd-isolation-check`
-- `make test` — 1,038 tests passed and one pre-existing fixture-dependent test was skipped.
+- `make test` — completed 1,038 tests with one pre-existing fixture-dependent test skipped.
 
 ## Decisions Made
 
