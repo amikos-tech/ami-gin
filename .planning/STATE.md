@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: "Phase 20 shipped — PR #41"
-stopped_at: Phase 20 complete; Phase 21 unplanned
-last_updated: "2026-07-22T09:52:02.841Z"
-last_activity: 2026-07-22
+status: executing
+stopped_at: Phase 21 planned (3 plans, 2 waves; plan-checker 0 blockers)
+last_updated: "2026-07-22T18:07:23.598Z"
+last_activity: 2026-07-22 -- Phase 21 planning complete
 progress:
   total_phases: 8
   completed_phases: 2
-  total_plans: 3
+  total_plans: 6
   completed_plans: 3
   percent: 25
 ---
@@ -26,9 +26,9 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 21
-Plan: Not started
-Status: Phase 20 shipped — PR #41
-Last activity: 2026-07-22
+Plan: Planned — 21-01, 21-02, 21-03 (2 waves)
+Status: Ready to execute
+Last activity: 2026-07-22 -- Phase 21 planning complete
 
 Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
 
@@ -113,7 +113,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Plan Phase 21: SIMD Parser Adapter.
+- Execute Phase 21: SIMD Parser Adapter (`/gsd:execute-phase 21`). 3 plans, 2 waves: Wave 1 {21-01 typed sink + fixtures, 21-02 NOTICE/docs/CHANGELOG} parallel; Wave 2 {21-03 pin + tagged adapter + build-isolation guard}.
 
 ### Blockers/Concerns
 
@@ -170,8 +170,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-21T08:55:33Z
-Stopped at: Phase 20 complete; Phase 21 unplanned
-Resume file: .planning/phases/20-realistic-benchmark-dataset-foundation/20-CONTEXT.md
+Last session: 2026-07-22T00:00:00.000Z
+Stopped at: Phase 21 planned (3 plans, 2 waves; plan-checker 0 blockers)
+Resume file: .planning/phases/21-simd-parser-adapter/21-01-PLAN.md
 
-**Next step:** Plan Phase 21 before executing it.
+**Next step:** Execute Phase 21 — run `/clear` then `/gsd:execute-phase 21`.
