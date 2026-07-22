@@ -1642,6 +1642,1138 @@ func TestPhase11LoadBenchmarkFixtureUsesCeilRowGroupCount(t *testing.T) {
 	}
 }
 
+func TestPhase20SmokeFixtures(t *testing.T) {
+	focused := make(map[string][][]byte, 3)
+	var combined [][]byte
+
+	for _, fixture := range phase20SmokeFixtures {
+		fixture := fixture
+		t.Run(fixture.name, func(t *testing.T) {
+			info, err := os.Stat(fixture.path)
+			if err != nil {
+				t.Fatalf("Stat(%q) error = %v", fixture.path, err)
+			}
+			if info.Size() > fixture.byteCap {
+				t.Fatalf("Stat(%q).Size() = %d, cap %d", fixture.path, info.Size(), fixture.byteCap)
+			}
+
+			docs, err := phase20LoadRawJSONL(fixture.path)
+			if err != nil {
+				t.Fatalf("phase20LoadRawJSONL(%q) error = %v", fixture.path, err)
+			}
+			if got := len(docs); got != fixture.recordCount {
+				t.Fatalf("len(phase20LoadRawJSONL(%q)) = %d, want %d", fixture.path, got, fixture.recordCount)
+			}
+			if rowGroups := (len(docs) + phase20DocsPerRowGroup - 1) / phase20DocsPerRowGroup; rowGroups <= 1 {
+				t.Fatalf("%q packs into %d row groups, want more than one", fixture.path, rowGroups)
+			}
+			for lineNumber, doc := range docs {
+				if !json.Valid(doc) {
+					t.Fatalf("%q line %d is not valid JSON", fixture.path, lineNumber+1)
+				}
+				if fixture.sourceKind != phase20CombinedSourceKind && phase20RecordSourceKind(t, doc) != fixture.sourceKind {
+					got := phase20RecordSourceKind(t, doc)
+					t.Fatalf("%q line %d source kind = %q, want %q", fixture.path, lineNumber+1, got, fixture.sourceKind)
+				}
+			}
+
+			switch fixture.sourceKind {
+			case phase20NestedSourceKind:
+				assertPhase20NestedShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20MixedArraySourceKind:
+				assertPhase20MixedArrayShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20NumberSourceKind:
+				assertPhase20NumberShape(t, docs)
+				focused[fixture.sourceKind] = docs
+			case phase20CombinedSourceKind:
+				combined = docs
+			}
+		})
+	}
+
+	if len(combined) == 0 {
+		t.Fatal("combined Phase 20 fixture was not loaded")
+	}
+	for i := 0; i < 96; i++ {
+		for offset, sourceKind := range []string{phase20NestedSourceKind, phase20MixedArraySourceKind, phase20NumberSourceKind} {
+			got := combined[i*3+offset]
+			want := focused[sourceKind][i]
+			if !bytes.Equal(got, want) {
+				t.Fatalf("combined line %d is not the raw %s record %d", i*3+offset+1, sourceKind, i+1)
+			}
+			if gotKind := phase20RecordSourceKind(t, got); gotKind != sourceKind {
+				t.Fatalf("combined line %d source kind = %q, want %q", i*3+offset+1, gotKind, sourceKind)
+			}
+		}
+	}
+
+	readme, err := os.ReadFile(phase20ReadmePath)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", phase20ReadmePath, err)
+	}
+	for _, marker := range []string{
+		"synthesized-from-shape",
+		"simdjson `jsonexamples`",
+		"no upstream rows or text are copied",
+		"offline default",
+		"do not download data",
+		"pinned revision",
+		"LICENSE",
+		"NOTICE",
+		phase20ExternalEnableEnvVar,
+		phase20ExternalDirectoryEnvVar,
+	} {
+		if !strings.Contains(string(readme), marker) {
+			t.Fatalf("%q does not contain required policy marker %q", phase20ReadmePath, marker)
+		}
+	}
+}
+
+func TestPhase20LoadRawJSONLRejectsMalformedLines(t *testing.T) {
+	tests := []struct {
+		name     string
+		contents string
+		line     int
+	}{
+		{name: "blank", contents: "{\"ok\":true}\n\n", line: 2},
+		{name: "malformed", contents: "{\"ok\":true}\n{\n", line: 2},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "fixture.jsonl")
+			if err := os.WriteFile(path, []byte(tt.contents), 0o644); err != nil {
+				t.Fatalf("WriteFile(%q) error = %v", path, err)
+			}
+			_, err := phase20LoadRawJSONL(path)
+			if err == nil {
+				t.Fatal("phase20LoadRawJSONL() error = nil, want invalid line rejection")
+			}
+			if !strings.Contains(err.Error(), filepath.Clean(path)) || !strings.Contains(err.Error(), fmt.Sprintf("line %d", tt.line)) {
+				t.Fatalf("phase20LoadRawJSONL() error = %q, want cleaned path and line %d", err, tt.line)
+			}
+		})
+	}
+}
+
+const (
+	phase20DocsPerRowGroup = 32
+	phase20ReadmePath      = "testdata/phase20/README.md"
+
+	phase20ExternalEnableEnvVar     = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
+	phase20ExternalDirectoryEnvVar  = "GIN_PHASE20_SIMDJSON_DIR"
+	phase20NestedSourceKind         = "nested-high-cardinality"
+	phase20MixedArraySourceKind     = "mixed-type-arrays"
+	phase20NumberSourceKind         = "number-heavy"
+	phase20CombinedSourceKind       = "combined"
+	phase20MaxExternalFiles         = 64
+	phase20ExternalReadDirBatch     = 128
+	phase20MaxExternalBytes         = 8 * 1024 * 1024
+	phase20MaxExternalDocumentBytes = 2 * 1024 * 1024
+	phase20MaxExternalJSONDepth     = 64
+)
+
+type phase20SmokeQuery struct {
+	name      string
+	predicate Predicate
+}
+
+type phase20SmokeFixture struct {
+	name        string
+	path        string
+	recordCount int
+	byteCap     int64
+	sourceKind  string
+	query       phase20SmokeQuery
+}
+
+var phase20SmokeFixtures = []phase20SmokeFixture{
+	{
+		name: "nested-high-cardinality", path: "testdata/phase20/nested_high_cardinality.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20NestedSourceKind,
+		query: phase20SmokeQuery{name: "event-category", predicate: EQ("$.event_category", "issue-comment")},
+	},
+	{
+		name: "mixed-type-arrays", path: "testdata/phase20/mixed_type_arrays.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20MixedArraySourceKind,
+		query: phase20SmokeQuery{name: "source-kind", predicate: EQ("$.phase20_source_kind", phase20MixedArraySourceKind)},
+	},
+	{
+		name: "number-heavy", path: "testdata/phase20/number_heavy.jsonl", recordCount: 96, byteCap: 128 * 1024, sourceKind: phase20NumberSourceKind,
+		query: phase20SmokeQuery{name: "range-cohort", predicate: EQ("$.range_cohort", "high")},
+	},
+	{
+		name: "combined", path: "testdata/phase20/combined.jsonl", recordCount: 288, byteCap: 384 * 1024, sourceKind: phase20CombinedSourceKind,
+		query: phase20SmokeQuery{name: "source-kind", predicate: EQ("$.phase20_source_kind", phase20NestedSourceKind)},
+	},
+}
+
+func phase20LoadRawJSONL(path string) ([][]byte, error) {
+	cleanedPath := filepath.Clean(path)
+	file, err := os.Open(cleanedPath)
+	if err != nil {
+		return nil, errors.Wrapf(err, "open Phase 20 fixture %q", cleanedPath)
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	docs := make([][]byte, 0)
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := scanner.Bytes()
+		if len(bytes.TrimSpace(line)) == 0 {
+			return nil, errors.Errorf("read Phase 20 fixture %q line %d: blank JSONL line", cleanedPath, lineNumber)
+		}
+		if !json.Valid(line) {
+			return nil, errors.Errorf("read Phase 20 fixture %q line %d: invalid JSON record", cleanedPath, lineNumber)
+		}
+		docs = append(docs, append([]byte(nil), line...))
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, errors.Wrapf(err, "scan Phase 20 fixture %q", cleanedPath)
+	}
+	return docs, nil
+}
+
+type phase20BenchmarkFixture struct {
+	docs      [][]byte
+	predicate Predicate
+}
+
+func phase20BuildBenchmarkIndex(docs [][]byte) (*GINIndex, error) {
+	if len(docs) == 0 {
+		return nil, errors.New("Phase 20 benchmark fixture contains no documents")
+	}
+
+	rowGroups := (len(docs) + phase20DocsPerRowGroup - 1) / phase20DocsPerRowGroup
+	builder, err := NewBuilder(DefaultConfig(), rowGroups)
+	if err != nil {
+		return nil, errors.Wrap(err, "NewBuilder")
+	}
+	for docIndex, doc := range docs {
+		if err := builder.AddDocument(DocID(docIndex/phase20DocsPerRowGroup), doc); err != nil {
+			return nil, errors.Wrapf(err, "AddDocument(doc=%d)", docIndex)
+		}
+	}
+	idx := builder.Finalize()
+	if idx == nil {
+		return nil, errors.New("Finalize returned nil Phase 20 benchmark index")
+	}
+	return idx, nil
+}
+
+func phase20RunBenchmarkActions(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+
+	b.Run("Build", func(b *testing.B) {
+		phase20BenchmarkBuild(b, fixture)
+	})
+
+	b.Run("Encode", func(b *testing.B) {
+		phase20BenchmarkEncode(b, fixture)
+	})
+
+	b.Run("Query", func(b *testing.B) {
+		phase20BenchmarkQuery(b, fixture)
+	})
+}
+
+func phase20BenchmarkBuild(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := phase20BuildBenchmarkIndex(fixture.docs); err != nil {
+			b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+		}
+	}
+}
+
+func phase20BenchmarkEncode(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	idx, err := phase20BuildBenchmarkIndex(fixture.docs)
+	if err != nil {
+		b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := Encode(idx); err != nil {
+			b.Fatalf("Encode() error = %v", err)
+		}
+	}
+}
+
+func phase20BenchmarkQuery(b *testing.B, fixture phase20BenchmarkFixture) {
+	b.Helper()
+	idx, err := phase20BuildBenchmarkIndex(fixture.docs)
+	if err != nil {
+		b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
+	}
+	predicate := fixture.predicate
+	if predicate.Path == "" {
+		predicate, err = phase20DeriveScalarPathPredicate(idx, fixture.docs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := phase20PreflightQuery(idx, predicate); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = idx.Evaluate([]Predicate{predicate})
+	}
+}
+
+func phase20PreflightQuery(idx *GINIndex, predicate Predicate) error {
+	if idx == nil {
+		return errors.New("Phase 20 query preflight received a nil index")
+	}
+	pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+	if pathID < 0 || entry == nil {
+		return errors.Errorf("Phase 20 query path %q does not resolve to an indexed path", predicate.Path)
+	}
+	if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+		return errors.Errorf("Phase 20 query for %q returned 0 candidate row groups", predicate.Path)
+	}
+	return nil
+}
+
+func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
+	enableValue := os.Getenv(phase20ExternalEnableEnvVar)
+	if enableValue == "" {
+		return nil, false, nil
+	}
+	if enableValue != "1" {
+		return nil, true, errors.Errorf("%s must be exactly 1 when set; got %q", phase20ExternalEnableEnvVar, enableValue)
+	}
+
+	directory := strings.TrimSpace(os.Getenv(phase20ExternalDirectoryEnvVar))
+	if directory == "" {
+		return nil, true, phase20ExternalInputError("directory is not set")
+	}
+	info, err := os.Stat(directory)
+	if err != nil {
+		return nil, true, phase20ExternalInputError("cannot access %q: %v", directory, err)
+	}
+	if !info.IsDir() {
+		return nil, true, phase20ExternalInputError("%q is not a directory", directory)
+	}
+
+	dir, err := os.Open(directory)
+	if err != nil {
+		return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, err)
+	}
+	defer dir.Close()
+
+	paths := make([]string, 0, phase20MaxExternalFiles+1)
+	skippedNonRegular := 0
+	for {
+		entries, readErr := dir.ReadDir(phase20ExternalReadDirBatch)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if !entry.Type().IsRegular() {
+				skippedNonRegular++
+				continue
+			}
+			extension := strings.ToLower(filepath.Ext(entry.Name()))
+			if extension != ".ndjson" && extension != ".jsonl" && extension != ".json" {
+				continue
+			}
+			paths = append(paths, filepath.Join(directory, entry.Name()))
+			if len(paths) > phase20MaxExternalFiles {
+				return nil, true, phase20ExternalInputError("%q contains more than %d supported files, maximum is %d", directory, phase20MaxExternalFiles, phase20MaxExternalFiles)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, readErr)
+		}
+	}
+	sort.Strings(paths)
+	if len(paths) == 0 {
+		if skippedNonRegular > 0 {
+			return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files; skipped %d non-regular entries (symlinks are not followed)", directory, skippedNonRegular)
+		}
+		return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files", directory)
+	}
+	return paths, true, nil
+}
+
+func phase20ExternalInputError(format string, args ...any) error {
+	return errors.Errorf(
+		"%s=1 with %s must provide readable top-level .ndjson, .jsonl, or .json files: "+format,
+		append([]any{phase20ExternalEnableEnvVar, phase20ExternalDirectoryEnvVar}, args...)...,
+	)
+}
+
+func phase20DiscoverExternalDocuments() ([][]byte, bool, error) {
+	paths, enabled, err := phase20ExternalBenchmarkPaths()
+	if err != nil || !enabled {
+		return nil, enabled, err
+	}
+
+	docs, err := phase20LoadExternalDocumentPaths(paths, phase20MaxExternalBytes)
+	if err != nil {
+		return nil, true, err
+	}
+	if len(docs) == 0 {
+		return nil, true, phase20ExternalInputError("supported files contain no nonblank JSON documents")
+	}
+	return docs, true, nil
+}
+
+func phase20LoadExternalDocumentPaths(paths []string, byteBudget int64) ([][]byte, error) {
+	docs := make([][]byte, 0)
+	remainingBytes := byteBudget
+	for _, path := range paths {
+		fileDocs, bytesRead, err := phase20LoadExternalDocuments(path, remainingBytes)
+		if err != nil {
+			return nil, err
+		}
+		remainingBytes -= bytesRead
+		docs = append(docs, fileDocs...)
+	}
+	return docs, nil
+}
+
+func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, int64, error) {
+	if remainingBytes <= 0 {
+		return nil, 0, phase20ExternalInputError("external input exceeds the %d-byte total limit", phase20MaxExternalBytes)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, 0, phase20ExternalInputError("cannot read %q: %v", path, err)
+	}
+	defer file.Close()
+	limit := min(int64(phase20MaxExternalDocumentBytes), remainingBytes)
+	if strings.EqualFold(filepath.Ext(path), ".json") {
+		data, err := io.ReadAll(io.LimitReader(file, limit+1))
+		if err != nil {
+			return nil, 0, phase20ExternalInputError("cannot read %q: %v", path, err)
+		}
+		if int64(len(data)) > limit {
+			return nil, 0, phase20ExternalInputError("%q exceeds the %d-byte document or remaining input limit", path, limit)
+		}
+		if !json.Valid(data) {
+			return nil, 0, phase20ExternalInputError("%q is not valid JSON", path)
+		}
+		if err := phase20ValidateExternalDocumentDepth(data); err != nil {
+			return nil, 0, phase20ExternalInputError("%q failed corpus validation: %v", path, err)
+		}
+		return [][]byte{append([]byte(nil), data...)}, int64(len(data)), nil
+	}
+
+	scanner := bufio.NewScanner(file)
+	scanner.Split(phase20ScanLineWithDelimiter)
+	scanner.Buffer(make([]byte, 0, 64*1024), min(phase20MaxExternalDocumentBytes, int(remainingBytes)))
+	docs := make([][]byte, 0)
+	lineNumber := 0
+	var bytesRead int64
+	for scanner.Scan() {
+		lineNumber++
+		rawLine := scanner.Bytes()
+		bytesRead += int64(len(rawLine))
+		if bytesRead > remainingBytes {
+			return nil, 0, phase20ExternalInputError("%q exceeds the %d-byte remaining input limit", path, remainingBytes)
+		}
+		line := bytes.TrimSpace(rawLine)
+		if len(line) == 0 {
+			continue
+		}
+		if !json.Valid(line) {
+			return nil, 0, phase20ExternalInputError("%q line %d is not valid JSON", path, lineNumber)
+		}
+		if err := phase20ValidateExternalDocumentDepth(line); err != nil {
+			return nil, 0, phase20ExternalInputError("%q line %d failed corpus validation: %v", path, lineNumber, err)
+		}
+		docs = append(docs, append([]byte(nil), line...))
+	}
+	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, 0, phase20ExternalInputError("cannot scan %q: JSONL record exceeds the %d-byte document or remaining input limit: %v", path, limit, err)
+		}
+		return nil, 0, phase20ExternalInputError("cannot scan %q: %v", path, err)
+	}
+	return docs, bytesRead, nil
+}
+
+func phase20ValidateExternalDocumentDepth(document []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return errors.Wrap(err, "decode external JSON document for depth validation")
+	}
+	return phase20ValidateExternalValueDepth("$", value, 0)
+}
+
+func phase20ValidateExternalValueDepth(path string, value any, depth int) error {
+	if depth > phase20MaxExternalJSONDepth {
+		return errors.Errorf("JSON depth exceeds %d at %q", phase20MaxExternalJSONDepth, path)
+	}
+	switch value := value.(type) {
+	case map[string]any:
+		for _, key := range sortedObjectKeys(value) {
+			if err := phase20ValidateExternalValueDepth(phase20JSONPathChild(path, key), value[key], depth+1); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for index, element := range value {
+			if err := phase20ValidateExternalValueDepth(fmt.Sprintf("%s[%d]", path, index), element, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Keep LF and CRLF delimiters in each token so aggregate accounting includes newline bytes.
+func phase20ScanLineWithDelimiter(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if index := bytes.IndexByte(data, '\n'); index >= 0 {
+		return index + 1, data[:index+1], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+func phase20ExternalBenchmarkFixture(b *testing.B) phase20BenchmarkFixture {
+	b.Helper()
+	docs, enabled, err := phase20DiscoverExternalDocuments()
+	if !enabled {
+		b.Skipf("set %s=1 and %s=/path/to/simdjson/jsonexamples to enable local external input", phase20ExternalEnableEnvVar, phase20ExternalDirectoryEnvVar)
+	}
+	if err != nil {
+		b.Fatal(err)
+	}
+	return phase20BenchmarkFixture{docs: docs}
+}
+
+func phase20DeriveScalarPathPredicate(idx *GINIndex, docs [][]byte) (Predicate, error) {
+	var firstRejection error
+	for _, doc := range docs {
+		decoder := json.NewDecoder(bytes.NewReader(doc))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return Predicate{}, errors.Wrap(err, "decode local external JSON document")
+		}
+		path, ok, rejection := phase20FirstScalarPath(idx, "$", value)
+		if ok {
+			return IsNotNull(path), nil
+		}
+		if firstRejection == nil && rejection != nil {
+			firstRejection = rejection
+		}
+	}
+	if firstRejection != nil {
+		return Predicate{}, phase20ExternalInputError("cannot derive an indexed scalar predicate: %v", firstRejection)
+	}
+	return Predicate{}, phase20ExternalInputError("no supported non-null scalar leaf was found")
+}
+
+func phase20FirstScalarPath(idx *GINIndex, path string, value any) (string, bool, error) {
+	switch value := value.(type) {
+	case nil:
+		return "", false, errors.Errorf("scalar candidate at %q is null", path)
+	case bool, string, json.Number, float64:
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return "", false, errors.Wrapf(err, "scalar candidate path %q is unsupported", path)
+		}
+		pathID, entry := idx.findPath(canonicalPath)
+		if pathID < 0 || entry == nil {
+			return "", false, errors.Errorf("scalar candidate path %q is not indexed", path)
+		}
+		return entry.PathName, true, nil
+	case map[string]any:
+		var firstRejection error
+		for _, key := range sortedObjectKeys(value) {
+			childPath, ok, rejection := phase20FirstScalarPath(idx, phase20JSONPathChild(path, key), value[key])
+			if ok {
+				return childPath, true, nil
+			}
+			if firstRejection == nil && rejection != nil {
+				firstRejection = rejection
+			}
+		}
+		return "", false, firstRejection
+	case []any:
+		var firstRejection error
+		for _, element := range value {
+			childPath, ok, rejection := phase20FirstScalarPath(idx, path+"[*]", element)
+			if ok {
+				return childPath, true, nil
+			}
+			if firstRejection == nil && rejection != nil {
+				firstRejection = rejection
+			}
+		}
+		return "", false, firstRejection
+	}
+	return "", false, errors.Errorf("value at %q has unsupported type %T", path, value)
+}
+
+func phase20JSONPathChild(path, key string) string {
+	if phase20JSONPathIdentifier(key) {
+		return path + "." + key
+	}
+	return path + "[" + strconv.Quote(key) + "]"
+}
+
+func phase20JSONPathIdentifier(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		char := key[i]
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') || char == '_' || (i > 0 && char >= '0' && char <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func TestPhase20ExternalTier(t *testing.T) {
+	t.Run("enable-gate", func(t *testing.T) {
+		t.Setenv(phase20ExternalDirectoryEnvVar, filepath.Join(t.TempDir(), "not-read"))
+		originalEnableValue, hadOriginalEnableValue := os.LookupEnv(phase20ExternalEnableEnvVar)
+		t.Cleanup(func() {
+			if hadOriginalEnableValue {
+				_ = os.Setenv(phase20ExternalEnableEnvVar, originalEnableValue)
+				return
+			}
+			_ = os.Unsetenv(phase20ExternalEnableEnvVar)
+		})
+		if err := os.Unsetenv(phase20ExternalEnableEnvVar); err != nil {
+			t.Fatal(err)
+		}
+		paths, enabled, err := phase20ExternalBenchmarkPaths()
+		if err != nil || enabled || len(paths) != 0 {
+			t.Fatalf("phase20ExternalBenchmarkPaths() with unset gate = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+		}
+
+		t.Setenv(phase20ExternalEnableEnvVar, "")
+		paths, enabled, err = phase20ExternalBenchmarkPaths()
+		if err != nil || enabled || len(paths) != 0 {
+			t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+		}
+
+		for _, enableValue := range []string{"0", "true", "yes", " 1 "} {
+			t.Run("reject-"+fmt.Sprintf("%q", enableValue), func(t *testing.T) {
+				t.Setenv(phase20ExternalEnableEnvVar, enableValue)
+				paths, enabled, err := phase20ExternalBenchmarkPaths()
+				if err == nil || !enabled || len(paths) != 0 {
+					t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want nonempty-value configuration error", paths, enabled, err)
+				}
+				if !strings.Contains(err.Error(), phase20ExternalEnableEnvVar) || !strings.Contains(err.Error(), "exactly 1") {
+					t.Fatalf("phase20ExternalBenchmarkPaths() error = %q, want exact enable-value guidance", err)
+				}
+				if strings.Contains(err.Error(), "not-read") {
+					t.Fatalf("phase20ExternalBenchmarkPaths() error = %q, directory was accessed before rejecting enable value", err)
+				}
+			})
+		}
+	})
+
+	t.Run("enabled-errors-name-configuration", func(t *testing.T) {
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		for _, directory := range []struct {
+			name  string
+			setup func(t *testing.T) string
+		}{
+			{name: "absent", setup: func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+			{name: "empty", setup: func(t *testing.T) string { return t.TempDir() }},
+			{name: "unsupported", setup: func(t *testing.T) string {
+				directory := t.TempDir()
+				if err := os.WriteFile(filepath.Join(directory, "input.txt"), []byte("not JSON"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return directory
+			}},
+			{name: "invalid", setup: func(t *testing.T) string {
+				directory := t.TempDir()
+				if err := os.WriteFile(filepath.Join(directory, "input.jsonl"), []byte("{\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return directory
+			}},
+		} {
+			directory := directory
+			t.Run(directory.name, func(t *testing.T) {
+				t.Setenv(phase20ExternalDirectoryEnvVar, directory.setup(t))
+				_, _, err := phase20DiscoverExternalDocuments()
+				if err == nil || !strings.Contains(err.Error(), phase20ExternalEnableEnvVar) || !strings.Contains(err.Error(), phase20ExternalDirectoryEnvVar) {
+					t.Fatalf("phase20DiscoverExternalDocuments() error = %v, want both environment variable names", err)
+				}
+			})
+		}
+	})
+
+	t.Run("symlinks-are-not-followed", func(t *testing.T) {
+		directory := t.TempDir()
+		target := filepath.Join(t.TempDir(), "target.json")
+		if err := os.WriteFile(target, []byte(`{"ok":true}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(directory, "input.json")); err != nil {
+			t.Skipf("cannot create symlink on this platform: %v", err)
+		}
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		_, _, err := phase20ExternalBenchmarkPaths()
+		if err == nil || !strings.Contains(err.Error(), "skipped 1 non-regular") || !strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want skipped-non-regular and symlink policy", err)
+		}
+	})
+
+	t.Run("empty-directory-does-not-mention-symlinks", func(t *testing.T) {
+		directory := t.TempDir()
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		_, _, err := phase20ExternalBenchmarkPaths()
+		if err == nil || !strings.Contains(err.Error(), "no supported regular top-level files") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want empty-directory message", err)
+		}
+		if strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, must not blame symlinks for an empty directory", err)
+		}
+	})
+
+	t.Run("valid-files-are-sorted-and-queryable", func(t *testing.T) {
+		directory := t.TempDir()
+		if err := os.WriteFile(filepath.Join(directory, "a.jsonl"), []byte("{\"z\":null,\"nested\":{\"leaf\":false}}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(directory, "b.json"), []byte("{\"second\":true}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		docs, enabled, err := phase20DiscoverExternalDocuments()
+		if err != nil || !enabled || len(docs) != 2 {
+			t.Fatalf("phase20DiscoverExternalDocuments() = (%d docs, %v, %v), want (2, true, nil)", len(docs), enabled, err)
+		}
+		if !bytes.Equal(docs[0], []byte("{\"z\":null,\"nested\":{\"leaf\":false}}")) || !bytes.Equal(docs[1], []byte("{\"second\":true}")) {
+			t.Fatalf("phase20DiscoverExternalDocuments() returned documents out of sorted path order: %q", docs)
+		}
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
+		if err != nil || predicate.Operator != OpIsNotNull || predicate.Path != "$.nested.leaf" {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.nested.leaf)", predicate, err)
+		}
+		if err := phase20PreflightQuery(idx, predicate); err != nil {
+			t.Fatalf("phase20PreflightQuery() error = %v", err)
+		}
+	})
+}
+
+func TestPhase20ExternalResourceLimitsAndAccounting(t *testing.T) {
+	t.Run("file-count", func(t *testing.T) {
+		directory := t.TempDir()
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		for i := 0; i <= phase20MaxExternalFiles; i++ {
+			path := filepath.Join(directory, fmt.Sprintf("%03d.jsonl", i))
+			if err := os.WriteFile(path, []byte("{\"ok\":true}\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, _, err := phase20ExternalBenchmarkPaths(); err == nil {
+			t.Fatal("phase20ExternalBenchmarkPaths() error = nil, want file-count limit rejection")
+		}
+	})
+
+	t.Run("current-shaped-document-fits", func(t *testing.T) {
+		const documentBytes = 1727204
+		prefix := []byte(`{"payload":"`)
+		suffix := []byte(`"}`)
+		data := append(append(append([]byte(nil), prefix...), bytes.Repeat([]byte("x"), documentBytes-len(prefix)-len(suffix))...), suffix...)
+		if len(data) != documentBytes {
+			t.Fatalf("synthetic document size = %d, want %d", len(data), documentBytes)
+		}
+		path := filepath.Join(t.TempDir(), "citm_catalog-shaped.json")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		docs, bytesRead, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes)
+		if err != nil || len(docs) != 1 || bytesRead != documentBytes {
+			t.Fatalf("phase20LoadExternalDocuments() = (%d docs, %d bytes, %v), want (1, %d, nil)", len(docs), bytesRead, err, documentBytes)
+		}
+	})
+
+	t.Run("document-and-scanner-limits", func(t *testing.T) {
+		prefix := []byte(`{"value":"`)
+		suffix := []byte(`"}`)
+		oversized := append(append(append([]byte(nil), prefix...), bytes.Repeat([]byte("x"), phase20MaxExternalDocumentBytes+1-len(prefix)-len(suffix))...), suffix...)
+		jsonPath := filepath.Join(t.TempDir(), "large.json")
+		if err := os.WriteFile(jsonPath, oversized, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := phase20LoadExternalDocuments(jsonPath, phase20MaxExternalBytes); err == nil {
+			t.Fatal("phase20LoadExternalDocuments() error = nil, want document-size limit rejection")
+		}
+
+		jsonlPath := filepath.Join(t.TempDir(), "large.jsonl")
+		if err := os.WriteFile(jsonlPath, append(oversized, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := phase20LoadExternalDocuments(jsonlPath, phase20MaxExternalBytes)
+		if err == nil || !strings.Contains(err.Error(), filepath.Clean(jsonlPath)) || !strings.Contains(err.Error(), "JSONL record exceeds") {
+			t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual scanner-too-long rejection", err)
+		}
+	})
+
+	for _, test := range []struct {
+		name     string
+		contents string
+		wantDocs int
+	}{
+		{name: "lf", contents: "{\"a\":true}\n{\"b\":false}\n", wantDocs: 2},
+		{name: "crlf", contents: "{\"a\":true}\r\n{\"b\":false}\r\n", wantDocs: 2},
+		{name: "unterminated-final-record", contents: "{\"a\":true}\n{\"b\":false}", wantDocs: 2},
+		{name: "blank-lines-skipped-but-counted", contents: "\n\n{\"a\":true}\n", wantDocs: 1},
+		{name: "blank-crlf-lines-skipped-but-counted", contents: "\r\n{\"a\":true}\r\n\r\n", wantDocs: 1},
+	} {
+		test := test
+		t.Run(test.name+"-byte-accounting", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "input.jsonl")
+			if err := os.WriteFile(path, []byte(test.contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			docs, bytesRead, err := phase20LoadExternalDocuments(path, int64(len(test.contents)))
+			if err != nil || len(docs) != test.wantDocs || bytesRead != int64(len(test.contents)) {
+				t.Fatalf("phase20LoadExternalDocuments() = (%d docs, %d bytes, %v), want (%d, %d, nil)", len(docs), bytesRead, err, test.wantDocs, len(test.contents))
+			}
+		})
+	}
+
+	t.Run("aggregate-budget-decrements-across-files", func(t *testing.T) {
+		directory := t.TempDir()
+		first := []byte("{\"a\":true}\n")
+		second := []byte("{\"b\":true}\n")
+		paths := []string{filepath.Join(directory, "a.jsonl"), filepath.Join(directory, "b.jsonl")}
+		if err := os.WriteFile(paths[0], first, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(paths[1], second, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		budget := int64(len(first) + len(second))
+		if docs, err := phase20LoadExternalDocumentPaths(paths, budget); err != nil || len(docs) != 2 {
+			t.Fatalf("phase20LoadExternalDocumentPaths() = (%d docs, %v), want (2, nil)", len(docs), err)
+		}
+		if _, err := phase20LoadExternalDocumentPaths(paths, budget-1); err == nil || !strings.Contains(err.Error(), "remaining input limit") {
+			t.Fatalf("phase20LoadExternalDocumentPaths() error = %v, want cross-file aggregate rejection", err)
+		}
+	})
+}
+
+func TestPhase20ExternalDepthValidation(t *testing.T) {
+	document := phase20ExternalDepthDocument(t, phase20MaxExternalJSONDepth+1)
+	for _, test := range []struct {
+		name     string
+		filename string
+		contents []byte
+	}{
+		{name: "json", filename: "deep.json", contents: document},
+		{name: "jsonl", filename: "deep.jsonl", contents: append(append([]byte(nil), document...), '\n')},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.filename)
+			if err := os.WriteFile(path, test.contents, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), "depth") || !strings.Contains(err.Error(), filepath.Clean(path)) {
+				t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual depth rejection", err)
+			}
+		})
+	}
+
+	directory := t.TempDir()
+	discoveryPath := filepath.Join(directory, "deep.json")
+	if err := os.WriteFile(discoveryPath, document, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(phase20ExternalEnableEnvVar, "1")
+	t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+	if _, enabled, err := phase20DiscoverExternalDocuments(); err == nil || !enabled || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), filepath.Clean(discoveryPath)) {
+		t.Fatalf("phase20DiscoverExternalDocuments() = (enabled=%v, error=%v), want contextual depth rejection", enabled, err)
+	}
+}
+
+func phase20ExternalDepthDocument(t *testing.T, nestedObjects int) []byte {
+	t.Helper()
+	var deep any = true
+	for i := 0; i < nestedObjects; i++ {
+		if i%2 == 0 {
+			deep = map[string]any{"next": deep}
+		} else {
+			deep = []any{deep}
+		}
+	}
+	document, err := json.Marshal(map[string]any{"a_shallow": true, "z_deep": deep})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func TestPhase20DerivedQueryUsesResolvedPath(t *testing.T) {
+	t.Run("special-keys-are-skipped", func(t *testing.T) {
+		docs := [][]byte{[]byte(`{"a.b":"first","user-name":"second","z_safe":true}`)}
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"a.b", "user-name"} {
+			candidate := phase20JSONPathChild("$", key)
+			if pathID, entry := idx.findPath(candidate); pathID >= 0 || entry != nil {
+				t.Fatalf("idx.findPath(%q) = (%d, %#v), want (-1, nil)", candidate, pathID, entry)
+			}
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
+		if err != nil || predicate.Path != "$.z_safe" || predicate.Operator != OpIsNotNull {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.z_safe)", predicate, err)
+		}
+		pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+		if pathID < 0 || entry == nil {
+			t.Fatalf("idx.resolvePredicatePath(%q) = (%d, %#v), want resolved path", predicate.Path, pathID, entry)
+		}
+		if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+			t.Fatal("resolved derived predicate returned no candidate row groups")
+		}
+	})
+
+	t.Run("null-candidate-does-not-hide-later-safe-scalar", func(t *testing.T) {
+		docs := [][]byte{[]byte(`{"a_null":null,"z_safe":true}`)}
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
+		if err != nil || predicate.Path != "$.z_safe" || predicate.Operator != OpIsNotNull {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.z_safe)", predicate, err)
+		}
+		pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+		if pathID < 0 || entry == nil {
+			t.Fatalf("idx.resolvePredicatePath(%q) = (%d, %#v), want resolved path", predicate.Path, pathID, entry)
+		}
+		if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+			t.Fatal("resolved derived predicate returned no candidate row groups")
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		doc     string
+		message string
+	}{
+		{name: "null-only", doc: `{"only":null}`, message: "is null"},
+		{name: "no-scalar", doc: `{"empty":{}}`, message: "no supported non-null scalar leaf"},
+		{name: "unresolved-only", doc: `{"user-name":"value"}`, message: "not indexed"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			docs := [][]byte{[]byte(test.doc)}
+			idx, err := phase20BuildBenchmarkIndex(docs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := phase20DeriveScalarPathPredicate(idx, docs); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("phase20DeriveScalarPathPredicate() error = %v, want %q", err, test.message)
+			}
+		})
+	}
+
+	idx, err := phase20BuildBenchmarkIndex([][]byte{[]byte(`{"safe":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, rejection := phase20FirstScalarPath(idx, "$[", true); ok || rejection == nil || !strings.Contains(rejection.Error(), "invalid JSONPath") {
+		t.Fatalf("phase20FirstScalarPath() = (ok=%v, error=%v), want invalid-syntax rejection", ok, rejection)
+	}
+}
+
+func TestPhase20QueryPreflight(t *testing.T) {
+	idx, err := phase20BuildBenchmarkIndex([][]byte{[]byte(`{"safe":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase20PreflightQuery(idx, Predicate{}); err == nil || !strings.Contains(err.Error(), "does not resolve") {
+		t.Fatalf("phase20PreflightQuery(empty) error = %v, want unresolved-path rejection", err)
+	}
+	if err := phase20PreflightQuery(idx, IsNotNull("$.safe")); err != nil {
+		t.Fatalf("phase20PreflightQuery(IsNotNull) error = %v, want valid all-row-groups result", err)
+	}
+	if err := phase20PreflightQuery(idx, EQ("$.safe", false)); err == nil || !strings.Contains(err.Error(), "0 candidate row groups") {
+		t.Fatalf("phase20PreflightQuery(zero-result) error = %v, want warm-up rejection", err)
+	}
+}
+
+func BenchmarkPhase20RealisticJSON(b *testing.B) {
+	for _, fixture := range phase20SmokeFixtures {
+		fixture := fixture
+		b.Run(fmt.Sprintf("tier=smoke/fixture=%s", fixture.name), func(b *testing.B) {
+			docs, err := phase20LoadRawJSONL(fixture.path)
+			if err != nil {
+				b.Fatalf("phase20LoadRawJSONL(%q) error = %v", fixture.path, err)
+			}
+			phase20RunBenchmarkActions(b, phase20BenchmarkFixture{docs: docs, predicate: fixture.query.predicate})
+		})
+	}
+
+	b.Run("tier=external/fixture=local-example", func(b *testing.B) {
+		b.Run("Build", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkBuild(b, fixture)
+		})
+		b.Run("Encode", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkEncode(b, fixture)
+		})
+		b.Run("Query", func(b *testing.B) {
+			fixture := phase20ExternalBenchmarkFixture(b)
+			phase20BenchmarkQuery(b, fixture)
+		})
+	})
+}
+
+func phase20RecordSourceKind(t *testing.T, doc []byte) string {
+	t.Helper()
+	var record struct {
+		SourceKind string `json:"phase20_source_kind"`
+	}
+	if err := json.Unmarshal(doc, &record); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	return record.SourceKind
+}
+
+func assertPhase20NestedShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	categories := make(map[string]struct{})
+	users := make(map[string]struct{})
+	repositories := make(map[string]struct{})
+	urls := make(map[string]struct{})
+	for _, doc := range docs {
+		var record struct {
+			EventCategory  string `json:"event_category"`
+			Timestamp      string `json:"timestamp"`
+			URL            string `json:"url"`
+			SearchableText string `json:"searchable_text"`
+			Actor          struct {
+				User struct {
+					Login string `json:"login"`
+				} `json:"user"`
+			} `json:"actor"`
+			Repository struct {
+				Name string `json:"name"`
+				URL  string `json:"url"`
+			} `json:"repository"`
+		}
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(nested record) error = %v", err)
+		}
+		if record.EventCategory == "" || record.Timestamp == "" || record.URL == "" || record.SearchableText == "" || record.Actor.User.Login == "" || record.Repository.Name == "" || record.Repository.URL == "" {
+			t.Fatalf("nested record misses required searchable or nested fields: %s", doc)
+		}
+		categories[record.EventCategory] = struct{}{}
+		users[record.Actor.User.Login] = struct{}{}
+		repositories[record.Repository.Name] = struct{}{}
+		urls[record.URL] = struct{}{}
+	}
+	if len(categories) < 2 || len(users) < 2 || len(repositories) < 2 || len(urls) < 2 {
+		t.Fatalf("nested fixture lacks variation: categories=%d users=%d repositories=%d urls=%d", len(categories), len(users), len(repositories), len(urls))
+	}
+}
+
+func assertPhase20MixedArrayShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	seen := make(map[string]bool)
+	for _, doc := range docs {
+		var record struct {
+			Values []json.RawMessage `json:"wildcard_values"`
+		}
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(mixed record) error = %v", err)
+		}
+		for _, value := range record.Values {
+			raw := string(value)
+			switch {
+			case raw == "null":
+				seen["null"] = true
+			case raw == "true" || raw == "false":
+				seen["boolean"] = true
+			case strings.HasPrefix(raw, "\""):
+				seen["string"] = true
+			case strings.HasPrefix(raw, "{"):
+				seen["object"] = true
+			case raw == "[]":
+				seen["empty-array"] = true
+			case strings.Contains(raw, "."):
+				seen["decimal"] = true
+			default:
+				seen["integer"] = true
+			}
+		}
+	}
+	for _, kind := range []string{"string", "integer", "decimal", "boolean", "null", "object", "empty-array"} {
+		if !seen[kind] {
+			t.Fatalf("mixed-array fixture is missing %s under wildcard_values", kind)
+		}
+	}
+}
+
+func assertPhase20NumberShape(t *testing.T, docs [][]byte) {
+	t.Helper()
+	cohorts := make(map[string]bool)
+	for _, doc := range docs {
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(doc, &record); err != nil {
+			t.Fatalf("json.Unmarshal(number record) error = %v", err)
+		}
+		for field, want := range map[string]string{
+			"signed_int64_max":     "9223372036854775807",
+			"signed_int64_min":     "-9223372036854775807",
+			"exact_float_boundary": "9007199254740993",
+		} {
+			if got := string(record[field]); got != want {
+				t.Fatalf("number record %s = %q, want unquoted %q", field, got, want)
+			}
+		}
+		if !strings.Contains(string(record["decimal_value"]), ".") || string(record["timestamp"]) == "\"\"" || len(record["epoch_ms"]) == 0 {
+			t.Fatalf("number record is missing decimal, timestamp, or epoch fields: %s", doc)
+		}
+		var cohort string
+		if err := json.Unmarshal(record["range_cohort"], &cohort); err != nil {
+			t.Fatalf("json.Unmarshal(range_cohort) error = %v", err)
+		}
+		cohorts[cohort] = true
+	}
+	for _, cohort := range []string{"low", "mid", "high"} {
+		if !cohorts[cohort] {
+			t.Fatalf("number fixture is missing %s range cohort", cohort)
+		}
+	}
+}
+
 const (
 	phase11SmokeFixturePath      = "testdata/phase11/github_archive_smoke.jsonl"
 	phase11CorpusRootEnvVar      = "GIN_PHASE11_GITHUB_ARCHIVE_ROOT"

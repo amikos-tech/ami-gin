@@ -17,6 +17,9 @@ linters:
     - unconvert
     - unparam
   settings:
+    goconst:
+      ignore-string-values:
+        - '^(true|false)$'
     gocritic:
       disable-all: false
     gosec:

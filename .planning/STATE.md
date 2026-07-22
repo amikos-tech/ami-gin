@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: shipped
-stopped_at: Phase 19 shipped — PR #35 ready for review
-last_updated: "2026-04-28T00:00:00Z"
-last_activity: "2026-04-28 - Phase 19 shipped via PR #35; SIMD dependency, distribution, API, CI, and stop/fallback decisions locked"
+status: "Phase 20 shipped — PR #41"
+stopped_at: Phase 20 complete; Phase 21 unplanned
+last_updated: "2026-07-22T09:52:02.841Z"
+last_activity: 2026-07-22
 progress:
-  total_phases: 7
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 14
+  total_phases: 8
+  completed_phases: 2
+  total_plans: 3
+  completed_plans: 3
+  percent: 25
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** v1.3 SIMD-First Performance
+**Current focus:** Phase 21 — SIMD Parser Adapter
 
 ## Current Position
 
-Phase: 20
-Plan: Ready to plan — Realistic Benchmark Dataset Foundation
-Status: Phase 19 complete and verified; Phase 20 remains independent, and Phase 21 can consume the Phase 19 strategy when its turn starts
-Last activity: 2026-04-28 - Phase 19 shipped via PR #35; branch phase/19-simd-dependency pushed for review
+Phase: 21
+Plan: Not started
+Status: Phase 20 shipped — PR #41
+Last activity: 2026-07-22
 
-Progress: [#---------] 14% for v1.3 (1/7 phases complete, 1/1 planned executions complete)
+Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
 
 ## Performance Metrics
 
@@ -104,7 +104,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - 100% requirement coverage — no orphans
 - v1.3 milestone planned 2026-04-27 from backlog and SEED-001, then reprioritized SIMD-first:
   - Phase 19: SIMD Dependency Decision & Integration Strategy — SIMD-01..03 (complete 2026-04-27)
-  - Phase 20: Realistic Benchmark Dataset Foundation — DATA-01..03
+  - Phase 20: Realistic Benchmark Dataset Foundation — DATA-01..03 (complete 2026-07-21)
   - Phase 21: SIMD Parser Adapter — SIMD-04..07
   - Phase 22: SIMD Validation, Benchmarks & CI — SIMD-08..11
   - Phase 23: Row-Level Pruning Positioning — POS-01..02
@@ -113,7 +113,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Discuss or plan Phase 20: Realistic Benchmark Dataset Foundation.
+- Plan Phase 21: SIMD Parser Adapter.
 
 ### Blockers/Concerns
 
@@ -146,9 +146,11 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Quick Tasks Completed (v1.3)
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260428a | Phase 19 validation review feedback: remove root test coupled to archivable planning artifacts | 2026-04-28 | 390b669 | [260428a-address-phase19-validation-review](./quick/260428a-address-phase19-validation-review/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260428a | Phase 19 validation review feedback: remove root test coupled to archivable planning artifacts | 2026-04-28 | 390b669 |  | [260428a-address-phase19-validation-review](./quick/260428a-address-phase19-validation-review/) |
+| 260722-eje | Address Phase 20 benchmark review findings and harden external corpus coverage | 2026-07-22 | ff5fe7e | Verified | [260722-eje-address-phase-20-benchmark-review-findin](./quick/260722-eje-address-phase-20-benchmark-review-findin/) |
+| 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | this commit | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
 
 ## Deferred Items
 
@@ -167,8 +169,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-04-24T14:46:00Z
-Stopped at: Phase 18 verified
-Resume file: .planning/phases/18-structured-ingesterror-cli-integration/18-VERIFICATION.md
+Last session: 2026-07-21T08:55:33Z
+Stopped at: Phase 20 complete; Phase 21 unplanned
+Resume file: .planning/phases/20-realistic-benchmark-dataset-foundation/20-CONTEXT.md
 
-**Next step:** `$gsd-discuss-phase 19` to resolve SIMD dependency and integration strategy, or `$gsd-plan-phase 19` to plan directly.
+**Next step:** Plan Phase 21 before executing it.

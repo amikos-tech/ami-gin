@@ -631,6 +631,26 @@ Validation contract:
 
 Pinned provenance and interpretation live in [`11-BENCHMARK-RESULTS.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-BENCHMARK-RESULTS.md) and [`11-REAL-CORPUS-REPORT.md`](./.planning/phases/11-real-corpus-prefix-compression-benchmarking/11-REAL-CORPUS-REPORT.md).
 
+### Phase 20 Realistic JSON Workflow
+
+The default Phase 20 corpus is the four checked-in synthesized fixtures in `testdata/phase20/*.jsonl`: nested high-cardinality, mixed-type arrays, number-heavy, and their combined stream. It runs offline and does not download data.
+
+```bash
+go test ./... -run '^$' -bench '^BenchmarkPhase20RealisticJSON/tier=smoke' -benchtime=1x -count=1 -benchmem
+```
+
+`-benchtime=1x -count=1` provides one reproducible pass over the finite prepared fixture work.
+
+For a deliberate local run against top-level simdjson examples, provide both variables explicitly. The enable flag must be exactly `1`; leaving it unset or empty disables the tier, and any other nonempty value is a configuration error.
+
+```bash
+GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 GIN_PHASE20_SIMDJSON_DIR=/path/to/simdjson/jsonexamples go test ./... -run '^$' -bench 'BenchmarkPhase20RealisticJSON/tier=external/fixture=local-example' -benchtime=1x -count=1 -benchmem
+```
+
+That selector runs the registered Build, Encode, and Query leaves. Local input may use regular top-level `.ndjson`, `.jsonl`, or single-document `.json` files; symlinks are not followed. Loading is limited to 64 files, 8 MiB total, 2 MiB per document, and JSON depth 64. The Query action derives and resolves an indexed scalar-path presence query from the local input, so it does not expect a particular simdjson example schema.
+
+This repository neither downloads simdjson data nor vendors copied upstream example rows. Any future direct redistribution requires a pinned-revision LICENSE/NOTICE review.
+
 ### Performance Summary (Apple M3 Max)
 
 | Operation | Latency | Notes |
