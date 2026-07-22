@@ -1769,6 +1769,7 @@ const (
 	phase20NumberSourceKind         = "number-heavy"
 	phase20CombinedSourceKind       = "combined"
 	phase20MaxExternalFiles         = 64
+	phase20ExternalReadDirBatch     = 128
 	phase20MaxExternalBytes         = 8 * 1024 * 1024
 	phase20MaxExternalDocumentBytes = 2 * 1024 * 1024
 	phase20MaxExternalJSONDepth     = 64
@@ -1963,25 +1964,39 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 		return nil, true, phase20ExternalInputError("%q is not a directory", directory)
 	}
 
-	entries, err := os.ReadDir(directory)
+	dir, err := os.Open(directory)
 	if err != nil {
 		return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, err)
 	}
-	paths := make([]string, 0, len(entries))
+	defer dir.Close()
+
+	paths := make([]string, 0, phase20MaxExternalFiles+1)
 	skippedNonRegular := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
+	for {
+		entries, readErr := dir.ReadDir(phase20ExternalReadDirBatch)
+		for _, entry := range entries {
+			if entry.IsDir() {
+				continue
+			}
+			if !entry.Type().IsRegular() {
+				skippedNonRegular++
+				continue
+			}
+			extension := strings.ToLower(filepath.Ext(entry.Name()))
+			if extension != ".ndjson" && extension != ".jsonl" && extension != ".json" {
+				continue
+			}
+			paths = append(paths, filepath.Join(directory, entry.Name()))
+			if len(paths) > phase20MaxExternalFiles {
+				return nil, true, phase20ExternalInputError("%q contains more than %d supported files, maximum is %d", directory, phase20MaxExternalFiles, phase20MaxExternalFiles)
+			}
 		}
-		if !entry.Type().IsRegular() {
-			skippedNonRegular++
-			continue
+		if readErr == io.EOF {
+			break
 		}
-		extension := strings.ToLower(filepath.Ext(entry.Name()))
-		if extension != ".ndjson" && extension != ".jsonl" && extension != ".json" {
-			continue
+		if readErr != nil {
+			return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, readErr)
 		}
-		paths = append(paths, filepath.Join(directory, entry.Name()))
 	}
 	sort.Strings(paths)
 	if len(paths) == 0 {
@@ -1989,9 +2004,6 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 			return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files; skipped %d non-regular entries (symlinks are not followed)", directory, skippedNonRegular)
 		}
 		return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files", directory)
-	}
-	if len(paths) > phase20MaxExternalFiles {
-		return nil, true, phase20ExternalInputError("%q contains %d supported files, maximum is %d", directory, len(paths), phase20MaxExternalFiles)
 	}
 	return paths, true, nil
 }
