@@ -1968,8 +1968,13 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 		return nil, true, phase20ExternalInputError("cannot read %q: %v", directory, err)
 	}
 	paths := make([]string, 0, len(entries))
+	skippedNonRegular := 0
 	for _, entry := range entries {
-		if entry.IsDir() || !entry.Type().IsRegular() {
+		if entry.IsDir() {
+			continue
+		}
+		if !entry.Type().IsRegular() {
+			skippedNonRegular++
 			continue
 		}
 		extension := strings.ToLower(filepath.Ext(entry.Name()))
@@ -1980,7 +1985,10 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 	}
 	sort.Strings(paths)
 	if len(paths) == 0 {
-		return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files; symlinks are not followed", directory)
+		if skippedNonRegular > 0 {
+			return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files; skipped %d non-regular entries (symlinks are not followed)", directory, skippedNonRegular)
+		}
+		return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files", directory)
 	}
 	if len(paths) > phase20MaxExternalFiles {
 		return nil, true, phase20ExternalInputError("%q contains %d supported files, maximum is %d", directory, len(paths), phase20MaxExternalFiles)
@@ -2078,7 +2086,10 @@ func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, 
 		docs = append(docs, append([]byte(nil), line...))
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, 0, phase20ExternalInputError("cannot scan %q: JSONL record exceeds the %d-byte document or remaining input limit: %v", path, limit, err)
+		if errors.Is(err, bufio.ErrTooLong) {
+			return nil, 0, phase20ExternalInputError("cannot scan %q: JSONL record exceeds the %d-byte document or remaining input limit: %v", path, limit, err)
+		}
+		return nil, 0, phase20ExternalInputError("cannot scan %q: %v", path, err)
 	}
 	return docs, bytesRead, nil
 }
@@ -2311,8 +2322,21 @@ func TestPhase20ExternalTier(t *testing.T) {
 		t.Setenv(phase20ExternalEnableEnvVar, "1")
 		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
 		_, _, err := phase20ExternalBenchmarkPaths()
-		if err == nil || !strings.Contains(err.Error(), "regular top-level") || !strings.Contains(err.Error(), "symlinks are not followed") {
-			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want regular-file and symlink policy", err)
+		if err == nil || !strings.Contains(err.Error(), "skipped 1 non-regular") || !strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want skipped-non-regular and symlink policy", err)
+		}
+	})
+
+	t.Run("empty-directory-does-not-mention-symlinks", func(t *testing.T) {
+		directory := t.TempDir()
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		_, _, err := phase20ExternalBenchmarkPaths()
+		if err == nil || !strings.Contains(err.Error(), "no supported regular top-level files") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want empty-directory message", err)
+		}
+		if strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, must not blame symlinks for an empty directory", err)
 		}
 	})
 
@@ -2411,6 +2435,8 @@ func TestPhase20ExternalResourceLimitsAndAccounting(t *testing.T) {
 		{name: "lf", contents: "{\"a\":true}\n{\"b\":false}\n", wantDocs: 2},
 		{name: "crlf", contents: "{\"a\":true}\r\n{\"b\":false}\r\n", wantDocs: 2},
 		{name: "unterminated-final-record", contents: "{\"a\":true}\n{\"b\":false}", wantDocs: 2},
+		{name: "blank-lines-skipped-but-counted", contents: "\n\n{\"a\":true}\n", wantDocs: 1},
+		{name: "blank-crlf-lines-skipped-but-counted", contents: "\r\n{\"a\":true}\r\n\r\n", wantDocs: 1},
 	} {
 		test := test
 		t.Run(test.name+"-byte-accounting", func(t *testing.T) {
