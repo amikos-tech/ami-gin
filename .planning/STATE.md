@@ -150,7 +150,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 |---|-------------|------|--------|--------|-----------|
 | 260428a | Phase 19 validation review feedback: remove root test coupled to archivable planning artifacts | 2026-04-28 | 390b669 |  | [260428a-address-phase19-validation-review](./quick/260428a-address-phase19-validation-review/) |
 | 260722-eje | Address Phase 20 benchmark review findings and harden external corpus coverage | 2026-07-22 | ff5fe7e | Verified | [260722-eje-address-phase-20-benchmark-review-findin](./quick/260722-eje-address-phase-20-benchmark-review-findin/) |
-| 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | this commit | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
+| 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | 001970c | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
+| 260722-li1 | Fix #43: reuse zstd encoder/decoder in serialize.go (was constructing per call, ~589 MB/op Encode → ~1000x fewer bytes, 3-7x faster) | 2026-07-22 | this commit | Verified | [260722-li1-reuse-zstd-encoder-decoder-in-serialize-](./quick/260722-li1-reuse-zstd-encoder-decoder-in-serialize-/) |
 
 ## Deferred Items
 

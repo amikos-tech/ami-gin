@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/klauspost/compress/zstd"
@@ -221,6 +222,49 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 	}
 }
 
+// zstd codecs are reused across calls: constructing one per Encode/Decode
+// allocated hundreds of MB, and EncodeAll/DecodeAll are documented safe for
+// concurrent use. Reuse (not single-threading) is what bounds memory now, so
+// each shared encoder keeps the default GOMAXPROCS-sized pool and concurrent
+// encodes at the same level run in parallel. The cache is keyed by the
+// collapsed zstd.EncoderLevel (4 modes), not the raw numeric level: without
+// that, levels 10-19 would each retain a separate SpeedBestCompression state.
+// Shared instances are never Closed.
+var (
+	zstdEncoderMu sync.Mutex
+	zstdEncoders  = map[zstd.EncoderLevel]*zstd.Encoder{}
+
+	zstdDecoderOnce sync.Once
+	zstdDecoder     *zstd.Decoder
+	zstdDecoderErr  error
+)
+
+func sharedZstdEncoder(level CompressionLevel) (*zstd.Encoder, error) {
+	encLevel := zstd.EncoderLevelFromZstd(int(level))
+	zstdEncoderMu.Lock()
+	defer zstdEncoderMu.Unlock()
+	if enc, ok := zstdEncoders[encLevel]; ok {
+		return enc, nil
+	}
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderLevel(encLevel))
+	if err != nil {
+		return nil, err
+	}
+	zstdEncoders[encLevel] = enc
+	return enc, nil
+}
+
+func sharedZstdDecoder() (*zstd.Decoder, error) {
+	zstdDecoderOnce.Do(func() {
+		zstdDecoder, zstdDecoderErr = zstd.NewReader(nil,
+			zstd.WithDecoderMaxMemory(maxDecodedIndexSize),
+			zstd.WithDecoderMaxWindow(maxDecodedIndexSize),
+			zstd.WithDecodeAllCapLimit(true),
+		)
+	})
+	return zstdDecoder, zstdDecoderErr
+}
+
 // Encode serializes the index using zstd-15 compression (recommended default).
 // It delegates to EncodeContext with context.Background().
 func Encode(idx *GINIndex) ([]byte, error) {
@@ -289,11 +333,15 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 
 	var buf bytes.Buffer
 
+	// Compute the serialized flags locally: idx is documented immutable after
+	// Finalize/Decode and may be encoded concurrently, so encode must not
+	// mutate idx.Header.Flags.
+	flags := idx.Header.Flags
 	if len(idx.DocIDMapping) > 0 {
-		idx.Header.Flags |= FlagHasDocIDMap
+		flags |= FlagHasDocIDMap
 	}
 
-	if err := writeHeader(&buf, idx); err != nil {
+	if err := writeHeader(&buf, idx, flags); err != nil {
 		return nil, errors.Wrap(err, "write header")
 	}
 
@@ -333,7 +381,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 		return nil, errors.Wrap(err, "write hyperloglog")
 	}
 
-	if idx.Header.Flags&FlagHasDocIDMap != 0 {
+	if flags&FlagHasDocIDMap != 0 {
 		if err := writeDocIDMapping(&buf, idx.DocIDMapping); err != nil {
 			return nil, errors.Wrap(err, "write docid mapping")
 		}
@@ -350,12 +398,10 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
 	}
 
-	encoder, err := zstd.NewWriter(nil,
-		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(int(level))))
+	encoder, err := sharedZstdEncoder(level)
 	if err != nil {
 		return nil, errors.Wrap(err, "create zstd encoder")
 	}
-	defer func() { _ = encoder.Close() }()
 
 	compressed := encoder.EncodeAll(buf.Bytes(), nil)
 	return append([]byte(compressedMagic), compressed...), nil
@@ -413,15 +459,10 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	case uncompressedMagic:
 		decompressed = data[4:]
 	case compressedMagic:
-		decoder, err := zstd.NewReader(nil,
-			zstd.WithDecoderMaxMemory(maxDecodedIndexSize),
-			zstd.WithDecoderMaxWindow(maxDecodedIndexSize),
-			zstd.WithDecodeAllCapLimit(true),
-		)
+		decoder, err := sharedZstdDecoder()
 		if err != nil {
 			return nil, errors.Wrap(err, "create zstd decoder")
 		}
-		defer decoder.Close()
 
 		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
 		if err != nil {
@@ -528,14 +569,14 @@ func classifySerializeError(err error) string {
 	return telemetry.ErrorTypeOther
 }
 
-func writeHeader(w io.Writer, idx *GINIndex) error {
+func writeHeader(w io.Writer, idx *GINIndex, flags uint16) error {
 	if _, err := w.Write(idx.Header.Magic[:]); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, idx.Header.Version); err != nil {
 		return err
 	}
-	if err := binary.Write(w, binary.LittleEndian, idx.Header.Flags); err != nil {
+	if err := binary.Write(w, binary.LittleEndian, flags); err != nil {
 		return err
 	}
 	if err := binary.Write(w, binary.LittleEndian, idx.Header.NumRowGroups); err != nil {
