@@ -32,7 +32,7 @@ created: 2026-07-21
 | T20-I01 | Information disclosure | Fixture provenance | mitigate | Fixtures are synthesized and checked in; documentation prohibits upstream-row copying, downloads, and vendoring. | closed |
 | T20-E01 | Elevation of privilege | Generator and local tier | mitigate | The generator has four fixed outputs and no command or network execution; the local tier accepts only regular top-level JSON-family files. | closed |
 | T20-T02 | Tampering | Fixture refresh generator | mitigate | The generator rejects symlink and non-regular destinations, then atomically renames a temporary file created inside the fixture directory. | closed |
-| T20-D01 | Denial of service | Enabled local-data tier | mitigate | Local input is limited to 64 files, 8 MiB total, 1 MiB per document, and 64 traversal levels; it is read as a bounded stream and counts LF and CRLF delimiters. | closed |
+| T20-D01 | Denial of service | Enabled local-data tier | mitigate | Local input is limited to 64 files, 8 MiB total, 2 MiB per document, and 64 traversal levels; it is read as a bounded stream and counts LF and CRLF delimiters. | closed |
 
 *Status: open · closed*
 *Disposition: mitigate (implementation required) · accept (documented risk) · transfer (third-party)*

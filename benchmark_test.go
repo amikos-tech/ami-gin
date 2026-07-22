@@ -1762,18 +1762,15 @@ const (
 	phase20DocsPerRowGroup = 32
 	phase20ReadmePath      = "testdata/phase20/README.md"
 
-	GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
-	GIN_PHASE20_SIMDJSON_DIR             = "GIN_PHASE20_SIMDJSON_DIR"
-
-	phase20ExternalEnableEnvVar     = GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL
-	phase20ExternalDirectoryEnvVar  = GIN_PHASE20_SIMDJSON_DIR
+	phase20ExternalEnableEnvVar     = "GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL"
+	phase20ExternalDirectoryEnvVar  = "GIN_PHASE20_SIMDJSON_DIR"
 	phase20NestedSourceKind         = "nested-high-cardinality"
 	phase20MixedArraySourceKind     = "mixed-type-arrays"
 	phase20NumberSourceKind         = "number-heavy"
 	phase20CombinedSourceKind       = "combined"
 	phase20MaxExternalFiles         = 64
 	phase20MaxExternalBytes         = 8 * 1024 * 1024
-	phase20MaxExternalDocumentBytes = 1024 * 1024
+	phase20MaxExternalDocumentBytes = 2 * 1024 * 1024
 	phase20MaxExternalJSONDepth     = 64
 )
 
@@ -1914,22 +1911,47 @@ func phase20BenchmarkQuery(b *testing.B, fixture phase20BenchmarkFixture) {
 	if err != nil {
 		b.Fatalf("phase20BuildBenchmarkIndex() error = %v", err)
 	}
-	if got := idx.Evaluate([]Predicate{fixture.predicate}).Count(); got == 0 {
-		b.Fatalf("query for %q returned 0 candidate row groups", fixture.predicate.Path)
+	predicate := fixture.predicate
+	if predicate.Path == "" {
+		predicate, err = phase20DeriveScalarPathPredicate(idx, fixture.docs)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+	if err := phase20PreflightQuery(idx, predicate); err != nil {
+		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = idx.Evaluate([]Predicate{fixture.predicate})
+		_ = idx.Evaluate([]Predicate{predicate})
 	}
 }
 
+func phase20PreflightQuery(idx *GINIndex, predicate Predicate) error {
+	if idx == nil {
+		return errors.New("Phase 20 query preflight received a nil index")
+	}
+	pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+	if pathID < 0 || entry == nil {
+		return errors.Errorf("Phase 20 query path %q does not resolve to an indexed path", predicate.Path)
+	}
+	if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+		return errors.Errorf("Phase 20 query for %q returned 0 candidate row groups", predicate.Path)
+	}
+	return nil
+}
+
 func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
-	if os.Getenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL) != "1" {
+	enableValue := os.Getenv(phase20ExternalEnableEnvVar)
+	if enableValue == "" {
 		return nil, false, nil
 	}
+	if enableValue != "1" {
+		return nil, true, errors.Errorf("%s must be exactly 1 when set; got %q", phase20ExternalEnableEnvVar, enableValue)
+	}
 
-	directory := strings.TrimSpace(os.Getenv(GIN_PHASE20_SIMDJSON_DIR))
+	directory := strings.TrimSpace(os.Getenv(phase20ExternalDirectoryEnvVar))
 	if directory == "" {
 		return nil, true, phase20ExternalInputError("directory is not set")
 	}
@@ -1958,7 +1980,7 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 	}
 	sort.Strings(paths)
 	if len(paths) == 0 {
-		return nil, true, phase20ExternalInputError("%q contains no supported top-level files", directory)
+		return nil, true, phase20ExternalInputError("%q contains no supported regular top-level files; symlinks are not followed", directory)
 	}
 	if len(paths) > phase20MaxExternalFiles {
 		return nil, true, phase20ExternalInputError("%q contains %d supported files, maximum is %d", directory, len(paths), phase20MaxExternalFiles)
@@ -1969,7 +1991,7 @@ func phase20ExternalBenchmarkPaths() ([]string, bool, error) {
 func phase20ExternalInputError(format string, args ...any) error {
 	return errors.Errorf(
 		"%s=1 with %s must provide readable top-level .ndjson, .jsonl, or .json files: "+format,
-		append([]any{GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, GIN_PHASE20_SIMDJSON_DIR}, args...)...,
+		append([]any{phase20ExternalEnableEnvVar, phase20ExternalDirectoryEnvVar}, args...)...,
 	)
 }
 
@@ -1979,20 +2001,28 @@ func phase20DiscoverExternalDocuments() ([][]byte, bool, error) {
 		return nil, enabled, err
 	}
 
-	docs := make([][]byte, 0)
-	remainingBytes := int64(phase20MaxExternalBytes)
-	for _, path := range paths {
-		fileDocs, bytesRead, err := phase20LoadExternalDocuments(path, remainingBytes)
-		if err != nil {
-			return nil, true, err
-		}
-		remainingBytes -= bytesRead
-		docs = append(docs, fileDocs...)
+	docs, err := phase20LoadExternalDocumentPaths(paths, phase20MaxExternalBytes)
+	if err != nil {
+		return nil, true, err
 	}
 	if len(docs) == 0 {
 		return nil, true, phase20ExternalInputError("supported files contain no nonblank JSON documents")
 	}
 	return docs, true, nil
+}
+
+func phase20LoadExternalDocumentPaths(paths []string, byteBudget int64) ([][]byte, error) {
+	docs := make([][]byte, 0)
+	remainingBytes := byteBudget
+	for _, path := range paths {
+		fileDocs, bytesRead, err := phase20LoadExternalDocuments(path, remainingBytes)
+		if err != nil {
+			return nil, err
+		}
+		remainingBytes -= bytesRead
+		docs = append(docs, fileDocs...)
+	}
+	return docs, nil
 }
 
 func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, int64, error) {
@@ -2015,6 +2045,9 @@ func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, 
 		}
 		if !json.Valid(data) {
 			return nil, 0, phase20ExternalInputError("%q is not valid JSON", path)
+		}
+		if err := phase20ValidateExternalDocumentDepth(data); err != nil {
+			return nil, 0, phase20ExternalInputError("%q failed corpus validation: %v", path, err)
 		}
 		return [][]byte{append([]byte(nil), data...)}, int64(len(data)), nil
 	}
@@ -2039,14 +2072,49 @@ func phase20LoadExternalDocuments(path string, remainingBytes int64) ([][]byte, 
 		if !json.Valid(line) {
 			return nil, 0, phase20ExternalInputError("%q line %d is not valid JSON", path, lineNumber)
 		}
+		if err := phase20ValidateExternalDocumentDepth(line); err != nil {
+			return nil, 0, phase20ExternalInputError("%q line %d failed corpus validation: %v", path, lineNumber, err)
+		}
 		docs = append(docs, append([]byte(nil), line...))
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, 0, phase20ExternalInputError("cannot scan %q: %v", path, err)
+		return nil, 0, phase20ExternalInputError("cannot scan %q: JSONL record exceeds the %d-byte document or remaining input limit: %v", path, limit, err)
 	}
 	return docs, bytesRead, nil
 }
 
+func phase20ValidateExternalDocumentDepth(document []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return errors.Wrap(err, "decode external JSON document for depth validation")
+	}
+	return phase20ValidateExternalValueDepth("$", value, 0)
+}
+
+func phase20ValidateExternalValueDepth(path string, value any, depth int) error {
+	if depth > phase20MaxExternalJSONDepth {
+		return errors.Errorf("JSON depth exceeds %d at %q", phase20MaxExternalJSONDepth, path)
+	}
+	switch value := value.(type) {
+	case map[string]any:
+		for _, key := range sortedObjectKeys(value) {
+			if err := phase20ValidateExternalValueDepth(phase20JSONPathChild(path, key), value[key], depth+1); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for index, element := range value {
+			if err := phase20ValidateExternalValueDepth(fmt.Sprintf("%s[%d]", path, index), element, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Keep LF and CRLF delimiters in each token so aggregate accounting includes newline bytes.
 func phase20ScanLineWithDelimiter(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	if index := bytes.IndexByte(data, '\n'); index >= 0 {
 		return index + 1, data[:index+1], nil
@@ -2061,19 +2129,16 @@ func phase20ExternalBenchmarkFixture(b *testing.B) phase20BenchmarkFixture {
 	b.Helper()
 	docs, enabled, err := phase20DiscoverExternalDocuments()
 	if !enabled {
-		b.Skipf("set %s=1 and %s=/path/to/simdjson/jsonexamples to enable local external input", GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, GIN_PHASE20_SIMDJSON_DIR)
+		b.Skipf("set %s=1 and %s=/path/to/simdjson/jsonexamples to enable local external input", phase20ExternalEnableEnvVar, phase20ExternalDirectoryEnvVar)
 	}
 	if err != nil {
 		b.Fatal(err)
 	}
-	predicate, err := phase20DeriveScalarPathPredicate(docs)
-	if err != nil {
-		b.Fatal(err)
-	}
-	return phase20BenchmarkFixture{docs: docs, predicate: predicate}
+	return phase20BenchmarkFixture{docs: docs}
 }
 
-func phase20DeriveScalarPathPredicate(docs [][]byte) (Predicate, error) {
+func phase20DeriveScalarPathPredicate(idx *GINIndex, docs [][]byte) (Predicate, error) {
+	var firstRejection error
 	for _, doc := range docs {
 		decoder := json.NewDecoder(bytes.NewReader(doc))
 		decoder.UseNumber()
@@ -2081,36 +2146,60 @@ func phase20DeriveScalarPathPredicate(docs [][]byte) (Predicate, error) {
 		if err := decoder.Decode(&value); err != nil {
 			return Predicate{}, errors.Wrap(err, "decode local external JSON document")
 		}
-		if path, ok := phase20FirstScalarPath("$", value, 0); ok {
+		path, ok, rejection := phase20FirstScalarPath(idx, "$", value)
+		if ok {
 			return IsNotNull(path), nil
 		}
+		if firstRejection == nil && rejection != nil {
+			firstRejection = rejection
+		}
+	}
+	if firstRejection != nil {
+		return Predicate{}, phase20ExternalInputError("cannot derive an indexed scalar predicate: %v", firstRejection)
 	}
 	return Predicate{}, phase20ExternalInputError("no supported non-null scalar leaf was found")
 }
 
-func phase20FirstScalarPath(path string, value any, depth int) (string, bool) {
-	if depth > phase20MaxExternalJSONDepth {
-		return "", false
-	}
+func phase20FirstScalarPath(idx *GINIndex, path string, value any) (string, bool, error) {
 	switch value := value.(type) {
 	case nil:
-		return "", false
+		return "", false, errors.Errorf("scalar candidate at %q is null", path)
 	case bool, string, json.Number, float64:
-		return path, ValidateJSONPath(path) == nil
+		canonicalPath, err := canonicalizeSupportedPath(path)
+		if err != nil {
+			return "", false, errors.Wrapf(err, "scalar candidate path %q is unsupported", path)
+		}
+		pathID, entry := idx.findPath(canonicalPath)
+		if pathID < 0 || entry == nil {
+			return "", false, errors.Errorf("scalar candidate path %q is not indexed", path)
+		}
+		return entry.PathName, true, nil
 	case map[string]any:
+		var firstRejection error
 		for _, key := range sortedObjectKeys(value) {
-			if childPath, ok := phase20FirstScalarPath(phase20JSONPathChild(path, key), value[key], depth+1); ok {
-				return childPath, true
+			childPath, ok, rejection := phase20FirstScalarPath(idx, phase20JSONPathChild(path, key), value[key])
+			if ok {
+				return childPath, true, nil
+			}
+			if firstRejection == nil && rejection != nil {
+				firstRejection = rejection
 			}
 		}
+		return "", false, firstRejection
 	case []any:
+		var firstRejection error
 		for _, element := range value {
-			if childPath, ok := phase20FirstScalarPath(path+"[*]", element, depth+1); ok {
-				return childPath, true
+			childPath, ok, rejection := phase20FirstScalarPath(idx, path+"[*]", element)
+			if ok {
+				return childPath, true, nil
+			}
+			if firstRejection == nil && rejection != nil {
+				firstRejection = rejection
 			}
 		}
+		return "", false, firstRejection
 	}
-	return "", false
+	return "", false, errors.Errorf("value at %q has unsupported type %T", path, value)
 }
 
 func phase20JSONPathChild(path, key string) string {
@@ -2135,19 +2224,49 @@ func phase20JSONPathIdentifier(key string) bool {
 }
 
 func TestPhase20ExternalTier(t *testing.T) {
-	t.Setenv(GIN_PHASE20_SIMDJSON_DIR, filepath.Join(t.TempDir(), "not-read"))
-	for _, enableValue := range []string{"", "true"} {
-		t.Run("disabled-"+fmt.Sprintf("%q", enableValue), func(t *testing.T) {
-			t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, enableValue)
-			paths, enabled, err := phase20ExternalBenchmarkPaths()
-			if err != nil || enabled || len(paths) != 0 {
-				t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+	t.Run("enable-gate", func(t *testing.T) {
+		t.Setenv(phase20ExternalDirectoryEnvVar, filepath.Join(t.TempDir(), "not-read"))
+		originalEnableValue, hadOriginalEnableValue := os.LookupEnv(phase20ExternalEnableEnvVar)
+		t.Cleanup(func() {
+			if hadOriginalEnableValue {
+				_ = os.Setenv(phase20ExternalEnableEnvVar, originalEnableValue)
+				return
 			}
+			_ = os.Unsetenv(phase20ExternalEnableEnvVar)
 		})
-	}
+		if err := os.Unsetenv(phase20ExternalEnableEnvVar); err != nil {
+			t.Fatal(err)
+		}
+		paths, enabled, err := phase20ExternalBenchmarkPaths()
+		if err != nil || enabled || len(paths) != 0 {
+			t.Fatalf("phase20ExternalBenchmarkPaths() with unset gate = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+		}
+
+		t.Setenv(phase20ExternalEnableEnvVar, "")
+		paths, enabled, err = phase20ExternalBenchmarkPaths()
+		if err != nil || enabled || len(paths) != 0 {
+			t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want (nil, false, nil)", paths, enabled, err)
+		}
+
+		for _, enableValue := range []string{"0", "true", "yes", " 1 "} {
+			t.Run("reject-"+fmt.Sprintf("%q", enableValue), func(t *testing.T) {
+				t.Setenv(phase20ExternalEnableEnvVar, enableValue)
+				paths, enabled, err := phase20ExternalBenchmarkPaths()
+				if err == nil || !enabled || len(paths) != 0 {
+					t.Fatalf("phase20ExternalBenchmarkPaths() = (%v, %v, %v), want nonempty-value configuration error", paths, enabled, err)
+				}
+				if !strings.Contains(err.Error(), phase20ExternalEnableEnvVar) || !strings.Contains(err.Error(), "exactly 1") {
+					t.Fatalf("phase20ExternalBenchmarkPaths() error = %q, want exact enable-value guidance", err)
+				}
+				if strings.Contains(err.Error(), "not-read") {
+					t.Fatalf("phase20ExternalBenchmarkPaths() error = %q, directory was accessed before rejecting enable value", err)
+				}
+			})
+		}
+	})
 
 	t.Run("enabled-errors-name-configuration", func(t *testing.T) {
-		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
 		for _, directory := range []struct {
 			name  string
 			setup func(t *testing.T) string
@@ -2171,12 +2290,29 @@ func TestPhase20ExternalTier(t *testing.T) {
 		} {
 			directory := directory
 			t.Run(directory.name, func(t *testing.T) {
-				t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory.setup(t))
+				t.Setenv(phase20ExternalDirectoryEnvVar, directory.setup(t))
 				_, _, err := phase20DiscoverExternalDocuments()
-				if err == nil || !strings.Contains(err.Error(), GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL) || !strings.Contains(err.Error(), GIN_PHASE20_SIMDJSON_DIR) {
+				if err == nil || !strings.Contains(err.Error(), phase20ExternalEnableEnvVar) || !strings.Contains(err.Error(), phase20ExternalDirectoryEnvVar) {
 					t.Fatalf("phase20DiscoverExternalDocuments() error = %v, want both environment variable names", err)
 				}
 			})
+		}
+	})
+
+	t.Run("symlinks-are-not-followed", func(t *testing.T) {
+		directory := t.TempDir()
+		target := filepath.Join(t.TempDir(), "target.json")
+		if err := os.WriteFile(target, []byte(`{"ok":true}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(directory, "input.json")); err != nil {
+			t.Skipf("cannot create symlink on this platform: %v", err)
+		}
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+		_, _, err := phase20ExternalBenchmarkPaths()
+		if err == nil || !strings.Contains(err.Error(), "regular top-level") || !strings.Contains(err.Error(), "symlinks are not followed") {
+			t.Fatalf("phase20ExternalBenchmarkPaths() error = %v, want regular-file and symlink policy", err)
 		}
 	})
 
@@ -2188,8 +2324,8 @@ func TestPhase20ExternalTier(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(directory, "b.json"), []byte("{\"second\":true}"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
-		t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory)
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
 		docs, enabled, err := phase20DiscoverExternalDocuments()
 		if err != nil || !enabled || len(docs) != 2 {
 			t.Fatalf("phase20DiscoverExternalDocuments() = (%d docs, %v, %v), want (2, true, nil)", len(docs), enabled, err)
@@ -2197,17 +2333,25 @@ func TestPhase20ExternalTier(t *testing.T) {
 		if !bytes.Equal(docs[0], []byte("{\"z\":null,\"nested\":{\"leaf\":false}}")) || !bytes.Equal(docs[1], []byte("{\"second\":true}")) {
 			t.Fatalf("phase20DiscoverExternalDocuments() returned documents out of sorted path order: %q", docs)
 		}
-		predicate, err := phase20DeriveScalarPathPredicate(docs)
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
 		if err != nil || predicate.Operator != OpIsNotNull || predicate.Path != "$.nested.leaf" {
 			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.nested.leaf)", predicate, err)
 		}
+		if err := phase20PreflightQuery(idx, predicate); err != nil {
+			t.Fatalf("phase20PreflightQuery() error = %v", err)
+		}
 	})
+}
 
-	t.Run("external-input-resource-limits", func(t *testing.T) {
+func TestPhase20ExternalResourceLimitsAndAccounting(t *testing.T) {
+	t.Run("file-count", func(t *testing.T) {
 		directory := t.TempDir()
-		t.Setenv(GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL, "1")
-		t.Setenv(GIN_PHASE20_SIMDJSON_DIR, directory)
-
+		t.Setenv(phase20ExternalEnableEnvVar, "1")
+		t.Setenv(phase20ExternalDirectoryEnvVar, directory)
 		for i := 0; i <= phase20MaxExternalFiles; i++ {
 			path := filepath.Join(directory, fmt.Sprintf("%03d.jsonl", i))
 			if err := os.WriteFile(path, []byte("{\"ok\":true}\n"), 0o644); err != nil {
@@ -2217,31 +2361,232 @@ func TestPhase20ExternalTier(t *testing.T) {
 		if _, _, err := phase20ExternalBenchmarkPaths(); err == nil {
 			t.Fatal("phase20ExternalBenchmarkPaths() error = nil, want file-count limit rejection")
 		}
+	})
 
-		path := filepath.Join(t.TempDir(), "large.json")
-		if err := os.WriteFile(path, append([]byte(`{"value":"`), append(bytes.Repeat([]byte("x"), phase20MaxExternalDocumentBytes), []byte(`"}`)...)...), 0o644); err != nil {
+	t.Run("current-shaped-document-fits", func(t *testing.T) {
+		const documentBytes = 1727204
+		prefix := []byte(`{"payload":"`)
+		suffix := []byte(`"}`)
+		data := append(append(append([]byte(nil), prefix...), bytes.Repeat([]byte("x"), documentBytes-len(prefix)-len(suffix))...), suffix...)
+		if len(data) != documentBytes {
+			t.Fatalf("synthetic document size = %d, want %d", len(data), documentBytes)
+		}
+		path := filepath.Join(t.TempDir(), "citm_catalog-shaped.json")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil {
+		docs, bytesRead, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes)
+		if err != nil || len(docs) != 1 || bytesRead != documentBytes {
+			t.Fatalf("phase20LoadExternalDocuments() = (%d docs, %d bytes, %v), want (1, %d, nil)", len(docs), bytesRead, err, documentBytes)
+		}
+	})
+
+	t.Run("document-and-scanner-limits", func(t *testing.T) {
+		prefix := []byte(`{"value":"`)
+		suffix := []byte(`"}`)
+		oversized := append(append(append([]byte(nil), prefix...), bytes.Repeat([]byte("x"), phase20MaxExternalDocumentBytes+1-len(prefix)-len(suffix))...), suffix...)
+		jsonPath := filepath.Join(t.TempDir(), "large.json")
+		if err := os.WriteFile(jsonPath, oversized, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := phase20LoadExternalDocuments(jsonPath, phase20MaxExternalBytes); err == nil {
 			t.Fatal("phase20LoadExternalDocuments() error = nil, want document-size limit rejection")
 		}
 
-		path = filepath.Join(t.TempDir(), "blank-lines.jsonl")
-		if err := os.WriteFile(path, []byte(strings.Repeat("\n", 17)), 0o644); err != nil {
+		jsonlPath := filepath.Join(t.TempDir(), "large.jsonl")
+		if err := os.WriteFile(jsonlPath, append(oversized, '\n'), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		if _, _, err := phase20LoadExternalDocuments(path, 16); err == nil {
-			t.Fatal("phase20LoadExternalDocuments() error = nil, want aggregate byte-limit rejection")
-		}
-
-		path = filepath.Join(t.TempDir(), "blank-lines-crlf.jsonl")
-		if err := os.WriteFile(path, []byte(strings.Repeat("\r\n", 9)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if _, _, err := phase20LoadExternalDocuments(path, 16); err == nil {
-			t.Fatal("phase20LoadExternalDocuments() error = nil, want CRLF aggregate byte-limit rejection")
+		_, _, err := phase20LoadExternalDocuments(jsonlPath, phase20MaxExternalBytes)
+		if err == nil || !strings.Contains(err.Error(), filepath.Clean(jsonlPath)) || !strings.Contains(err.Error(), "JSONL record exceeds") {
+			t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual scanner-too-long rejection", err)
 		}
 	})
+
+	for _, test := range []struct {
+		name     string
+		contents string
+		wantDocs int
+	}{
+		{name: "lf", contents: "{\"a\":true}\n{\"b\":false}\n", wantDocs: 2},
+		{name: "crlf", contents: "{\"a\":true}\r\n{\"b\":false}\r\n", wantDocs: 2},
+		{name: "unterminated-final-record", contents: "{\"a\":true}\n{\"b\":false}", wantDocs: 2},
+	} {
+		test := test
+		t.Run(test.name+"-byte-accounting", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "input.jsonl")
+			if err := os.WriteFile(path, []byte(test.contents), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			docs, bytesRead, err := phase20LoadExternalDocuments(path, int64(len(test.contents)))
+			if err != nil || len(docs) != test.wantDocs || bytesRead != int64(len(test.contents)) {
+				t.Fatalf("phase20LoadExternalDocuments() = (%d docs, %d bytes, %v), want (%d, %d, nil)", len(docs), bytesRead, err, test.wantDocs, len(test.contents))
+			}
+		})
+	}
+
+	t.Run("aggregate-budget-decrements-across-files", func(t *testing.T) {
+		directory := t.TempDir()
+		first := []byte("{\"a\":true}\n")
+		second := []byte("{\"b\":true}\n")
+		paths := []string{filepath.Join(directory, "a.jsonl"), filepath.Join(directory, "b.jsonl")}
+		if err := os.WriteFile(paths[0], first, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(paths[1], second, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		budget := int64(len(first) + len(second))
+		if docs, err := phase20LoadExternalDocumentPaths(paths, budget); err != nil || len(docs) != 2 {
+			t.Fatalf("phase20LoadExternalDocumentPaths() = (%d docs, %v), want (2, nil)", len(docs), err)
+		}
+		if _, err := phase20LoadExternalDocumentPaths(paths, budget-1); err == nil || !strings.Contains(err.Error(), "remaining input limit") {
+			t.Fatalf("phase20LoadExternalDocumentPaths() error = %v, want cross-file aggregate rejection", err)
+		}
+	})
+}
+
+func TestPhase20ExternalDepthValidation(t *testing.T) {
+	document := phase20ExternalDepthDocument(t, phase20MaxExternalJSONDepth+1)
+	for _, test := range []struct {
+		name     string
+		filename string
+		contents []byte
+	}{
+		{name: "json", filename: "deep.json", contents: document},
+		{name: "jsonl", filename: "deep.jsonl", contents: append(append([]byte(nil), document...), '\n')},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), test.filename)
+			if err := os.WriteFile(path, test.contents, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), "depth") || !strings.Contains(err.Error(), filepath.Clean(path)) {
+				t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual depth rejection", err)
+			}
+		})
+	}
+
+	directory := t.TempDir()
+	discoveryPath := filepath.Join(directory, "deep.json")
+	if err := os.WriteFile(discoveryPath, document, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(phase20ExternalEnableEnvVar, "1")
+	t.Setenv(phase20ExternalDirectoryEnvVar, directory)
+	if _, enabled, err := phase20DiscoverExternalDocuments(); err == nil || !enabled || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), filepath.Clean(discoveryPath)) {
+		t.Fatalf("phase20DiscoverExternalDocuments() = (enabled=%v, error=%v), want contextual depth rejection", enabled, err)
+	}
+}
+
+func phase20ExternalDepthDocument(t *testing.T, nestedObjects int) []byte {
+	t.Helper()
+	var deep any = true
+	for i := 0; i < nestedObjects; i++ {
+		if i%2 == 0 {
+			deep = map[string]any{"next": deep}
+		} else {
+			deep = []any{deep}
+		}
+	}
+	document, err := json.Marshal(map[string]any{"a_shallow": true, "z_deep": deep})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return document
+}
+
+func TestPhase20DerivedQueryUsesResolvedPath(t *testing.T) {
+	t.Run("special-keys-are-skipped", func(t *testing.T) {
+		docs := [][]byte{[]byte(`{"a.b":"first","user-name":"second","z_safe":true}`)}
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, key := range []string{"a.b", "user-name"} {
+			candidate := phase20JSONPathChild("$", key)
+			if pathID, entry := idx.findPath(candidate); pathID >= 0 || entry != nil {
+				t.Fatalf("idx.findPath(%q) = (%d, %#v), want (-1, nil)", candidate, pathID, entry)
+			}
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
+		if err != nil || predicate.Path != "$.z_safe" || predicate.Operator != OpIsNotNull {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.z_safe)", predicate, err)
+		}
+		pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+		if pathID < 0 || entry == nil {
+			t.Fatalf("idx.resolvePredicatePath(%q) = (%d, %#v), want resolved path", predicate.Path, pathID, entry)
+		}
+		if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+			t.Fatal("resolved derived predicate returned no candidate row groups")
+		}
+	})
+
+	t.Run("null-candidate-does-not-hide-later-safe-scalar", func(t *testing.T) {
+		docs := [][]byte{[]byte(`{"a_null":null,"z_safe":true}`)}
+		idx, err := phase20BuildBenchmarkIndex(docs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		predicate, err := phase20DeriveScalarPathPredicate(idx, docs)
+		if err != nil || predicate.Path != "$.z_safe" || predicate.Operator != OpIsNotNull {
+			t.Fatalf("phase20DeriveScalarPathPredicate() = (%#v, %v), want IsNotNull($.z_safe)", predicate, err)
+		}
+		pathID, entry, _ := idx.resolvePredicatePath(predicate.Path, predicate.Value)
+		if pathID < 0 || entry == nil {
+			t.Fatalf("idx.resolvePredicatePath(%q) = (%d, %#v), want resolved path", predicate.Path, pathID, entry)
+		}
+		if got := idx.Evaluate([]Predicate{predicate}).Count(); got == 0 {
+			t.Fatal("resolved derived predicate returned no candidate row groups")
+		}
+	})
+
+	for _, test := range []struct {
+		name    string
+		doc     string
+		message string
+	}{
+		{name: "null-only", doc: `{"only":null}`, message: "is null"},
+		{name: "no-scalar", doc: `{"empty":{}}`, message: "no supported non-null scalar leaf"},
+		{name: "unresolved-only", doc: `{"user-name":"value"}`, message: "not indexed"},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			docs := [][]byte{[]byte(test.doc)}
+			idx, err := phase20BuildBenchmarkIndex(docs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := phase20DeriveScalarPathPredicate(idx, docs); err == nil || !strings.Contains(err.Error(), test.message) {
+				t.Fatalf("phase20DeriveScalarPathPredicate() error = %v, want %q", err, test.message)
+			}
+		})
+	}
+
+	idx, err := phase20BuildBenchmarkIndex([][]byte{[]byte(`{"safe":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, rejection := phase20FirstScalarPath(idx, "$[", true); ok || rejection == nil || !strings.Contains(rejection.Error(), "invalid JSONPath") {
+		t.Fatalf("phase20FirstScalarPath() = (ok=%v, error=%v), want invalid-syntax rejection", ok, rejection)
+	}
+}
+
+func TestPhase20QueryPreflight(t *testing.T) {
+	idx, err := phase20BuildBenchmarkIndex([][]byte{[]byte(`{"safe":true}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := phase20PreflightQuery(idx, Predicate{}); err == nil || !strings.Contains(err.Error(), "does not resolve") {
+		t.Fatalf("phase20PreflightQuery(empty) error = %v, want unresolved-path rejection", err)
+	}
+	if err := phase20PreflightQuery(idx, IsNotNull("$.safe")); err != nil {
+		t.Fatalf("phase20PreflightQuery(IsNotNull) error = %v, want valid all-row-groups result", err)
+	}
+	if err := phase20PreflightQuery(idx, EQ("$.safe", false)); err == nil || !strings.Contains(err.Error(), "0 candidate row groups") {
+		t.Fatalf("phase20PreflightQuery(zero-result) error = %v, want warm-up rejection", err)
+	}
 }
 
 func BenchmarkPhase20RealisticJSON(b *testing.B) {

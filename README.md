@@ -641,13 +641,13 @@ go test ./... -run '^$' -bench '^BenchmarkPhase20RealisticJSON/tier=smoke' -benc
 
 `-benchtime=1x -count=1` provides one reproducible pass over the finite prepared fixture work.
 
-For a deliberate local run against top-level simdjson examples, provide both variables explicitly:
+For a deliberate local run against top-level simdjson examples, provide both variables explicitly. The enable flag must be exactly `1`; leaving it unset or empty disables the tier, and any other nonempty value is a configuration error.
 
 ```bash
 GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 GIN_PHASE20_SIMDJSON_DIR=/path/to/simdjson/jsonexamples go test ./... -run '^$' -bench 'BenchmarkPhase20RealisticJSON/tier=external/fixture=local-example' -benchtime=1x -count=1 -benchmem
 ```
 
-That selector runs the registered Build, Encode, and Query leaves. Local input may use top-level `.ndjson`, `.jsonl`, or single-document `.json` files. The Query action derives a scalar-path presence query from the local input, so it does not expect a particular simdjson example schema.
+That selector runs the registered Build, Encode, and Query leaves. Local input may use regular top-level `.ndjson`, `.jsonl`, or single-document `.json` files; symlinks are not followed. Loading is limited to 64 files, 8 MiB total, 2 MiB per document, and JSON depth 64. The Query action derives and resolves an indexed scalar-path presence query from the local input, so it does not expect a particular simdjson example schema.
 
 This repository neither downloads simdjson data nor vendors copied upstream example rows. Any future direct redistribution requires a pinned-revision LICENSE/NOTICE review.
 
