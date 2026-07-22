@@ -21,6 +21,16 @@ func authoredParityFixtures() []parityFixture {
 			},
 		},
 		{
+			Name:   "simd-numeric-parity",
+			Config: DefaultConfig,
+			NumRGs: 1,
+			JSONDocs: [][]byte{
+				// Keep each numeric class on its own path. Mixing the exact
+				// large integer with floats on one path is intentionally invalid.
+				[]byte(`{"plain_int":1,"whole_float":1.0,"exp_float":1e18,"fraction":1.5,"exact_large_int":9007199254740993}`),
+			},
+		},
+		{
 			Name:   "nulls-and-missing",
 			Config: DefaultConfig,
 			NumRGs: 4,
