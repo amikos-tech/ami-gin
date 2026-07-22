@@ -196,6 +196,31 @@ func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string,
 	return nil
 }
 
+func (s *recordingSink) StageString(_ *documentBuildState, canonicalPath string, v string) error {
+	s.events = append(s.events, fmt.Sprintf("string:%s=%s", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageBool(_ *documentBuildState, canonicalPath string, v bool) error {
+	s.events = append(s.events, fmt.Sprintf("bool:%s=%t", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageInt64(_ *documentBuildState, canonicalPath string, v int64) error {
+	s.events = append(s.events, fmt.Sprintf("int64:%s=%d", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageUint64(_ *documentBuildState, canonicalPath string, v uint64) error {
+	s.events = append(s.events, fmt.Sprintf("uint64:%s=%d", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageFloat64(_ *documentBuildState, canonicalPath string, v float64) error {
+	s.events = append(s.events, fmt.Sprintf("float64:%s=%g", canonicalPath, v))
+	return nil
+}
+
 func (s *recordingSink) StageJSONNumber(_ *documentBuildState, canonicalPath, raw string) error {
 	s.events = append(s.events, "json-number:"+canonicalPath+"="+raw)
 	return nil

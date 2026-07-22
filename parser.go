@@ -5,14 +5,17 @@ import (
 )
 
 // Parser translates one JSON document into staged per-path observations,
-// writing them through the supplied sink. Implementations MUST preserve
-// exact-int64 semantics: integers outside the float64-exact range
-// [-2^53, 2^53] must be reported via sink.StageJSONNumber (raw source
-// text) so the builder's classifier stays the single source of truth
-// for numeric type.
+// writing them through the supplied sink. Implementations MUST preserve the
+// source number's integer or float classification without coercing exact
+// integers through float64. Raw-text parsers use sink.StageJSONNumber so the
+// builder classifies the source lexeme. Exact typed parsers may use
+// sink.StageInt64 or sink.StageUint64 for integers and sink.StageFloat64 for
+// lexeme-classified floats.
 //
-// Parse MUST NOT wrap errors on behalf of the builder. The caller
-// (AddDocument) returns Parse errors verbatim.
+// Parse may add parser-local context to errors it creates. Errors returned by
+// sink Stage callbacks must retain their layer. AddDocument preserves staged
+// error provenance and applies parser hard/soft classification only to errors
+// that did not originate from a Stage callback.
 //
 // External implementability: the sink type referenced by Parse (parserSink)
 // is package-private; third-party Parser implementations outside package gin
@@ -33,7 +36,8 @@ type Parser interface {
 	// call sink.MarkPresent for the container's canonicalPath before
 	// staging children; otherwise IsNull / IsNotNull queries will return
 	// wrong results for that path. All Stage* sink methods (StageScalar,
-	// StageJSONNumber, StageNativeNumeric, StageMaterialized) implicitly
+	// StageString, StageBool, StageInt64, StageUint64, StageFloat64,
+	// StageJSONNumber, StageNativeNumeric, and StageMaterialized) implicitly
 	// mark their path present.
 	Parse(jsonDoc []byte, rgID int, sink parserSink) error
 }
