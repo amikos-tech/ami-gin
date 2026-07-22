@@ -9,6 +9,7 @@ require (
 
 require (
 	github.com/RoaringBitmap/roaring/v2 v2.19.0
+	github.com/amikos-tech/pure-simdjson v0.1.4
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.27
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.26
@@ -39,6 +40,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.43.5 // indirect
 	github.com/aws/smithy-go v1.27.3 // indirect
 	github.com/bits-and-blooms/bitset v1.24.4 // indirect
+	github.com/ebitengine/purego v0.10.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mschoch/smat v0.2.0 // indirect
 	github.com/parquet-go/bitpack v1.0.0 // indirect
