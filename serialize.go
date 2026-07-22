@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"sort"
+	"sync"
 
 	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/klauspost/compress/zstd"
@@ -221,6 +222,47 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 	}
 }
 
+// zstd codecs are reused across calls: constructing one per Encode/Decode
+// allocated hundreds of MB (a full encoder state per GOMAXPROCS core), and
+// EncodeAll/DecodeAll are documented safe for concurrent use. Shared instances
+// are never Closed.
+var (
+	zstdEncoderMu sync.Mutex
+	zstdEncoders  = map[CompressionLevel]*zstd.Encoder{}
+
+	zstdDecoderOnce sync.Once
+	zstdDecoder     *zstd.Decoder
+	zstdDecoderErr  error
+)
+
+func sharedZstdEncoder(level CompressionLevel) (*zstd.Encoder, error) {
+	zstdEncoderMu.Lock()
+	defer zstdEncoderMu.Unlock()
+	if enc, ok := zstdEncoders[level]; ok {
+		return enc, nil
+	}
+	enc, err := zstd.NewWriter(nil,
+		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(int(level))),
+		zstd.WithEncoderConcurrency(1),
+	)
+	if err != nil {
+		return nil, err
+	}
+	zstdEncoders[level] = enc
+	return enc, nil
+}
+
+func sharedZstdDecoder() (*zstd.Decoder, error) {
+	zstdDecoderOnce.Do(func() {
+		zstdDecoder, zstdDecoderErr = zstd.NewReader(nil,
+			zstd.WithDecoderMaxMemory(maxDecodedIndexSize),
+			zstd.WithDecoderMaxWindow(maxDecodedIndexSize),
+			zstd.WithDecodeAllCapLimit(true),
+		)
+	})
+	return zstdDecoder, zstdDecoderErr
+}
+
 // Encode serializes the index using zstd-15 compression (recommended default).
 // It delegates to EncodeContext with context.Background().
 func Encode(idx *GINIndex) ([]byte, error) {
@@ -350,12 +392,10 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
 	}
 
-	encoder, err := zstd.NewWriter(nil,
-		zstd.WithEncoderLevel(zstd.EncoderLevelFromZstd(int(level))))
+	encoder, err := sharedZstdEncoder(level)
 	if err != nil {
 		return nil, errors.Wrap(err, "create zstd encoder")
 	}
-	defer func() { _ = encoder.Close() }()
 
 	compressed := encoder.EncodeAll(buf.Bytes(), nil)
 	return append([]byte(compressedMagic), compressed...), nil
@@ -413,15 +453,10 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	case uncompressedMagic:
 		decompressed = data[4:]
 	case compressedMagic:
-		decoder, err := zstd.NewReader(nil,
-			zstd.WithDecoderMaxMemory(maxDecodedIndexSize),
-			zstd.WithDecoderMaxWindow(maxDecodedIndexSize),
-			zstd.WithDecodeAllCapLimit(true),
-		)
+		decoder, err := sharedZstdDecoder()
 		if err != nil {
 			return nil, errors.Wrap(err, "create zstd decoder")
 		}
-		defer decoder.Close()
 
 		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
 		if err != nil {
