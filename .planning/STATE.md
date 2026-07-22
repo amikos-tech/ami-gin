@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: ready_to_plan
-stopped_at: Phase 20 complete (2/2) — ready to plan Phase 21
-last_updated: 2026-07-22T08:39:15.000Z
-last_activity: 2026-07-22 -- Completed quick task 260722-eje: Address Phase 20 benchmark review findings and harden external corpus coverage
+status: "Phase 20 shipped — PR #41"
+stopped_at: Phase 20 complete; Phase 21 unplanned
+last_updated: "2026-07-22T09:52:02.841Z"
+last_activity: 2026-07-22
 progress:
   total_phases: 8
   completed_phases: 2
@@ -27,8 +27,8 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 Phase: 21
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-22 - Completed quick task 260722-eje: Address Phase 20 benchmark review findings and harden external corpus coverage
+Status: Phase 20 shipped — PR #41
+Last activity: 2026-07-22
 
 Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
 
