@@ -41,7 +41,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 - [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
 - [x] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
-- [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
+- [x] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam. (completed 2026-07-22)
 - [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
 - [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
 - [ ] **Phase 24: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
@@ -96,7 +96,7 @@ Plans:
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -106,7 +106,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 21-03-PLAN.md — Lifecycle-safe tagged adapter, transform/duplicate-key parity semantics, and default-graph isolation (SIMD-04..07)
+- [x] 21-03-PLAN.md — Lifecycle-safe tagged adapter, transform/duplicate-key parity semantics, and default-graph isolation (SIMD-04..07)
 
 ### Phase 22: SIMD Validation, Benchmarks & CI
 
@@ -181,7 +181,7 @@ Plans:
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
-| 21. SIMD Parser Adapter | v1.3 | 2/3 | In Progress|  |
+| 21. SIMD Parser Adapter | v1.3 | 3/3 | Complete   | 2026-07-22 |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
