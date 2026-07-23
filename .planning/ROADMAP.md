@@ -96,7 +96,7 @@ Plans:
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
 
-**Plans:** 3/4 plans complete
+**Plans:** 3/4 plans executed
 
 Plans:
 **Wave 1**
@@ -185,7 +185,7 @@ Plans:
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
-| 21. SIMD Parser Adapter | v1.3 | 3/3 | Complete   | 2026-07-22 |
+| 21. SIMD Parser Adapter | v1.3 | 3/4 | In Progress|  |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
