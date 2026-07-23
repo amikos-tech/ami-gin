@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: executing
-stopped_at: Ready to execute 21-05-PLAN.md
-last_updated: "2026-07-23T07:42:19.047Z"
-last_activity: 2026-07-23 -- Phase 21 planning complete
+status: verifying
+stopped_at: Completed 21-05-PLAN.md
+last_updated: "2026-07-23T08:02:39.968Z"
+last_activity: 2026-07-23
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 8
-  completed_plans: 7
-  percent: 25
+  completed_plans: 8
+  percent: 38
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 ## Current Position
 
-Phase: 21 (simd-parser-adapter) — IN PROGRESS
-Plan: 4 of 5
-Status: Ready to execute
-Last activity: 2026-07-23 -- Phase 21 planning complete
+Phase: 21 (simd-parser-adapter) — EXECUTING
+Plan: 5 of 5
+Status: Phase complete — ready for verification
+Last activity: 2026-07-23
 
-Progress: [████████░░] 80%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -60,6 +60,7 @@ Progress: [████████░░] 80%
 | 17 | 4 | Complete (4/4 plans complete) |
 | 18 | 4 | Complete (4/4 plans complete) |
 | Phase 21 P04 | 8 min | 2 tasks | 5 files |
+| Phase 21 P05 | 7 min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -91,6 +92,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
 - **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
 - [Phase 21]: Parser cleanup failures are terminal builder integrity failures, with cleanup and concurrent walk causes preserved as peer unwrap branches — Prevents soft mode from hiding a permanently busy native parser
+- [Phase 21]: Panic-aware SIMD cleanup preserves ordinary panic identity but routes failed close through terminal builder state — Prevents parser soft mode from hiding a busy native parser after caller recovery
 
 ### Roadmap Evolution
 
@@ -172,8 +174,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-23T06:35:26.079Z
-Stopped at: Completed 21-04-PLAN.md
+Last session: 2026-07-23T08:02:39.961Z
+Stopped at: Completed 21-05-PLAN.md
 Resume file: None
 
 **Next step:** Verify Phase 21 — run /gsd:verify-work 21.
