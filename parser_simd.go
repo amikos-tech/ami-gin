@@ -24,6 +24,15 @@ const simdParserName = "pure-simdjson"
 // close-error text in the walk-panic close-failure report.
 const simdCloseErrorAttrKey = "error"
 
+// simdMaxNestingDepth matches pure-simdjson v0.1.4's native bridge
+// (src/native/simdjson_bridge.cpp, MAX_MATERIALIZE_FRAME_DEPTH), which itself
+// matches upstream simdjson's own default max parse depth. routeSIMDNumericParseFailure
+// is only reachable once the outer purejson.ErrInvalidJSON gate has already
+// matched, so this guard is defense-in-depth: it stops
+// findUnstageableJSONNumber's recursion from diverging from the native
+// parser's own depth cap on adversarial deeply-nested input.
+const simdMaxNestingDepth = 1024
+
 type simdParser struct {
 	parser *purejson.Parser
 }
@@ -90,6 +99,9 @@ func routeSIMDNumericParseFailure(
 	if err := ensureDecoderEOF(decoder); err != nil {
 		return nil, false
 	}
+	if exceedsSIMDMaxNestingDepth(value, 0) {
+		return nil, false
+	}
 
 	path, raw, ok := findUnstageableJSONNumber("$", value)
 	if !ok {
@@ -126,6 +138,33 @@ func findUnstageableJSONNumber(path string, value any) (string, string, bool) {
 		}
 	}
 	return "", "", false
+}
+
+// exceedsSIMDMaxNestingDepth reports whether value nests arrays/objects
+// deeper than simdMaxNestingDepth beyond depth. It inspects only container
+// shape, not numeric literals.
+func exceedsSIMDMaxNestingDepth(value any, depth int) bool {
+	switch v := value.(type) {
+	case []any:
+		if depth+1 > simdMaxNestingDepth {
+			return true
+		}
+		for _, item := range v {
+			if exceedsSIMDMaxNestingDepth(item, depth+1) {
+				return true
+			}
+		}
+	case map[string]any:
+		if depth+1 > simdMaxNestingDepth {
+			return true
+		}
+		for _, item := range v {
+			if exceedsSIMDMaxNestingDepth(item, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // finishSIMDDocument runs a document walk and releases the native document

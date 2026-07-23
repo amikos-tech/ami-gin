@@ -4,6 +4,7 @@ package gin
 
 import (
 	stderrors "errors"
+	"strings"
 	"testing"
 )
 
@@ -104,6 +105,121 @@ func TestSIMDParserNativeNumericFailuresUseNumericPolicy(t *testing.T) {
 				requireTypedSinkUncommitted(t, builder, 1)
 			})
 		})
+	}
+}
+
+func TestSIMDParserNumericRoutingRecursesIntoArraysAndObjects(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonDoc  []byte
+		wantPath string
+	}{
+		{
+			name:     "nested-in-array",
+			jsonDoc:  []byte(`{"items":[1,1e400]}`),
+			wantPath: "$.items[1]",
+		},
+		{
+			name:     "nested-in-object",
+			jsonDoc:  []byte(`{"a":{"b":1e400}}`),
+			wantPath: "$.a.b",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newTestSIMDParser(t)
+			cfg, err := NewConfig(
+				WithParserFailureMode(IngestFailureSoft),
+				WithNumericFailureMode(IngestFailureHard),
+			)
+			if err != nil {
+				t.Fatalf("NewConfig: %v", err)
+			}
+			builder, err := NewBuilder(cfg, 1, WithParser(parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			addErr := builder.AddDocument(DocID(0), tc.jsonDoc)
+			var ingestErr *IngestError
+			if !stderrors.As(addErr, &ingestErr) {
+				t.Fatalf("AddDocument error = %v, want *IngestError", addErr)
+			}
+			if ingestErr.Layer() != IngestLayerNumeric || ingestErr.Path() != tc.wantPath {
+				t.Fatalf(
+					"IngestError = (layer=%q, path=%q), want (numeric, %s)",
+					ingestErr.Layer(),
+					ingestErr.Path(),
+					tc.wantPath,
+				)
+			}
+		})
+	}
+}
+
+func TestSIMDParserNumericRoutingPicksDeterministicFirstOffender(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonDoc  []byte
+		wantPath string
+	}{
+		{
+			name:     "object-sorted-key-order",
+			jsonDoc:  []byte(`{"z_bad":1e400,"a_bad":1e400}`),
+			wantPath: "$.a_bad",
+		},
+		{
+			name:     "array-ascending-index-order",
+			jsonDoc:  []byte(`{"nums":[1e400,2e400]}`),
+			wantPath: "$.nums[0]",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			parser := newTestSIMDParser(t)
+			cfg, err := NewConfig(
+				WithParserFailureMode(IngestFailureSoft),
+				WithNumericFailureMode(IngestFailureHard),
+			)
+			if err != nil {
+				t.Fatalf("NewConfig: %v", err)
+			}
+			builder, err := NewBuilder(cfg, 1, WithParser(parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			addErr := builder.AddDocument(DocID(0), tc.jsonDoc)
+			var ingestErr *IngestError
+			if !stderrors.As(addErr, &ingestErr) {
+				t.Fatalf("AddDocument error = %v, want *IngestError", addErr)
+			}
+			if ingestErr.Layer() != IngestLayerNumeric || ingestErr.Path() != tc.wantPath {
+				t.Fatalf(
+					"IngestError = (layer=%q, path=%q), want (numeric, %s)",
+					ingestErr.Layer(),
+					ingestErr.Path(),
+					tc.wantPath,
+				)
+			}
+		})
+	}
+}
+
+func TestRouteSIMDNumericParseFailureSkipsWhenNestingExceedsMaxDepth(t *testing.T) {
+	depth := simdMaxNestingDepth + 10
+	jsonDoc := []byte(strings.Repeat(`{"a":`, depth) + "1e400" + strings.Repeat("}", depth))
+
+	builder, err := NewBuilder(DefaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	numericErr, routed := routeSIMDNumericParseFailure(jsonDoc, 0, builder)
+	if numericErr != nil || routed {
+		t.Fatalf("routeSIMDNumericParseFailure() = (%v, %v), want (nil, false)", numericErr, routed)
 	}
 }
 
