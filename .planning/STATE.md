@@ -156,6 +156,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260722-eje | Address Phase 20 benchmark review findings and harden external corpus coverage | 2026-07-22 | ff5fe7e | Verified | [260722-eje-address-phase-20-benchmark-review-findin](./quick/260722-eje-address-phase-20-benchmark-review-findin/) |
 | 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | 001970c | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
 | 260722-li1 | Fix #43: reuse zstd encoder/decoder in serialize.go (was constructing per call, ~589 MB/op Encode → ~1000x fewer bytes, 3-7x faster) | 2026-07-22 | this commit | Verified | [260722-li1-reuse-zstd-encoder-decoder-in-serialize-](./quick/260722-li1-reuse-zstd-encoder-decoder-in-serialize-/) |
+| 260723-l22 | Phase 21 re-review follow-ups: structured SIMD close-error logging, numeric-routing depth guard + recursion coverage, Close/lifecycle/crossover test matrix, stdlib/SIMD byte parity | 2026-07-23 | ca9ebd5 | Verified | [260723-l22-simd-parser-re-review-follow-ups-structu](./quick/260723-l22-simd-parser-re-review-follow-ups-structu/) |
 
 ## Deferred Items
 
