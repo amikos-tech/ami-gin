@@ -13,9 +13,9 @@ type parserLifecycleError struct {
 	concurrentErr error
 }
 
-func newParserLifecycleError(cleanupErr, concurrentErr error) error {
+func newParserLifecycleError(cleanupErr, concurrentErr error) *parserLifecycleError {
 	if cleanupErr == nil {
-		return concurrentErr
+		cleanupErr = errors.New("parser lifecycle failure without cleanup error")
 	}
 	return &parserLifecycleError{
 		cleanupErr:    cleanupErr,
@@ -47,8 +47,9 @@ func isParserLifecycleError(err error) bool {
 // source number's integer or float classification without coercing exact
 // integers through float64. Raw-text parsers use sink.StageJSONNumber so the
 // builder classifies the source lexeme. Exact typed parsers may use
-// sink.StageInt64 or sink.StageUint64 for integers and sink.StageFloat64 for
-// lexeme-classified floats.
+// sink.StageInt64 for signed integers, sink.StageUint64 for unsigned integers
+// no larger than math.MaxInt64, and sink.StageFloat64 for lexeme-classified
+// floats. Larger integer values fail at the numeric layer.
 //
 // Parse may add parser-local context to errors it creates. Errors returned by
 // sink Stage callbacks must retain their layer. AddDocument preserves staged
@@ -76,10 +77,19 @@ type Parser interface {
 	// call sink.MarkPresent for the container's canonicalPath before
 	// staging children; otherwise IsNull / IsNotNull queries will return
 	// wrong results for that path. All Stage* sink methods (StageScalar,
-	// StageString, StageBool, StageInt64, StageUint64, StageFloat64,
-	// StageJSONNumber, StageNativeNumeric, and StageMaterialized) implicitly
-	// mark their path present.
+	// StageInt64, StageUint64, StageFloat64, StageJSONNumber,
+	// StageNativeNumeric, and StageMaterialized) implicitly mark their path
+	// present.
 	Parse(jsonDoc []byte, rgID int, sink parserSink) error
+}
+
+// CloseableParser is a Parser that owns resources requiring deterministic
+// release. The caller owns a CloseableParser and must call Close after every
+// builder using it has stopped parsing. GINBuilder never closes a supplied
+// parser because parser ownership remains with the caller.
+type CloseableParser interface {
+	Parser
+	Close() error
 }
 
 // WithParser installs a custom JSON parser. The default is stdlibParser

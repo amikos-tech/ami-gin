@@ -196,16 +196,6 @@ func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string,
 	return nil
 }
 
-func (s *recordingSink) StageString(_ *documentBuildState, canonicalPath string, v string) error {
-	s.events = append(s.events, fmt.Sprintf("string:%s=%s", canonicalPath, v))
-	return nil
-}
-
-func (s *recordingSink) StageBool(_ *documentBuildState, canonicalPath string, v bool) error {
-	s.events = append(s.events, fmt.Sprintf("bool:%s=%t", canonicalPath, v))
-	return nil
-}
-
 func (s *recordingSink) StageInt64(_ *documentBuildState, canonicalPath string, v int64) error {
 	s.events = append(s.events, fmt.Sprintf("int64:%s=%d", canonicalPath, v))
 	return nil

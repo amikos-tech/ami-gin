@@ -62,7 +62,7 @@ func buildAndEncode(t *testing.T, fx parityFixture) []byte {
 	return buildAndEncodeWithParser(t, fx, stdlibParser{})
 }
 
-func TestParserParity_AuthoredFixtures(t *testing.T) {
+func TestStdlibParserGolden_AuthoredFixtures(t *testing.T) {
 	for _, fx := range authoredParityFixtures() {
 		fx := fx
 		t.Run(fx.Name, func(t *testing.T) {

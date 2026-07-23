@@ -39,19 +39,26 @@ handles both construction errors and builder errors:
 ```go
 package app
 
-import gin "github.com/amikos-tech/ami-gin"
+import (
+	"errors"
 
-func newSIMDBuilder(config gin.GINConfig, numRGs int) (*gin.GINBuilder, error) {
+	gin "github.com/amikos-tech/ami-gin"
+)
+
+func newSIMDBuilder(
+	config gin.GINConfig,
+	numRGs int,
+) (*gin.GINBuilder, gin.CloseableParser, error) {
 	p, err := gin.NewSIMDParser()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(p))
 	if err != nil {
-		return nil, err
+		return nil, nil, errors.Join(err, p.Close())
 	}
-	return builder, nil
+	return builder, p, nil
 }
 ```
 
@@ -59,6 +66,11 @@ func newSIMDBuilder(config gin.GINConfig, numRGs int) (*gin.GINBuilder, error) {
 cannot be resolved or loaded. The error points to `PURE_SIMDJSON_LIB_PATH` as
 the recovery path. Do not pass the constructor call directly to `WithParser`:
 first handle the returned `error`, then pass only the `Parser` value.
+
+`NewSIMDParser` returns a caller-owned `CloseableParser`. Retain it for as long
+as any builder may call `AddDocument`, then call `Close`. `GINBuilder` does not
+close supplied parsers because it does not own them. `Close` is idempotent, but
+must not run while parsing is in progress.
 
 ## Automatic bootstrap
 
@@ -123,32 +135,37 @@ the application's logs or telemetry:
 package app
 
 import (
+	"errors"
 	"log"
 
 	gin "github.com/amikos-tech/ami-gin"
 )
 
-func newBuilderWithFallback(config gin.GINConfig, numRGs int) (*gin.GINBuilder, error) {
+func newBuilderWithFallback(
+	config gin.GINConfig,
+	numRGs int,
+) (*gin.GINBuilder, gin.CloseableParser, error) {
 	p, simdErr := gin.NewSIMDParser()
 	if simdErr == nil {
 		builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(p))
 		if err != nil {
-			return nil, err
+			return nil, nil, errors.Join(err, p.Close())
 		}
-		return builder, nil
+		return builder, p, nil
 	}
 
 	log.Printf("SIMD parser unavailable; selecting stdlib parser: %v", simdErr)
 	builder, err := gin.NewBuilder(config, numRGs)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return builder, nil
+	return builder, nil, nil
 }
 ```
 
 This branch is caller policy. The library never hides a failed SIMD
-construction behind an automatic parser change.
+construction behind an automatic parser change. A non-nil returned
+`CloseableParser` is owned by the caller and must be closed.
 
 ## Native artifact integrity
 
@@ -163,28 +180,24 @@ The loading routes have separate trust controls:
 Upstream also documents optional cosign provenance verification. It is an
 additional operator control; it does not replace the automatic SHA-256 check.
 
-## BIGINT limitation
+## Numeric limits
 
-An integer larger than the `uint64` range is an accepted parser difference.
-GIN Index does not pre-scan JSON for these values because doing so would add a
-second text parse ahead of the SIMD parser.
+GIN Index stores integer observations in the signed `int64` range. Integer
+literals greater than `math.MaxInt64` therefore fail at the path-aware numeric
+layer on both stdlib and SIMD, including values that still fit in `uint64`.
+Valid floating-point literals outside the finite `float64` range, such as
+`1e400`, fail at the same layer. `NumericFailureMode` controls whether these
+documents return an error or are discarded atomically.
 
-- On the SIMD path, upstream `Parse` fails the whole input with a
-  `BIGINT_ERROR` before a field path is staged. `AddDocument` therefore treats
-  it as a parser-layer failure with an empty path, governed by
-  `ParserFailureMode`.
-- On the stdlib path, parsing reaches the field and GIN Index reports a
-  path-aware numeric-layer failure, governed by `NumericFailureMode`.
-
-In hard mode, the applicable layer returns an error. In soft mode, either
-layer discards the failed document atomically; stdlib does not retain the
-other fields from that document. Because the governing knobs differ, a caller
-that configures parser and numeric failure modes differently can observe a
-different acceptance result for the same BIGINT document.
+The native parser can reject an out-of-range literal before it exposes a DOM
+element. After that specific native `invalid JSON` result, the adapter performs
+a stdlib validation pass only to distinguish malformed JSON from a valid,
+unstageable number and recover its path. It never indexes the document through
+the stdlib parser. Malformed JSON remains governed by `ParserFailureMode`.
 
 ## Validation scope
 
-Phase 21 establishes the adapter contract and this operating guidance. Parser
-parity, measured performance, five-platform runtime CI, and end-to-end
-operational verification belong to Phase 22. No parity result, speedup, or
-platform certification is claimed here.
+CI verifies byte-identical stdlib/SIMD output for the authored parity fixtures
+on Linux amd64. Measured performance, broader runtime-platform coverage, and
+end-to-end operational verification remain separate work; no speedup or
+five-platform certification is claimed here.

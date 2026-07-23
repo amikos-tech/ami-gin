@@ -3,8 +3,10 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -24,7 +26,9 @@ func (*simdParser) Name() string { return simdParserName }
 
 // NewSIMDParser constructs the optional pure-simdjson parser. Callers select
 // it explicitly through WithParser; construction never falls back to stdlib.
-func NewSIMDParser() (Parser, error) {
+// The caller owns the returned parser and must call Close after all builders
+// using it have stopped parsing.
+func NewSIMDParser() (CloseableParser, error) {
 	const initializationContext = "initialize pure-simdjson SIMD parser; set PURE_SIMDJSON_LIB_PATH or see docs/simd-deployment.md"
 
 	parser, err := purejson.NewParser()
@@ -34,9 +38,20 @@ func NewSIMDParser() (Parser, error) {
 	return &simdParser{parser: parser}, nil
 }
 
+func (s *simdParser) Close() error {
+	return errors.Wrap(s.parser.Close(), "close pure-simdjson SIMD parser")
+}
+
 func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error) {
 	doc, err := s.parser.Parse(jsonDoc)
 	if err != nil {
+		if errors.Is(err, purejson.ErrInvalidJSON) {
+			if numericErr, routed := routeSIMDNumericParseFailure(jsonDoc, rgID, sink); routed {
+				if numericErr != nil {
+					return numericErr
+				}
+			}
+		}
 		return errors.Wrap(err, "failed to parse JSON")
 	}
 	return finishSIMDDocument(
@@ -48,29 +63,84 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	)
 }
 
+// routeSIMDNumericParseFailure distinguishes malformed JSON from valid numeric
+// literals that the native parser rejects before it can expose a typed element.
+// It performs no indexing work: only the first unstageable number is sent
+// through StageJSONNumber so NumericFailureMode and path reporting remain
+// identical to the stdlib path.
+func routeSIMDNumericParseFailure(
+	jsonDoc []byte,
+	rgID int,
+	sink parserSink,
+) (err error, routed bool) {
+	decoder := json.NewDecoder(bytes.NewReader(jsonDoc))
+	decoder.UseNumber()
+
+	value, err := decodeAny(decoder)
+	if err != nil {
+		return nil, false
+	}
+	if err := ensureDecoderEOF(decoder); err != nil {
+		return nil, false
+	}
+
+	path, raw, ok := findUnstageableJSONNumber("$", value)
+	if !ok {
+		return nil, false
+	}
+
+	state := sink.BeginDocument(rgID)
+	return sink.StageJSONNumber(state, normalizeWalkPath(path), raw), true
+}
+
+func findUnstageableJSONNumber(path string, value any) (string, string, bool) {
+	switch v := value.(type) {
+	case json.Number:
+		if _, _, _, err := parseJSONNumberLiteral(v.String()); err != nil {
+			return path, v.String(), true
+		}
+	case []any:
+		for i, item := range v {
+			if invalidPath, raw, ok := findUnstageableJSONNumber(
+				fmt.Sprintf("%s[%d]", path, i),
+				item,
+			); ok {
+				return invalidPath, raw, true
+			}
+		}
+	case map[string]any:
+		for _, key := range sortedObjectKeys(v) {
+			if invalidPath, raw, ok := findUnstageableJSONNumber(
+				path+"."+key,
+				v[key],
+			); ok {
+				return invalidPath, raw, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// finishSIMDDocument runs a document walk and releases the native document
+// exactly once. A walk panic always remains the primary outcome; a concurrent
+// close error is logged before the original panic value is re-raised.
 func finishSIMDDocument(walk func() error, closeDocument func() error) (err error) {
 	defer func() {
 		recovered := recover()
 		closeErr := closeDocument()
-		if closeErr == nil {
-			if recovered != nil {
-				panic(recovered)
+		if recovered != nil {
+			if closeErr != nil {
+				log.Printf("gin: close pure-simdjson document after walk panic: %v", closeErr)
 			}
+			panic(recovered)
+		}
+		if closeErr == nil {
 			return
 		}
 
-		concurrentErr := err
-		if recovered != nil {
-			panicErr, ok := recovered.(error)
-			if ok {
-				concurrentErr = panicErr
-			} else {
-				concurrentErr = errors.Errorf("panic while walking SIMD document: %v", recovered)
-			}
-		}
 		err = newParserLifecycleError(
 			errors.Wrap(closeErr, "close pure-simdjson document"),
-			concurrentErr,
+			err,
 		)
 	}()
 
@@ -101,7 +171,7 @@ func (s *simdParser) walkElement(
 		if err != nil {
 			return errors.Wrapf(err, "read pure-simdjson bool at %s", canonicalPath)
 		}
-		return sink.StageBool(state, canonicalPath, value)
+		return sink.StageScalar(state, canonicalPath, value)
 	case purejson.TypeInt64:
 		value, err := element.GetInt64()
 		if err != nil {
@@ -125,7 +195,7 @@ func (s *simdParser) walkElement(
 		if err != nil {
 			return errors.Wrapf(err, "read pure-simdjson string at %s", canonicalPath)
 		}
-		return sink.StageString(state, canonicalPath, value)
+		return sink.StageScalar(state, canonicalPath, value)
 	case purejson.TypeObject:
 		sink.MarkPresent(state, canonicalPath)
 		object, err := element.AsObject()
@@ -274,4 +344,4 @@ func materializeElement(element purejson.Element, rawPath string) (any, error) {
 	}
 }
 
-var _ Parser = (*simdParser)(nil)
+var _ CloseableParser = (*simdParser)(nil)

@@ -33,7 +33,7 @@ func buildCommittedTypedSinkDocument(
 	cfg GINConfig,
 	parser Parser,
 	jsonDoc []byte,
-) (*GINBuilder, *GINIndex, []byte) {
+) (*GINIndex, []byte) {
 	t.Helper()
 
 	opts := make([]BuilderOption, 0, 1)
@@ -65,7 +65,7 @@ func buildCommittedTypedSinkDocument(
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	return builder, idx, encoded
+	return idx, encoded
 }
 
 func requireTypedSinkEncodedEqual(t *testing.T, got, want []byte) {
@@ -118,55 +118,19 @@ func typedSinkNumericConfig(t *testing.T, mode IngestFailureMode) GINConfig {
 	return cfg
 }
 
-func TestTypedSinkStringAndBoolMatchStdlib(t *testing.T) {
-	tests := []struct {
-		name    string
-		jsonDoc []byte
-		stage   func(parserSink, *documentBuildState) error
-	}{
-		{
-			name:    "string",
-			jsonDoc: []byte(`"hello"`),
-			stage: func(sink parserSink, state *documentBuildState) error {
-				return sink.StageString(state, "$", "hello")
-			},
-		},
-		{
-			name:    "bool",
-			jsonDoc: []byte(`true`),
-			stage: func(sink parserSink, state *documentBuildState) error {
-				return sink.StageBool(state, "$", true)
-			},
-		},
-	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, _, typedEncoded := buildCommittedTypedSinkDocument(
-				t,
-				DefaultConfig(),
-				typedSinkTestParser{stage: tc.stage},
-				[]byte(`null`),
-			)
-			_, _, stdlibEncoded := buildCommittedTypedSinkDocument(t, DefaultConfig(), nil, tc.jsonDoc)
-			requireTypedSinkEncodedEqual(t, typedEncoded, stdlibEncoded)
-		})
-	}
-}
-
 func TestTypedSinkInt64PreservesExactValue(t *testing.T) {
 	const exact = int64(9007199254740993)
 	stage := func(sink parserSink, state *documentBuildState) error {
 		return sink.StageInt64(state, "$", exact)
 	}
 
-	_, typedIndex, typedEncoded := buildCommittedTypedSinkDocument(
+	typedIndex, typedEncoded := buildCommittedTypedSinkDocument(
 		t,
 		DefaultConfig(),
 		typedSinkTestParser{stage: stage},
 		[]byte(`null`),
 	)
-	_, _, stdlibEncoded := buildCommittedTypedSinkDocument(
+	_, stdlibEncoded := buildCommittedTypedSinkDocument(
 		t,
 		DefaultConfig(),
 		nil,
@@ -199,14 +163,14 @@ func TestTypedSinkFloat64PreservesLexemeClass(t *testing.T) {
 				return sink.StageNativeNumeric(state, "$", tc.value)
 			}
 
-			_, _, typedEncoded := buildCommittedTypedSinkDocument(
+			_, typedEncoded := buildCommittedTypedSinkDocument(
 				t,
 				DefaultConfig(),
 				typedSinkTestParser{stage: typedStage},
 				[]byte(`null`),
 			)
-			_, _, stdlibEncoded := buildCommittedTypedSinkDocument(t, DefaultConfig(), nil, tc.jsonDoc)
-			_, _, nativeEncoded := buildCommittedTypedSinkDocument(
+			_, stdlibEncoded := buildCommittedTypedSinkDocument(t, DefaultConfig(), nil, tc.jsonDoc)
+			_, nativeEncoded := buildCommittedTypedSinkDocument(
 				t,
 				DefaultConfig(),
 				typedSinkTestParser{stage: nativeStage},

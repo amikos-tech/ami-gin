@@ -81,6 +81,22 @@ func TestParserLifecycleErrorPreservesSoftSkipCause(t *testing.T) {
 	}
 }
 
+func TestParserLifecycleErrorMissingCleanupCauseRemainsTerminal(t *testing.T) {
+	concurrentCause := errors.New("concurrent sentinel")
+	err := newParserLifecycleError(nil, concurrentCause)
+
+	var lifecycleErr *parserLifecycleError
+	if !stderrors.As(err, &lifecycleErr) {
+		t.Fatal("errors.As failed to extract *parserLifecycleError")
+	}
+	if !stderrors.Is(err, concurrentCause) {
+		t.Fatalf("errors.Is(%v, concurrentCause) = false", err)
+	}
+	if !strings.Contains(err.Error(), "without cleanup error") {
+		t.Fatalf("error = %q, want missing-cleanup context", err.Error())
+	}
+}
+
 type parserLifecycleFailureParser struct {
 	calls int
 	err   error
@@ -91,13 +107,22 @@ func (*parserLifecycleFailureParser) Name() string { return "lifecycle-failure" 
 func (p *parserLifecycleFailureParser) Parse(_ []byte, rgID int, sink parserSink) error {
 	p.calls++
 	state := sink.BeginDocument(rgID)
-	if err := sink.StageString(state, "$.name", "not-committed"); err != nil {
+	if err := sink.StageScalar(state, "$.name", "not-committed"); err != nil {
 		return err
 	}
 	return p.err
 }
 
 func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
+	for _, mode := range []IngestFailureMode{IngestFailureHard, IngestFailureSoft} {
+		t.Run(string(mode), func(t *testing.T) {
+			testParserLifecycleFailurePoisonsBuilderOnce(t, mode)
+		})
+	}
+}
+
+func testParserLifecycleFailurePoisonsBuilderOnce(t *testing.T, mode IngestFailureMode) {
+	t.Helper()
 	cleanupCause := errors.New("cleanup sentinel")
 	parser := &parserLifecycleFailureParser{
 		err: newParserLifecycleError(
@@ -105,7 +130,7 @@ func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
 			nil,
 		),
 	}
-	config, err := NewConfig(WithParserFailureMode(IngestFailureSoft))
+	config, err := NewConfig(WithParserFailureMode(mode))
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -124,8 +149,8 @@ func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
 	if builder.Err() == nil {
 		t.Fatal("builder.Err() = nil, want fatal lifecycle error")
 	}
-	if firstErr != builder.Err() {
-		t.Fatalf("first AddDocument error = %p, builder.Err() = %p, want same stored error", firstErr, builder.Err())
+	if !stderrors.Is(firstErr, builder.Err()) {
+		t.Fatalf("first AddDocument error = %v, want builder.Err() = %v", firstErr, builder.Err())
 	}
 	if !stderrors.Is(firstErr, cleanupCause) {
 		t.Fatalf("errors.Is(%v, cleanupCause) = false", firstErr)
@@ -156,8 +181,8 @@ func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
 	if parser.calls != 1 {
 		t.Fatalf("parser calls after second AddDocument = %d, want 1", parser.calls)
 	}
-	if builder.Err() != storedErr {
-		t.Fatalf("builder.Err() changed from %p to %p", storedErr, builder.Err())
+	if !stderrors.Is(builder.Err(), storedErr) {
+		t.Fatalf("builder.Err() = %v, want stored error %v", builder.Err(), storedErr)
 	}
 	if !stderrors.Is(secondErr, storedErr) {
 		t.Fatalf("errors.Is(%v, storedErr) = false", secondErr)

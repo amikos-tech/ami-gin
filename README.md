@@ -91,25 +91,33 @@ go build -tags simdjson ./...
 ```go
 package app
 
-import gin "github.com/amikos-tech/ami-gin"
+import (
+	"errors"
 
-func newSIMDBuilder(config gin.GINConfig, numRGs int) (*gin.GINBuilder, error) {
+	gin "github.com/amikos-tech/ami-gin"
+)
+
+func newSIMDBuilder(
+	config gin.GINConfig,
+	numRGs int,
+) (*gin.GINBuilder, gin.CloseableParser, error) {
 	p, err := gin.NewSIMDParser()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(p))
 	if err != nil {
-		return nil, err
+		return nil, nil, errors.Join(err, p.Close())
 	}
-	return builder, nil
+	return builder, p, nil
 }
 ```
 
-See the [SIMD deployment guide](docs/simd-deployment.md) for native bootstrap,
-corporate mirrors, air-gapped loading, artifact integrity, explicit stdlib
-fallback, and the accepted BIGINT limitation.
+The caller must retain the returned parser and close it after the builder has
+stopped parsing. See the [SIMD deployment guide](docs/simd-deployment.md) for
+native bootstrap, ownership, corporate mirrors, air-gapped loading, artifact
+integrity, explicit stdlib fallback, and numeric limits.
 
 ## Quick Start
 

@@ -4,6 +4,7 @@ GOTESTSUM_VERSION ?= v1.13.0
 build:
 	go build ./...
 
+# Intentionally stricter than Go: native importers keep the build tag on line 1 for easy auditing.
 .PHONY: simd-isolation-check
 simd-isolation-check:
 	@set -eu; \
@@ -35,7 +36,7 @@ gotestsum-bin:
 	go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
 
 .PHONY: test
-test: gotestsum-bin
+test: simd-isolation-check gotestsum-bin
 	gotestsum \
 		--format short-verbose \
 		--packages="./... ./testdata/phase20" \
