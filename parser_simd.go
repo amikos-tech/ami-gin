@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math"
 	"sort"
 	"strconv"
@@ -14,9 +13,16 @@ import (
 
 	purejson "github.com/amikos-tech/pure-simdjson"
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 const simdParserName = "pure-simdjson"
+
+// simdCloseErrorAttrKey is the ad hoc logging.Attr key holding the native
+// close-error text in the walk-panic close-failure report.
+const simdCloseErrorAttrKey = "error"
 
 type simdParser struct {
 	parser *purejson.Parser
@@ -60,6 +66,7 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 			return s.walkElement(doc.Root(), "$", state, sink)
 		},
 		doc.Close,
+		sink.Logger(),
 	)
 }
 
@@ -123,14 +130,20 @@ func findUnstageableJSONNumber(path string, value any) (string, string, bool) {
 
 // finishSIMDDocument runs a document walk and releases the native document
 // exactly once. A walk panic always remains the primary outcome; a concurrent
-// close error is logged before the original panic value is re-raised.
-func finishSIMDDocument(walk func() error, closeDocument func() error) (err error) {
+// close error is logged through logger before the original panic value is
+// re-raised. logger is used only for that concurrent-close-during-panic
+// report, never for the primary returned error.
+func finishSIMDDocument(walk func() error, closeDocument func() error, logger logging.Logger) (err error) {
 	defer func() {
 		recovered := recover()
 		closeErr := closeDocument()
 		if recovered != nil {
 			if closeErr != nil {
-				log.Printf("gin: close pure-simdjson document after walk panic: %v", closeErr)
+				logging.Error(logger, "close pure-simdjson document after walk panic",
+					logging.AttrOperation("parser.simd.close"),
+					logging.AttrErrorType(telemetry.ErrorTypeOther),
+					logging.Attr{Key: simdCloseErrorAttrKey, Value: closeErr.Error()},
+				)
 			}
 			panic(recovered)
 		}

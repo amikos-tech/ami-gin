@@ -101,6 +101,9 @@ type CloseableParser interface {
 // currently possible because parserSink is package-private. WithParser
 // exists today as a forward-compat entry point and a seam for testing and
 // internal telemetry.
+//
+// If p also implements CloseableParser, the caller retains the obligation to
+// call Close: GINBuilder never closes a supplied parser.
 func WithParser(p Parser) BuilderOption {
 	return func(b *GINBuilder) error {
 		if p == nil {

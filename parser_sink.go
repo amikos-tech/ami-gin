@@ -4,6 +4,8 @@ import (
 	"math"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 // parserSink is the narrow write contract a Parser uses to publish
@@ -37,6 +39,9 @@ type parserSink interface {
 	StageNativeNumeric(state *documentBuildState, canonicalPath string, v any) error
 	StageMaterialized(state *documentBuildState, path string, value any, allowTransform bool) error
 	ShouldBufferForTransform(canonicalPath string) bool
+	// Logger returns the builder's configured logger for parser-side
+	// structured logging (e.g. SIMD close-error reporting).
+	Logger() logging.Logger
 }
 
 func (b *GINBuilder) BeginDocument(rgID int) *documentBuildState {
@@ -58,6 +63,8 @@ func (b *GINBuilder) StageInt64(state *documentBuildState, canonicalPath string,
 	return tagStageError(b.stageNativeNumeric(canonicalPath, v, state))
 }
 
+// StageUint64 requires v no larger than math.MaxInt64; see StageFloat64 and
+// StageNativeNumeric for related numeric-staging contracts.
 func (b *GINBuilder) StageUint64(state *documentBuildState, canonicalPath string, v uint64) error {
 	return tagStageError(b.stageNativeNumeric(canonicalPath, v, state))
 }
@@ -98,6 +105,10 @@ func (b *GINBuilder) StageMaterialized(state *documentBuildState, path string, v
 
 func (b *GINBuilder) ShouldBufferForTransform(canonicalPath string) bool {
 	return len(b.config.representations(canonicalPath)) > 0
+}
+
+func (b *GINBuilder) Logger() logging.Logger {
+	return configLogger(&b.config)
 }
 
 var _ parserSink = (*GINBuilder)(nil)

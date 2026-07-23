@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 func TestWithParserRejectsNil(t *testing.T) {
@@ -228,6 +230,10 @@ func (s *recordingSink) StageMaterialized(_ *documentBuildState, path string, _ 
 
 func (s *recordingSink) ShouldBufferForTransform(canonicalPath string) bool {
 	return s.bufferPaths[canonicalPath]
+}
+
+func (s *recordingSink) Logger() logging.Logger {
+	return logging.NewNoop()
 }
 
 func TestStdlibParserBeginsDocumentBeforeStaging(t *testing.T) {

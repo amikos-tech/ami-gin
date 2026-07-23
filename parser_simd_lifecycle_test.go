@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
+	"github.com/amikos-tech/ami-gin/telemetry"
 )
 
 func TestSIMDDocumentLifecycleCleanupRunsExactlyOnce(t *testing.T) {
@@ -36,6 +39,7 @@ func TestSIMDDocumentLifecycleCleanupRunsExactlyOnce(t *testing.T) {
 					closeCalls++
 					return nil
 				},
+				logging.NewNoop(),
 			)
 
 			if got != tc.walkErr {
@@ -62,6 +66,7 @@ func TestSIMDDocumentLifecycleCleanupRunsWhenWalkPanics(t *testing.T) {
 				closeCalls++
 				return nil
 			},
+			logging.NewNoop(),
 		)
 	}()
 
@@ -95,6 +100,7 @@ func (p *simdDocumentLifecycleTestParser) Parse(_ []byte, rgID int, sink parserS
 			p.closeCalls++
 			return p.closeErr
 		},
+		logging.NewNoop(),
 	)
 }
 
@@ -122,6 +128,7 @@ func TestSIMDDocumentLifecyclePanicCloseFailureAlwaysRepanics(t *testing.T) {
 						closeCalls++
 						return closeCause
 					},
+					logging.NewNoop(),
 				)
 			}()
 
@@ -132,6 +139,47 @@ func TestSIMDDocumentLifecyclePanicCloseFailureAlwaysRepanics(t *testing.T) {
 				t.Fatalf("close calls = %d, want 1", closeCalls)
 			}
 		})
+	}
+}
+
+func TestSIMDDocumentLifecyclePanicCloseFailureLogsStructuredAttrs(t *testing.T) {
+	var panicValue any = errors.New("walk panic sentinel")
+	closeCause := errors.New("close sentinel")
+	logger := &tragicCaptureLogger{}
+
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		_ = finishSIMDDocument(
+			func() error { panic(panicValue) },
+			func() error { return closeCause },
+			logger,
+		)
+	}()
+
+	if recovered != panicValue {
+		t.Fatalf("recovered panic = %v, want identical value %v", recovered, panicValue)
+	}
+	if len(logger.entries) != 1 {
+		t.Fatalf("captured log entries = %d, want 1", len(logger.entries))
+	}
+	entry := logger.entries[0]
+	if entry.level != logging.LevelError {
+		t.Fatalf("entry.level = %v, want LevelError", entry.level)
+	}
+	if entry.message != "close pure-simdjson document after walk panic" {
+		t.Fatalf("entry.message = %q, want %q", entry.message, "close pure-simdjson document after walk panic")
+	}
+	if value, ok := tragicAttrValue(entry.attrs, "operation"); !ok || value != "parser.simd.close" {
+		t.Fatalf("operation attr = (%q, %v), want (parser.simd.close, true)", value, ok)
+	}
+	if value, ok := tragicAttrValue(entry.attrs, "error.type"); !ok || value != telemetry.ErrorTypeOther {
+		t.Fatalf("error.type attr = (%q, %v), want (%q, true)", value, ok, telemetry.ErrorTypeOther)
+	}
+	if value, ok := tragicAttrValue(entry.attrs, simdCloseErrorAttrKey); !ok || value != closeCause.Error() {
+		t.Fatalf("error attr = (%q, %v), want (%q, true)", value, ok, closeCause.Error())
 	}
 }
 
