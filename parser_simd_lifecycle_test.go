@@ -49,6 +49,7 @@ func TestSIMDDocumentLifecycleCleanupRunsExactlyOnce(t *testing.T) {
 }
 
 func TestSIMDDocumentLifecycleCleanupRunsWhenWalkPanics(t *testing.T) {
+	panicValue := &struct{ message string }{message: "walk panic sentinel"}
 	closeCalls := 0
 	var recovered any
 	func() {
@@ -56,7 +57,7 @@ func TestSIMDDocumentLifecycleCleanupRunsWhenWalkPanics(t *testing.T) {
 			recovered = recover()
 		}()
 		_ = finishSIMDDocument(
-			func() error { panic("walk panic") },
+			func() error { panic(panicValue) },
 			func() error {
 				closeCalls++
 				return nil
@@ -64,8 +65,8 @@ func TestSIMDDocumentLifecycleCleanupRunsWhenWalkPanics(t *testing.T) {
 		)
 	}()
 
-	if recovered != "walk panic" {
-		t.Fatalf("recovered panic = %v, want walk panic", recovered)
+	if recovered != panicValue {
+		t.Fatalf("recovered panic = %v, want identical value %v", recovered, panicValue)
 	}
 	if closeCalls != 1 {
 		t.Fatalf("close calls after walk panic = %d, want 1", closeCalls)
@@ -78,12 +79,16 @@ type simdDocumentLifecycleTestParser struct {
 	closeCalls int
 	walk       func(parserSink, *documentBuildState) error
 	closeErr   error
+	retryErr   error
 }
 
 func (*simdDocumentLifecycleTestParser) Name() string { return "simd-lifecycle-test" }
 
 func (p *simdDocumentLifecycleTestParser) Parse(_ []byte, rgID int, sink parserSink) error {
 	p.parseCalls++
+	if p.parseCalls > 1 && p.retryErr != nil {
+		return p.retryErr
+	}
 	return finishSIMDDocument(
 		func() error {
 			p.walkCalls++
@@ -95,6 +100,124 @@ func (p *simdDocumentLifecycleTestParser) Parse(_ []byte, rgID int, sink parserS
 			return p.closeErr
 		},
 	)
+}
+
+func addSIMDDocumentRecovering(
+	builder *GINBuilder,
+	docID DocID,
+	jsonDoc []byte,
+) (err error, recovered any) {
+	defer func() {
+		recovered = recover()
+	}()
+	err = builder.AddDocument(docID, jsonDoc)
+	return err, nil
+}
+
+func TestSIMDDocumentLifecyclePanicCloseFailurePoisonsBuilder(t *testing.T) {
+	panicCause := errors.New("walk panic sentinel")
+	closeCause := errors.New("close sentinel")
+	busyCause := errors.New("simulated ErrParserBusy")
+	parser := &simdDocumentLifecycleTestParser{
+		walk: func(_ parserSink, _ *documentBuildState) error {
+			panic(panicCause)
+		},
+		closeErr: closeCause,
+		retryErr: busyCause,
+	}
+	config, err := NewConfig(WithParserFailureMode(IngestFailureSoft))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder, err := NewBuilder(config, 2, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	firstErr, recovered := addSIMDDocumentRecovering(
+		builder,
+		DocID(12),
+		[]byte(`{"name":"first"}`),
+	)
+	storedErr := builder.Err()
+	secondErr := builder.AddDocument(DocID(13), []byte(`{"name":"second"}`))
+
+	if recovered != nil {
+		t.Fatalf("first AddDocument recovered panic = %v, want nil", recovered)
+	}
+	if firstErr == nil {
+		t.Fatal("first AddDocument error = nil, want fatal panic-plus-close failure")
+	}
+	if storedErr == nil {
+		t.Fatal("builder.Err() = nil, want stored tragic error")
+	}
+	if firstErr != storedErr {
+		t.Fatalf("first AddDocument error = %p, builder.Err() = %p, want same stored error", firstErr, storedErr)
+	}
+	var lifecycleErr *parserLifecycleError
+	if !stderrors.As(firstErr, &lifecycleErr) {
+		t.Fatalf("errors.As(%v, *parserLifecycleError) = false", firstErr)
+	}
+	if !stderrors.Is(firstErr, closeCause) {
+		t.Fatalf("errors.Is(%v, closeCause) = false", firstErr)
+	}
+	if !stderrors.Is(firstErr, panicCause) {
+		t.Fatalf("errors.Is(%v, panicCause) = false", firstErr)
+	}
+	if secondErr == nil {
+		t.Fatal("second AddDocument error = nil, want prior tragic refusal")
+	}
+	if !stderrors.Is(secondErr, storedErr) {
+		t.Fatalf("errors.Is(%v, storedErr) = false", secondErr)
+	}
+	if stderrors.Is(secondErr, busyCause) {
+		t.Fatalf("errors.Is(%v, busyCause) = true, want no retry dispatch", secondErr)
+	}
+	if parser.parseCalls != 1 || parser.walkCalls != 1 || parser.closeCalls != 1 {
+		t.Fatalf(
+			"callback calls = (parse=%d, walk=%d, close=%d), want (1, 1, 1)",
+			parser.parseCalls,
+			parser.walkCalls,
+			parser.closeCalls,
+		)
+	}
+	requireSIMDLifecycleBuilderUncommitted(t, builder)
+}
+
+func TestSIMDDocumentLifecycleNonErrorPanicCloseFailureReturnsLifecycleError(t *testing.T) {
+	closeCause := errors.New("close sentinel")
+	closeCalls := 0
+	var got error
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		got = finishSIMDDocument(
+			func() error { panic("non-error panic") },
+			func() error {
+				closeCalls++
+				return closeCause
+			},
+		)
+	}()
+
+	if recovered != nil {
+		t.Fatalf("recovered panic = %v, want nil", recovered)
+	}
+	var lifecycleErr *parserLifecycleError
+	if !stderrors.As(got, &lifecycleErr) {
+		t.Fatalf("errors.As(%v, *parserLifecycleError) = false", got)
+	}
+	if !stderrors.Is(got, closeCause) {
+		t.Fatalf("errors.Is(%v, closeCause) = false", got)
+	}
+	if !strings.Contains(got.Error(), "panic while walking SIMD document: non-error panic") {
+		t.Fatalf("error = %q, want stable panic context", got.Error())
+	}
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls)
+	}
 }
 
 func TestSIMDDocumentLifecycleCloseFailurePoisonsBuilder(t *testing.T) {
