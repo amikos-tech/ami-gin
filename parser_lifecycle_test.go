@@ -1,0 +1,168 @@
+package gin
+
+import (
+	stderrors "errors"
+	"strings"
+	"testing"
+
+	"github.com/pkg/errors"
+)
+
+func TestParserLifecycleErrorCleanupOnly(t *testing.T) {
+	cleanupCause := errors.New("cleanup sentinel")
+	lifecycleErr := newParserLifecycleError(
+		errors.Wrap(cleanupCause, "close parser document"),
+		nil,
+	)
+	outer := errors.Wrap(lifecycleErr, "outer context")
+
+	var extracted *parserLifecycleError
+	if !stderrors.As(outer, &extracted) {
+		t.Fatal("errors.As failed to extract *parserLifecycleError")
+	}
+	if !stderrors.Is(outer, cleanupCause) {
+		t.Fatalf("errors.Is(%v, cleanupCause) = false", outer)
+	}
+	if !strings.Contains(outer.Error(), "close parser document") {
+		t.Fatalf("error = %q, want cleanup context", outer.Error())
+	}
+}
+
+func TestParserLifecycleErrorPreservesConcurrentStageError(t *testing.T) {
+	cleanupCause := errors.New("cleanup sentinel")
+	stageCause := errors.New("stage sentinel")
+	lifecycleErr := newParserLifecycleError(
+		errors.Wrap(cleanupCause, "close parser document"),
+		tagStageError(stageCause),
+	)
+	outer := errors.Wrap(lifecycleErr, "outer context")
+
+	var extractedLifecycle *parserLifecycleError
+	if !stderrors.As(outer, &extractedLifecycle) {
+		t.Fatal("errors.As failed to extract *parserLifecycleError")
+	}
+	var extractedStage *stageCallbackError
+	if !stderrors.As(outer, &extractedStage) {
+		t.Fatal("errors.As failed to extract *stageCallbackError")
+	}
+	if !stderrors.Is(outer, cleanupCause) {
+		t.Fatalf("errors.Is(%v, cleanupCause) = false", outer)
+	}
+	if !stderrors.Is(outer, stageCause) {
+		t.Fatalf("errors.Is(%v, stageCause) = false", outer)
+	}
+	if !strings.Contains(outer.Error(), "close parser document") ||
+		!strings.Contains(outer.Error(), "stage sentinel") {
+		t.Fatalf("error = %q, want cleanup and stage context", outer.Error())
+	}
+}
+
+func TestParserLifecycleErrorPreservesSoftSkipCause(t *testing.T) {
+	cleanupCause := errors.New("cleanup sentinel")
+	lifecycleErr := newParserLifecycleError(
+		errors.Wrap(cleanupCause, "close parser document"),
+		newSoftSkipNumericDocumentError("$.score"),
+	)
+	outer := errors.Wrap(lifecycleErr, "outer context")
+
+	var extractedLifecycle *parserLifecycleError
+	if !stderrors.As(outer, &extractedLifecycle) {
+		t.Fatal("errors.As failed to extract *parserLifecycleError")
+	}
+	var extractedSkip *softSkipDocumentError
+	if !stderrors.As(outer, &extractedSkip) {
+		t.Fatal("errors.As failed to extract *softSkipDocumentError")
+	}
+	if !stderrors.Is(outer, cleanupCause) {
+		t.Fatalf("errors.Is(%v, cleanupCause) = false", outer)
+	}
+	if !stderrors.Is(outer, errSkipDocument) {
+		t.Fatalf("errors.Is(%v, errSkipDocument) = false", outer)
+	}
+}
+
+type parserLifecycleFailureParser struct {
+	calls int
+	err   error
+}
+
+func (*parserLifecycleFailureParser) Name() string { return "lifecycle-failure" }
+
+func (p *parserLifecycleFailureParser) Parse(_ []byte, rgID int, sink parserSink) error {
+	p.calls++
+	state := sink.BeginDocument(rgID)
+	if err := sink.StageString(state, "$.name", "not-committed"); err != nil {
+		return err
+	}
+	return p.err
+}
+
+func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
+	cleanupCause := errors.New("cleanup sentinel")
+	parser := &parserLifecycleFailureParser{
+		err: newParserLifecycleError(
+			errors.Wrap(cleanupCause, "close parser document"),
+			nil,
+		),
+	}
+	config, err := NewConfig(WithParserFailureMode(IngestFailureSoft))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder, err := NewBuilder(config, 2, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	firstErr := builder.AddDocument(DocID(7), []byte(`{"name":"first"}`))
+	if firstErr == nil {
+		t.Fatal("first AddDocument error = nil, want fatal lifecycle error")
+	}
+	if parser.calls != 1 {
+		t.Fatalf("parser calls after first AddDocument = %d, want 1", parser.calls)
+	}
+	if builder.Err() == nil {
+		t.Fatal("builder.Err() = nil, want fatal lifecycle error")
+	}
+	if firstErr != builder.Err() {
+		t.Fatalf("first AddDocument error = %p, builder.Err() = %p, want same stored error", firstErr, builder.Err())
+	}
+	if !stderrors.Is(firstErr, cleanupCause) {
+		t.Fatalf("errors.Is(%v, cleanupCause) = false", firstErr)
+	}
+	if builder.NumSoftSkippedDocuments() != 0 {
+		t.Fatalf("NumSoftSkippedDocuments() = %d, want 0", builder.NumSoftSkippedDocuments())
+	}
+	if builder.numDocs != 0 || builder.nextPos != 0 {
+		t.Fatalf("builder advanced after lifecycle failure: numDocs=%d nextPos=%d", builder.numDocs, builder.nextPos)
+	}
+	if len(builder.docIDToPos) != 0 || len(builder.posToDocID) != 0 || len(builder.pathData) != 0 {
+		t.Fatalf(
+			"builder committed state after lifecycle failure: docIDToPos=%d posToDocID=%d pathData=%d",
+			len(builder.docIDToPos),
+			len(builder.posToDocID),
+			len(builder.pathData),
+		)
+	}
+	if builder.Finalize() != nil {
+		t.Fatal("Finalize() after lifecycle failure is non-nil")
+	}
+
+	storedErr := builder.Err()
+	secondErr := builder.AddDocument(DocID(8), []byte(`{"name":"second"}`))
+	if secondErr == nil {
+		t.Fatal("second AddDocument error = nil, want prior tragic refusal")
+	}
+	if parser.calls != 1 {
+		t.Fatalf("parser calls after second AddDocument = %d, want 1", parser.calls)
+	}
+	if builder.Err() != storedErr {
+		t.Fatalf("builder.Err() changed from %p to %p", storedErr, builder.Err())
+	}
+	if !stderrors.Is(secondErr, storedErr) {
+		t.Fatalf("errors.Is(%v, storedErr) = false", secondErr)
+	}
+	if !strings.Contains(secondErr.Error(), "builder closed by prior tragic failure; discard and rebuild") {
+		t.Fatalf("second AddDocument error = %q, want prior tragic refusal context", secondErr.Error())
+	}
+}
