@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: verifying
-stopped_at: Completed 21-05-PLAN.md
-last_updated: "2026-07-23T08:02:39.968Z"
-last_activity: 2026-07-23
+status: ready_to_plan
+stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
+last_updated: 2026-07-23T08:28:09Z
+last_activity: 2026-07-23 -- Phase 21 completed
 progress:
   total_phases: 8
   completed_phases: 3
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 21 — simd-parser-adapter
+**Current focus:** Phase 22 — simd-validation-benchmarks-ci
 
 ## Current Position
 
-Phase: 21 (simd-parser-adapter) — EXECUTING
-Plan: 5 of 5
-Status: Phase complete — ready for verification
+Phase: 22 (simd-validation-benchmarks-ci)
+Plan: Not started
+Status: Ready to discuss
 Last activity: 2026-07-23
 
-Progress: [██████████] 100%
+Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
 ## Performance Metrics
 
@@ -117,7 +117,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Execute Phase 21: SIMD Parser Adapter (`/gsd:execute-phase 21`). 3 plans, 2 waves: Wave 1 {21-01 typed sink + fixtures, 21-02 NOTICE/docs/CHANGELOG} parallel; Wave 2 {21-03 pin + tagged adapter + build-isolation guard}.
+- Discuss and plan Phase 22: SIMD Validation, Benchmarks & CI (`$gsd-discuss-phase 22`).
 
 ### Blockers/Concerns
 
@@ -174,8 +174,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-23T08:02:39.961Z
-Stopped at: Completed 21-05-PLAN.md
+Last session: 2026-07-23T08:28:09Z
+Stopped at: Phase 21 complete and independently verified
 Resume file: None
 
-**Next step:** Verify Phase 21 — run /gsd:verify-work 21.
+**Next step:** Discuss Phase 22 — run `$gsd-discuss-phase 22`.

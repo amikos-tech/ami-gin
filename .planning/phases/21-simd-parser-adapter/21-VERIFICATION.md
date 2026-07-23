@@ -1,31 +1,16 @@
 ---
 phase: 21-simd-parser-adapter
-verified: 2026-07-23T07:04:54Z
-status: gaps_found
-score: "15/16 must-haves verified"
+verified: 2026-07-23T08:26:25Z
+status: passed
+score: "16/16 must-haves verified"
 overrides_applied: 0
 re_verification:
   previous_status: gaps_found
-  previous_score: 13/15
+  previous_score: 15/16
   gaps_closed:
-    - "Every hard staged numeric error retains its stage provenance even when document cleanup also fails"
-  gaps_remaining:
-    - "Every failed native document close is fatal on every walk outcome, including a concurrent walk panic"
+    - "Every failed native document close is now fatal on every walk outcome, including a concurrent walk panic"
+  gaps_remaining: []
   regressions: []
-gaps:
-  - truth: "Every failed native document close is a fatal parser-lifecycle failure, including when document walking panics"
-    status: failed
-    reason: "finishSIMDDocument attempts cleanup during a walk panic but does not recover the panic. If Close also fails, the defer assigns parserLifecycleError to a named return that is never returned because the original panic resumes. AddDocument cannot set tragicErr; after caller recovery the builder can dispatch the parser again, and ParserFailureMode soft can suppress the upstream ErrParserBusy retry."
-    artifacts:
-      - path: "parser_simd.go"
-        issue: "Lines 51-63 do not recover a walk panic before combining it with a close failure, so the cleanup failure is discarded."
-      - path: "parser_simd_lifecycle_test.go"
-        issue: "Lines 51-73 cover panic plus successful close, but no test combines a walk panic with a failed close and verifies terminal builder state."
-      - path: "builder.go"
-        issue: "Lines 412-437 correctly poison the builder only when Parse returns parserLifecycleError; a propagated parser panic bypasses that branch."
-    missing:
-      - "Lifecycle handling that preserves the original panic when close succeeds but makes a concurrent close failure terminal and observable to AddDocument."
-      - "A native-free regression combining walk panic, close failure, ParserFailureMode soft, caller recovery, and a second AddDocument attempt."
 deferred:
   - truth: "Real native SIMD execution and encoded/query parity across authored and realistic fixtures"
     addressed_in: "Phase 22"
@@ -38,38 +23,38 @@ deferred:
 # Phase 21: SIMD Parser Adapter Verification Report
 
 **Phase Goal:** Land an opt-in same-package SIMD parser implementation behind the existing parser seam without changing default stdlib behavior.
-**Verified:** 2026-07-23T07:04:54Z
-**Status:** gaps_found
-**Re-verification:** Yes — after Plan 21-04 gap closure
+**Verified:** 2026-07-23T08:26:25Z
+**Status:** passed
+**Re-verification:** Yes — after Plan 21-05 gap closure
 
 ## Goal Achievement
 
-Plan 21-04 closes the earlier returned-error defects: an ordinary close failure is now terminal, and simultaneous returned stage/soft-skip plus close errors retain both cause chains. One lifecycle branch remains unsafe. When walking panics and closing also fails, the close failure is discarded and the builder is not poisoned. This independently reproduces the advisory review's critical claim and fails an absolute Plan 21-04 must-have.
+Plan 21-05 closes the remaining lifecycle blocker. `finishSIMDDocument` now recovers a walk panic before cleanup. A successful close resumes the identical panic value; a failed close instead returns a multi-cause `parserLifecycleError`, preserving the recovered panic while allowing `AddDocument` to store the terminal builder error before any soft-parser routing. The committed native-free regression performs a second `AddDocument` and proves it is rejected before parser redispatch.
+
+The roadmap's four success criteria and every truth from all five PLAN frontmatters are merged below. Repeated plan truths map to one observable contract rather than inflating the score.
 
 ### Observable Truths
 
-Roadmap success criteria and all PLAN frontmatter truths are merged below. Repeated PLAN truths map to the same observable contract; the native-free lifecycle-test truth added by Plan 21-04 is listed separately.
-
 | # | Truth | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | A tagged caller can construct `NewSIMDParser() (Parser, error)`, observe `Name()=="pure-simdjson"`, and select it through `WithParser`, with no CLI activation path. | ✓ VERIFIED | `parser_simd.go:17-35`; `parser.go:85-101`; tagged build/test passed; product CLI policy tests reject `--parser`. |
-| 2 | Default builds remain stdlib-only and every product importer of pure-simdjson has the exact first-line build tag. | ✓ VERIFIED | `builder.go:207-242`; only `parser_simd.go` imports the module and line 1 is exact; default dependency graph excludes it; `make simd-isolation-check` passed. |
-| 3 | Exact int64/uint64 routing preserves `9007199254740993` and rejects values above `math.MaxInt64` through existing hard/soft numeric policy without float coercion or partial commit. | ✓ VERIFIED | `parser_simd.go:91-108`; `parser_sink.go:66-90`; `builder.go:697-768`; focused typed-sink tests passed. |
-| 4 | The parser sink exposes string, bool, int64, uint64, and float64 fast paths, and non-null SIMD scalar leaves use them instead of `any`. | ✓ VERIFIED | Interface/implementations at `parser_sink.go:28-40,58-102`; direct SIMD dispatch at `parser_simd.go:81-114`. |
-| 5 | `StageFloat64` preserves float classification and hard staged errors retain their stage provenance when cleanup also fails. | ✓ VERIFIED | `parser_sink.go:74-90`; multi-cause marker at `parser.go:7-42`; combined hard/soft lifecycle tests at `parser_simd_lifecycle_test.go:162-250` passed. |
-| 6 | Typed-sink comparisons commit through `AddDocument` before `Finalize` and cannot pass by comparing empty indexes. | ✓ VERIFIED | `parser_simd_test.go:31-68` asserts counters, doc mapping, and root path before encoding; focused tests passed. |
-| 7 | The numeric parity fixture keeps incompatible numeric classes on separate paths and its isolated non-empty golden does not alter earlier goldens. | ✓ VERIFIED | `parser_parity_fixtures_test.go:23-31`; golden is 604 bytes, SHA-256 `696b8a619eea2f5629bcf8fa6d285473a12c09a0e580f312fcbf2bcf2aa5ef8f`; focused parity and excluded-golden diff passed. |
+| 1 | A tagged caller can construct `NewSIMDParser() (Parser, error)`, observe `Name()=="pure-simdjson"`, and select it through `WithParser`, with no CLI activation path. | ✓ VERIFIED | Constructor/name are substantive at `parser_simd.go:17-35`; the tagged export archive contains `NewSIMDParser` and `(*simdParser).Name`; `WithParser` installs any `Parser` at `parser.go:85-101`; CLI policy tests forbid `--parser`. |
+| 2 | Default builds remain stdlib-only, and every product importer of pure-simdjson has the exact first-line build tag. | ✓ VERIFIED | `NewBuilder` defaults to `stdlibParser` at `builder.go:207-242`; default `go list` places `parser_simd.go` in `IgnoredGoFiles`; only `parser_simd.go` imports pure-simdjson and line 1 is exact; `make simd-isolation-check` passed. |
+| 3 | Exact int64/uint64 routing preserves `9007199254740993` and rejects values above `math.MaxInt64` through existing hard/soft numeric policy without float coercion or partial commit. | ✓ VERIFIED | Type-directed integer accessors at `parser_simd.go:105-116`; typed sink routing at `parser_sink.go:66-72`; policy at `builder.go:732-768`; focused exact-int and overflow tests passed. |
+| 4 | The parser sink exposes string, bool, int64, uint64, and float64 fast paths, and non-null SIMD scalar leaves use them instead of `any`. | ✓ VERIFIED | Five typed methods exist at `parser_sink.go:28-40,58-90`; direct SIMD dispatch uses the matching method at `parser_simd.go:95-128`. |
+| 5 | `StageFloat64` preserves float classification, and hard staged numeric errors retain their provenance even when cleanup also fails. | ✓ VERIFIED | `StageFloat64` bypasses the native whole-float fold at `parser_sink.go:74-90`; multi-cause lifecycle unwrapping is at `parser.go:7-42`; combined hard/soft lifecycle tests passed. |
+| 6 | Typed-sink comparisons commit through `AddDocument` before `Finalize` and cannot pass by comparing empty indexes. | ✓ VERIFIED | `parser_simd_test.go:31-68` requires successful `AddDocument`, committed counters/mapping, and root path state before encoding. |
+| 7 | The numeric parity fixture keeps incompatible numeric classes on separate paths, and its isolated non-empty golden does not alter earlier goldens. | ✓ VERIFIED | Fixture fields are separate at `parser_parity_fixtures_test.go:23-31`; golden is 604 bytes with SHA-256 `696b8a619eea2f5629bcf8fa6d285473a12c09a0e580f312fcbf2bcf2aa5ef8f`; the focused golden test and excluded-golden diff passed. |
 | 8 | The root NOTICE traces pure-simdjson v0.1.4 MIT licensing and bundled simdjson Apache-2.0/MIT attribution to the pinned files. | ✓ VERIFIED | `NOTICE.md:3-24` agrees with the cached v0.1.4 `LICENSE` and `NOTICE`. |
-| 9 | Documentation separates tagged build, fallible construction, and explicit builder selection with a valid two-step example. | ✓ VERIFIED | `docs/simd-deployment.md:9-61`; `README.md:80-112`; no invalid direct constructor use. |
+| 9 | Documentation separates tagged build, fallible construction, and explicit builder selection with a valid two-step example. | ✓ VERIFIED | `docs/simd-deployment.md:9-61` and `README.md:80-112`; no invalid `WithParser(NewSIMDParser())` use exists. |
 | 10 | Air-gapped/mirror guidance names all four bootstrap variables and separates wrapper, downloaded-native, and explicit-path integrity guarantees. | ✓ VERIFIED | `docs/simd-deployment.md:63-164` matches the pinned v0.1.4 bootstrap guide. |
-| 11 | The accepted greater-than-uint64 BIGINT divergence is documented by layer, path, governing mode, and atomic document disposition. | ✓ VERIFIED | `docs/simd-deployment.md:166-183`; `CHANGELOG.md:5`. |
-| 12 | README and CHANGELOG preserve stdlib defaults and avoid claiming Phase 22 parity, performance, or platform evidence. | ✓ VERIFIED | `README.md:80-112`; `CHANGELOG.md:3-5`; validation boundary at `docs/simd-deployment.md:185-190`. |
-| 13 | Every successfully parsed native document is closed exactly once, and every close failure makes the builder terminal before any parser retry, on every walk outcome. | ✗ FAILED | Returned success/error paths are handled, but `parser_simd.go:51-63` discards close failure during a walk panic. An ephemeral overlay test reproduced `builder.Err()==nil`, a second parser dispatch, and one soft-skipped simulated busy error after application recovery. |
-| 14 | Transform-buffered subtrees preserve stdlib `json.Number` and float-lexeme classification semantics. | ✓ VERIFIED | Transform guard precedes type dispatch (`parser_simd.go:72-79`); materializer returns `json.Number` for all numeric kinds and appends `.0` to whole floats (`parser_simd.go:170-206`). |
-| 15 | SIMD objects are last-key-wins with stdlib path construction; containers and both array path variants re-check transforms. | ✓ VERIFIED | `parser_simd.go:115-162,213-251` collapses duplicates, sorts direct-walk keys, mirrors raw paths, emits indexed/wildcard paths, and recurses through the transform guard. |
-| 16 | Focused native-free tests inject lifecycle outcomes and deterministically cover close-only and returned stage-plus-close failures without constructing `NewSIMDParser`. | ✓ VERIFIED | `parser_simd_lifecycle_test.go:14-275` is tagged, uses callbacks/test parsers, and contains no native constructor call; focused tagged tests passed. Coverage omits panic-plus-close failure, which is captured under truth 13. |
+| 11 | The accepted greater-than-uint64 BIGINT divergence is documented by layer, path, governing mode, and atomic document disposition. | ✓ VERIFIED | `docs/simd-deployment.md:166-183` and `CHANGELOG.md:5`. |
+| 12 | README and CHANGELOG preserve stdlib defaults and avoid claiming Phase 22 parity, performance, or platform evidence. | ✓ VERIFIED | `README.md:80-112`, `CHANGELOG.md:3-5`, and the explicit validation boundary at `docs/simd-deployment.md:185-190`. |
+| 13 | Every successfully parsed native document is closed exactly once. Successful cleanup preserves an identical walk panic; any close failure, including during a panic, becomes fatal, poisons the builder, and blocks every retry under parser soft mode. | ✓ VERIFIED | Panic-aware combiner at `parser_simd.go:51-77`; fatal route precedes soft handling at `builder.go:389-437`; identity, error/non-error panic, terminal state, and actual retry coverage at `parser_simd_lifecycle_test.go:51-220`; focused tagged tests passed. |
+| 14 | Transform-buffered subtrees preserve stdlib `json.Number` and float-lexeme classification semantics. | ✓ VERIFIED | Transform guard precedes type dispatch at `parser_simd.go:86-93`; materialization returns `json.Number` for every numeric type and preserves whole-float class at `parser_simd.go:184-220`. |
+| 15 | SIMD objects are last-key-wins with stdlib path construction; containers and both array path variants re-check transforms. | ✓ VERIFIED | `parser_simd.go:129-176,227-265` collapses duplicate keys, sorts direct-walk keys, mirrors stdlib raw paths, emits indexed/wildcard paths, and recurses through the transform guard. |
+| 16 | Focused lifecycle tests are deterministic and native-free, covering close-only, returned stage-plus-close, successful-close panic, panic-plus-close, caller recovery, and retry refusal without constructing `NewSIMDParser`. | ✓ VERIFIED | `parser_simd_lifecycle_test.go:14-398` uses injected callbacks/test parsers, contains no native constructor call, and all `TestSIMDDocumentLifecycle*` tests passed. |
 
-**Score:** 15/16 truths verified
+**Score:** 16/16 truths verified
 
 ### PLAN Frontmatter Coverage
 
@@ -86,95 +71,102 @@ Roadmap success criteria and all PLAN frontmatter truths are merged below. Repea
 | 21-02 | Accurate BIGINT divergence | #11 | ✓ VERIFIED |
 | 21-02 | README/CHANGELOG preserve defaults and evidence boundaries | #12 | ✓ VERIFIED |
 | 21-03 | Constructor/name/WithParser selection and no CLI path | #1 | ✓ VERIFIED |
-| 21-03 | Native document lifecycle remains reusable across all walk outcomes | #13 | ✗ FAILED |
+| 21-03 | Native document lifecycle remains reusable across all walk outcomes | #13 | ✓ VERIFIED |
 | 21-03 | Typed scalar routing strictly from element kind | #4 | ✓ VERIFIED |
 | 21-03 | Transform-buffered numeric semantics | #14 | ✓ VERIFIED |
 | 21-03 | Duplicate-key, path, container, and transform behavior | #15 | ✓ VERIFIED |
 | 21-03 | Exact source tag and default dependency isolation | #2 | ✓ VERIFIED |
-| 21-04 | Failed close is terminal and blocks every later parser invocation | #13 | ✗ FAILED |
+| 21-04 | Failed close is terminal and blocks every later parser invocation | #13 | ✓ VERIFIED |
 | 21-04 | Returned walk/stage plus close errors retain both cause chains | #5 | ✓ VERIFIED |
 | 21-04 | Native-free injected lifecycle tests cover close-only and returned stage-plus-close outcomes | #16 | ✓ VERIFIED |
+| 21-05 | Successful-close panic cleanup runs once and resumes the identical value | #13 | ✓ VERIFIED |
+| 21-05 | Panic plus failed close returns a diagnosable fatal lifecycle error under soft mode | #13 | ✓ VERIFIED |
+| 21-05 | Caller recovery is followed by an actual retry that fails before parser redispatch | #13 | ✓ VERIFIED |
+| 21-05 | Panic-plus-close regression is deterministic and native-free | #16 | ✓ VERIFIED |
 
 ### Re-verification Result
 
 | Previous gap | Current result | Evidence |
 | --- | --- | --- |
-| Close failure could be soft-skipped and leave the parser busy | PARTIAL — ordinary returned paths fixed; panic-plus-close remains | `parser.go:7-42`, `builder.go:412-416`, and close-only tests pass; overlay reproduction proves the panic branch still bypasses poisoning. |
-| Combined stage and close failure lost stage provenance | CLOSED | Multi-cause `Unwrap() []error` plus tagged hard/soft tests preserve stage, soft-skip, `IngestError`, and sentinel causes. |
+| A walk panic plus failed close discarded the cleanup failure and left the builder reusable | CLOSED | `finishSIMDDocument` now recovers before close and returns `newParserLifecycleError` on close failure (`parser_simd.go:51-77`). `TestSIMDDocumentLifecyclePanicCloseFailurePoisonsBuilder` performs two `AddDocument` calls and proves parser/walk/close counts remain `(1,1,1)`. |
 
 ### Deferred Items
 
+Items below are explicitly owned by a later milestone phase and are not Phase 21 gaps.
+
 | # | Item | Addressed In | Evidence |
 | --- | --- | --- | --- |
-| 1 | Real native adapter execution and encoded/query parity | Phase 22 | Phase 22 success criterion 1. |
-| 2 | Enforced tagged CI/platform/native-runtime gates | Phase 22 | Phase 22 success criterion 3. |
-
-The lifecycle blocker is not deferred: no later milestone phase specifically owns failed-close behavior during a walk panic.
+| 1 | Real native adapter execution and encoded/query parity | Phase 22 | Phase 22 success criterion 1 requires SIMD/stdlib parity across authored and realistic fixtures. |
+| 2 | Enforced tagged CI/platform/native-runtime gates | Phase 22 | Phase 22 success criterion 3 requires default and tagged CI with explicit platform/shared-library behavior. |
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 | --- | --- | --- | --- |
-| `parser_sink.go` | Five typed scalar methods | ✓ VERIFIED | Substantive implementations, used by adapter/tests. |
-| `parser.go` | Parser contract and fatal lifecycle marker | ✓ VERIFIED | Typed routes plus multi-cause unexported marker. |
-| `parser_test.go` | Expanded recording sink | ✓ VERIFIED | All five typed methods implemented. |
-| `parser_simd_test.go` | Committed typed numeric tests | ✓ VERIFIED | Substantive, passing, and asserts durable commit state. |
+| `parser_sink.go` | Five typed scalar methods | ✓ VERIFIED | Substantive implementations; used by the adapter and committed-state tests. |
+| `parser.go` | Parser contract and fatal lifecycle marker | ✓ VERIFIED | Typed routes plus multi-cause private lifecycle error. |
+| `parser_test.go` | Expanded recording sink | ✓ VERIFIED | Implements all five typed methods. |
+| `parser_simd_test.go` | Committed typed numeric tests | ✓ VERIFIED | Substantive, passing, and checks durable/non-durable builder state. |
 | `parser_parity_fixtures_test.go` | SIMD numeric fixture | ✓ VERIFIED | Registered and consumed by parity/golden tests. |
-| `testdata/parity-golden/simd-numeric-parity.bin` | Non-empty stdlib reference | ✓ VERIFIED | 604 bytes; focused golden test passed. |
+| `testdata/parity-golden/simd-numeric-parity.bin` | Non-empty stdlib reference | ✓ VERIFIED | 604 bytes; focused parity test passed. |
 | `NOTICE.md` | Pinned attribution | ✓ VERIFIED | Matches pinned upstream files. |
-| `docs/simd-deployment.md` | Activation/operations guidance | ✓ VERIFIED | Complete and linked. |
-| `README.md` | Optional SIMD installation | ✓ VERIFIED | Correct two-step example and default statement. |
+| `docs/simd-deployment.md` | Activation/operations guidance | ✓ VERIFIED | Complete and linked from README/CHANGELOG. |
+| `README.md` | Optional SIMD installation | ✓ VERIFIED | Correct two-step example and unchanged-default statement. |
 | `CHANGELOG.md` | Unreleased adapter entry | ✓ VERIFIED | Accurate limitation/default wording. |
-| `parser_simd.go` | Tagged lifecycle-safe adapter | ✗ PARTIAL | Substantive and wired, but panic-plus-close loses cleanup failure. |
+| `parser_simd.go` | Tagged lifecycle-safe adapter | ✓ VERIFIED | Substantive, compiled under the tag, wired through the parser seam, and panic-aware. |
 | `go.mod` | Exact v0.1.4 dependency pin | ✓ VERIFIED | Direct pin at line 12. |
-| `go.sum` | Pinned checksums | ✓ VERIFIED | v0.1.4 entries present; module verification/tidy diff passed. |
-| `Makefile` | Default dependency isolation guard | ✓ VERIFIED | Standalone target passed. |
-| `builder.go` | Fatal lifecycle routing | ✓ VERIFIED | Correct for returned marker errors; cannot route a propagated panic. |
+| `go.sum` | Pinned checksums | ✓ VERIFIED | v0.1.4 module and go.mod entries present; module verification passed. |
+| `Makefile` | Default dependency-isolation guard | ✓ VERIFIED | Standalone target passed. |
+| `builder.go` | Fatal lifecycle routing | ✓ VERIFIED | Marker detection precedes skip, stage, and parser-soft branches. |
 | `parser_lifecycle_test.go` | Generic marker/terminal-builder tests | ✓ VERIFIED | Default focused suite passed. |
-| `parser_simd_lifecycle_test.go` | Injected SIMD lifecycle tests | ⚠ PARTIAL | Close-only and returned combined errors covered; panic-plus-close is missing. |
+| `parser_simd_lifecycle_test.go` | Injected SIMD lifecycle tests | ✓ VERIFIED | Close-only, combined returned errors, and both panic cleanup outcomes are covered. |
+
+All PLAN-declared artifacts pass existence and substantive checks. The automated key-link query could not parse symbolic `from` labels such as `parser_simd.go finishSIMDDocument`; every such link was therefore checked manually below.
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 | --- | --- | --- | --- | --- |
-| `parser_simd_test.go` | `AddDocument` / `mergeDocumentState` | Parser → AddDocument → commit → Finalize/Encode | ✓ WIRED | Durable counters and path state asserted. |
+| `parser_simd_test.go` | `AddDocument` / `mergeDocumentState` | Parser → AddDocument → commit → Finalize/Encode | ✓ WIRED | Durable counters, mapping, and root path are asserted before encoding. |
 | `StageFloat64` | `stageNumericObservation` | Direct non-folding staged value with `tagStageError` | ✓ WIRED | `parser_sink.go:74-90`. |
 | `StageInt64` / `StageUint64` | `stageNativeNumeric` | Typed wrapper reuse | ✓ WIRED | `parser_sink.go:66-72`. |
-| README SIMD section | Deployment guide | Relative link | ✓ WIRED | `README.md:110`. |
-| Constructor error | Deployment recovery | `PURE_SIMDJSON_LIB_PATH` hint | ✓ WIRED | `parser_simd.go:28`; guide lines 58-61. |
-| Root NOTICE | Pinned dependency NOTICE | Versioned attribution | ✓ VERIFIED | Local claims match pinned files. |
-| `walkElement` | Typed sink methods | Element-kind dispatch | ✓ WIRED | `parser_simd.go:81-114`. |
-| `materializeElement` | `StageMaterialized` | `json.Number` subtree values | ✓ WIRED | `parser_simd.go:73-79,170-206`. |
-| `Parse` | `Doc.Close` | `finishSIMDDocument` callback | ⚠ PARTIAL | Close runs once, including panic, but a close error during panic is not returned. |
-| `simd-isolation-check` | Default dependency graph | Exact source/graph assertions | ✓ WIRED | Target passed. |
-| `finishSIMDDocument` | `parserLifecycleError` | Failed-close combiner | ⚠ PARTIAL | Works for returned walk errors, not panics. |
-| `AddDocument` | `GINBuilder.tragicErr` | Lifecycle detection before recoverable branches | ✓ WIRED | `builder.go:412-416`. |
-| Lifecycle tests | Cleanup helper | Injected callbacks and counters | ⚠ PARTIAL | Required returned-error cases pass; panic-plus-close missing. |
+| README SIMD section | Deployment guide | Relative Markdown link | ✓ WIRED | `README.md:110`. |
+| Constructor error | Deployment recovery | `PURE_SIMDJSON_LIB_PATH` hint | ✓ WIRED | `parser_simd.go:28-32`; guide lines 58-61. |
+| Root NOTICE | Pinned dependency NOTICE | Versioned attribution | ✓ WIRED | Local claims match cached v0.1.4 files. |
+| `walkElement` | Typed sink methods | Element-kind dispatch | ✓ WIRED | `parser_simd.go:95-128`. |
+| `materializeElement` | `StageMaterialized` | `json.Number` subtree values | ✓ WIRED | `parser_simd.go:86-93,184-220`. |
+| `Parse` | `Doc.Close` | `finishSIMDDocument` callback | ✓ WIRED | `parser_simd.go:37-48`; close is owned by the helper on every walk outcome. |
+| `simd-isolation-check` | Default dependency graph | Exact source and graph assertions | ✓ WIRED | Target passed; default graph contains no pure-simdjson package. |
+| `finishSIMDDocument` | `parserLifecycleError` | Failed-close combiner, including recovered panic | ✓ WIRED | `parser_simd.go:51-77`. |
+| `AddDocument` | `GINBuilder.tragicErr` | Lifecycle detection before recoverable branches | ✓ WIRED | `builder.go:389-437`. |
+| Lifecycle tests | Cleanup helper and `AddDocument` | Injected callbacks, caller recovery, retry, and counters | ✓ WIRED | `parser_simd_lifecycle_test.go:76-220,223-374`. |
 
 ### Data-Flow Trace (Level 4)
 
 | Artifact | Data | Source | Produces Real Data | Status |
 | --- | --- | --- | --- | --- |
-| Direct SIMD scalar path | Native typed leaves | `Parser.Parse` → element kind/accessor → typed sink → staged state → merge | Yes by static trace; runtime parity deferred | ✓ FLOWING |
-| Transform path | Materialized subtree | Native element → `json.Number`/Go values → `StageMaterialized` | Yes by static trace; runtime parity deferred | ✓ FLOWING |
+| Tagged parser selection | Parser implementation | `NewSIMDParser` → `WithParser` → `NewBuilder` parser field | Yes by tagged compile/export trace | ✓ FLOWING |
+| Direct SIMD scalar path | Native typed leaves | `Parse` → `Element.Type`/typed accessor → typed sink → staged state → merge | Yes by static trace; runtime parity belongs to Phase 22 | ✓ FLOWING |
+| Transform path | Materialized subtree | Native element → `json.Number`/Go values → `StageMaterialized` | Yes by static trace; runtime parity belongs to Phase 22 | ✓ FLOWING |
 | Returned close-failure path | Cleanup and concurrent returned error | `finishSIMDDocument` → `parserLifecycleError` → `AddDocument` → `tragicErr` | Yes | ✓ FLOWING |
-| Panic-plus-close path | Cleanup failure during walk panic | Deferred close assigns named return, then panic resumes | No lifecycle marker reaches builder | ✗ DISCONNECTED |
-| Default build selection | Parser implementation/dependency graph | No tag → adapter excluded → `stdlibParser` default | Yes | ✓ FLOWING |
+| Panic-plus-close path | Cleanup failure during walk panic | recover → close → lifecycle marker → terminal builder → blocked retry | Yes; committed regression executes the retry | ✓ FLOWING |
+| Default build selection | Parser and dependency graph | No tag → adapter ignored → `stdlibParser` default | Yes | ✓ FLOWING |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 | --- | --- | --- | --- |
-| Full default suite | `go test -count=1 ./...` | All packages passed; root package 25.542s | ✓ PASS |
-| Full tagged suite | `go test -tags simdjson -count=1 ./...` | All packages passed; root package 27.162s | ✓ PASS |
-| Default lifecycle/typed sink | `go test -run '^Test(ParserLifecycle|TypedSink)' -count=1 .` | `ok`, package test 1.055s | ✓ PASS |
-| Tagged lifecycle/typed sink | `go test -tags simdjson -run '^Test(SIMDDocumentLifecycle|TypedSink)' -count=1 .` | `ok`, package test 0.461s | ✓ PASS |
-| Numeric fixture golden | `go test -run '^TestParserParity_AuthoredFixtures/simd-numeric-parity$' -count=1 .` | `ok`, package test 0.765s | ✓ PASS |
-| Default build/vet | `go build ./... && go vet ./...` | Exit 0 | ✓ PASS |
-| Tagged build/vet | `go build -tags simdjson ./... && go vet -tags simdjson ./...` | Exit 0 | ✓ PASS |
-| Default dependency isolation | `make simd-isolation-check` | Exit 0 | ✓ PASS |
-| Module integrity/tidiness | `go mod verify && go mod tidy -diff` | `all modules verified`, exit 0 | ✓ PASS |
-| Walk panic plus close failure | `go test -tags simdjson -overlay <ephemeral verifier test> -run '^TestPhase21VerifierReproducesPanicCloseFailure$' -count=1 -v .` | Reproduced: close error discarded, `builder.Err()` nil, second parser call soft-skipped | ✗ FAIL |
+| Full default build | `make build` | Orchestrator-established post-Plan-05 pass | ✓ PASS |
+| Full default suite | `make test` | Orchestrator ran twice after Plan 21-05: 1,042 passed, one fixture-dependent skip | ✓ PASS |
+| Typed scalar and numeric contracts | `go test -count=1 -run '^TestTypedSink' .` | Exit 0; exact int, float class, hard/soft overflow, and non-finite cases passed | ✓ PASS |
+| Generic fatal lifecycle contract | `go test -count=1 -run '^TestParserLifecycle' .` | Exit 0 | ✓ PASS |
+| Default parser selection | `go test -count=1 -run '^TestNewBuilderDefaultsToStdlibParser$' .` | Exit 0 | ✓ PASS |
+| Panic-plus-close blocker regression | `go test -tags simdjson -count=1 -run '^TestSIMDDocumentLifecyclePanicCloseFailurePoisonsBuilder$' .` | Exit 0; terminal state and blocked retry passed | ✓ PASS |
+| Full native-free lifecycle set | `go test -tags simdjson -count=1 -run '^TestSIMDDocumentLifecycle' .` | Exit 0 | ✓ PASS |
+| Tagged package compile | `go test -tags simdjson -count=1 -run '^$' ./...` | All packages compiled; no tests or native constructor executed | ✓ PASS |
+| Numeric fixture golden | `go test -count=1 -run 'TestParserParity_AuthoredFixtures/simd-numeric-parity' .` | Focused subtest passed | ✓ PASS |
+| Default dependency isolation | `make simd-isolation-check` | Exit 0; build and vet passed | ✓ PASS |
+| Module integrity/tidiness | `go mod verify && go mod tidy -diff` | `all modules verified`; no diff | ✓ PASS |
 
 ### Probe Execution
 
@@ -184,41 +176,39 @@ Step 7c was skipped: no `probe-*.sh` files or probe declarations exist for this 
 
 | Requirement | Source Plans | Description | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| SIMD-04 | 21-02, 21-03, 21-04 | Explicit same-package SIMD parser selection through the existing seam | ✓ SATISFIED | Tagged constructor/name compile and `WithParser` accepts the returned `Parser`; no default or CLI activation. |
-| SIMD-05 | 21-02, 21-03 | Default stdlib-only build/runtime | ✓ SATISFIED | Default builder is stdlib; default package/test graph excludes pure-simdjson; isolation target passed. |
-| SIMD-06 | 21-01, 21-02, 21-03, 21-04 | Exact-int semantics and no silent float64 coercion | ✓ SATISFIED | Type-directed accessors, non-folding float stage, `json.Number` materialization, and focused tests. |
-| SIMD-07 | 21-01, 21-03, 21-04 | Typed scalar fast paths avoid `any` | ✓ SATISFIED | Five typed methods and direct adapter dispatch exist and are wired. |
+| SIMD-04 | 21-02, 21-03, 21-04, 21-05 | Explicit same-package SIMD parser selection through the existing seam | ✓ SATISFIED | Tagged constructor/name compile and export; `WithParser` accepts the returned `Parser`; lifecycle failures are terminal; no default or CLI activation. |
+| SIMD-05 | 21-02, 21-03 | Default stdlib-only build/runtime | ✓ SATISFIED | Default builder is stdlib; default source/package/test graph excludes pure-simdjson; isolation target passed. |
+| SIMD-06 | 21-01, 21-02, 21-03, 21-04 | Exact-int semantics and no silent float64 coercion | ✓ SATISFIED | Type-directed integer accessors, non-folding float staging, `json.Number` materialization, and focused committed-state tests. |
+| SIMD-07 | 21-01, 21-03, 21-04 | Typed scalar fast paths avoid `any` | ✓ SATISFIED | Five typed methods exist and direct adapter dispatch is wired for every non-null scalar kind. |
 
 All four Phase 21 requirement IDs appear in PLAN frontmatter and `.planning/REQUIREMENTS.md`; none is orphaned.
 
-### Anti-Patterns and Advisory Review Triage
+### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 | --- | --- | --- | --- | --- |
-| `parser_simd.go` | 51-63 | Deferred cleanup assigns an error during panic without recovery | 🛑 BLOCKER | Close failure is lost; builder remains open and a later busy error can be soft-skipped. Independently reproduced. |
-| `parser_simd.go` | 19-35 | Native parser handle has no deterministic close path through the returned interface | ⚠ WARNING | Resource lifetime relies on upstream finalization; constructor shape was explicitly locked, so changing ownership needs a developer decision. |
-| `parser_simd.go` | 81, 172 | `Element.Type()` collapses native causes to `TypeInvalid` | ⚠ WARNING | Diagnostics lose underlying native error causes; strict type-directed routing still holds. |
-| `parser_simd_lifecycle_test.go` | 51-73 | Panic test covers only successful close | ⚠ WARNING | The blocking combined branch is absent from committed tests. |
-| Tagged tests / normal automation | — | No real native adapter execution and no enforced tagged CI | ⚠ DEFERRED | Phase 22 success criteria 1 and 3 explicitly own these checks. |
-| `builder.go` | 642-654 | Representation-skip metric is published before document commit | ℹ OUT OF PHASE | Git blame shows this behavior predates Phase 21; it does not change the Phase 21 verdict. |
+| Phase-owned files | — | Unreferenced `TBD`, `FIXME`, or `XXX` | None | No debt-marker blocker found. |
+| `parser_simd.go` | 95, 186 | `Element.Type()` collapses native type-read causes to `TypeInvalid` | ℹ INFO | A generic invalid-element error is returned instead of the native cause. The plan explicitly locked single `Element.Type()` dispatch, so this does not fail a Phase 21 must-have. |
+| `parser_simd.go` | 19-35 | Returned `Parser` interface has no deterministic parser-handle close method | ℹ INFO | Upstream finalization owns eventual parser release after it becomes unreachable. The public constructor/interface shape was locked before this phase. |
+| Native execution / tagged automation | — | Runtime adapter parity and platform coverage are absent | ⚠ DEFERRED | Phase 22 success criteria 1 and 3 explicitly own these checks. |
 
-No unreferenced `TBD`, `FIXME`, or `XXX` marker was found in phase-owned files. Broad empty-value matches were ordinary test assertions, initialized state, or valid slice/error returns, not stubs.
+Broad empty-value matches were normal initial state, test assertions, or valid error slices, not stubs. No placeholder implementation, console-only handler, or hardcoded empty data path was found.
 
 ### Disconfirmation Pass
 
-- **Partial requirement detail:** returned close failures are terminal, but the same close failure during a walk panic is not.
-- **Misleading green test:** `TestSIMDDocumentLifecycleCleanupRunsWhenWalkPanics` proves cleanup is called only when cleanup succeeds; it cannot detect loss of a simultaneous close error.
-- **Uncovered error path:** no committed test combines walk panic, close failure, parser soft mode, caller recovery, and retry.
+- **Weakest evidence edge:** SIMD-04's tagged constructor and seam are compiled and present in the export archive, but Phase 21's deterministic tests intentionally do not construct the native parser. Phase 22 owns actual runtime/platform execution.
+- **Potentially misleading green test:** lifecycle tests prove the adapter's cleanup/routing helper with injected callbacks, not the upstream FFI's real `Doc.Close`. This is sufficient for the Phase 21 implementation contract but not parity or operational certification.
+- **Uncovered diagnostic path:** `Element.Type()` converts native type-read errors to `TypeInvalid`, so the adapter cannot retain the underlying native cause on that branch. This affects diagnostic detail, not type routing or index correctness under the phase contract.
 
 ### Human Verification Required
 
-None within the Phase 21 boundary. The blocker is programmatically reproducible. Real native runtime parity and platform behavior are explicitly deferred to Phase 22.
+None within the Phase 21 boundary. All Phase 21 truths are programmatically verifiable. Real native execution and platform behavior are explicit Phase 22 deliverables rather than deferred human checks for this phase.
 
 ### Gaps Summary
 
-The lifecycle design is correct for ordinary returned errors but incomplete for Go panic unwinding. A close failure must still reach the fatal builder route when walking panics; otherwise the upstream parser can remain busy while the builder remains reusable. The closure plan needs one combined panic/close regression and lifecycle handling that preserves the intended panic semantics without losing the fatal cleanup failure.
+No Phase 21 gaps remain. Plan 21-05 closes the panic-plus-close lifecycle failure, and regression checks found no breakage in the previously passing typed-sink, numeric, documentation, attribution, default-isolation, transform, duplicate-key, or returned-error contracts.
 
 ---
 
-_Verified: 2026-07-23T07:04:54Z_
+_Verified: 2026-07-23T08:26:25Z_
 _Verifier: the agent (gsd-verifier)_
