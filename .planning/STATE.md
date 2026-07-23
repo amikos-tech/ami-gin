@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: executing
-stopped_at: Phase 21 planned (4 plans, 3 waves; plan-checker 0 blockers)
-last_updated: "2026-07-23T04:55:40.159Z"
-last_activity: 2026-07-23 -- Phase 21 planning complete
+status: verifying
+stopped_at: Completed 21-04-PLAN.md
+last_updated: "2026-07-23T06:36:47.566Z"
+last_activity: 2026-07-23
 progress:
   total_phases: 8
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
-  completed_plans: 6
-  percent: 25
+  completed_plans: 7
+  percent: 38
 ---
 
 # Project State
@@ -25,12 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 ## Current Position
 
-Phase: 21 (simd-parser-adapter) — EXECUTING
+Phase: 21 (simd-parser-adapter) — COMPLETE
 Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-07-23 -- Phase 21 planning complete
+Status: Phase complete — ready for verification
+Last activity: 2026-07-23
 
-Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -59,6 +59,7 @@ Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete
 | 16 | 4 | Complete (4/4 plans complete) |
 | 17 | 4 | Complete (4/4 plans complete) |
 | 18 | 4 | Complete (4/4 plans complete) |
+| Phase 21 P04 | 8 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -89,6 +90,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
 - **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
 - **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
+- [Phase 21]: Parser cleanup failures are terminal builder integrity failures, with cleanup and concurrent walk causes preserved as peer unwrap branches — Prevents soft mode from hiding a permanently busy native parser
 
 ### Roadmap Evolution
 
@@ -170,8 +172,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-22T00:00:00.000Z
-Stopped at: Phase 21 planned (4 plans, 3 waves; plan-checker 0 blockers)
-Resume file: .planning/phases/21-simd-parser-adapter/21-01-PLAN.md
+Last session: 2026-07-23T06:35:26.079Z
+Stopped at: Completed 21-04-PLAN.md
+Resume file: None
 
-**Next step:** Execute Phase 21 — run `/clear` then `/gsd:execute-phase 21`.
+**Next step:** Verify Phase 21 — run /gsd:verify-work 21.
