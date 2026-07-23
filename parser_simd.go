@@ -50,13 +50,27 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 
 func finishSIMDDocument(walk func() error, closeDocument func() error) (err error) {
 	defer func() {
+		recovered := recover()
 		closeErr := closeDocument()
 		if closeErr == nil {
+			if recovered != nil {
+				panic(recovered)
+			}
 			return
+		}
+
+		concurrentErr := err
+		if recovered != nil {
+			panicErr, ok := recovered.(error)
+			if ok {
+				concurrentErr = panicErr
+			} else {
+				concurrentErr = errors.Errorf("panic while walking SIMD document: %v", recovered)
+			}
 		}
 		err = newParserLifecycleError(
 			errors.Wrap(closeErr, "close pure-simdjson document"),
-			err,
+			concurrentErr,
 		)
 	}()
 
