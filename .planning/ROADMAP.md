@@ -96,7 +96,7 @@ Plans:
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
 
-**Plans:** 3/3 plans complete
+**Plans:** 3/4 plans complete
 
 Plans:
 **Wave 1**
@@ -107,6 +107,10 @@ Plans:
 **Wave 2** *(blocked on Wave 1 completion)*
 
 - [x] 21-03-PLAN.md — Lifecycle-safe tagged adapter, transform/duplicate-key parity semantics, and default-graph isolation (SIMD-04..07)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 21-04-PLAN.md — Fatal lifecycle routing, builder poisoning, combined-error provenance, and deterministic native-free tests (SIMD-04, SIMD-06, SIMD-07)
 
 ### Phase 22: SIMD Validation, Benchmarks & CI
 
