@@ -39,20 +39,28 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	if err != nil {
 		return errors.Wrap(err, "failed to parse JSON")
 	}
+	return finishSIMDDocument(
+		func() error {
+			state := sink.BeginDocument(rgID)
+			return s.walkElement(doc.Root(), "$", state, sink)
+		},
+		doc.Close,
+	)
+}
+
+func finishSIMDDocument(walk func() error, closeDocument func() error) (err error) {
 	defer func() {
-		closeErr := doc.Close()
+		closeErr := closeDocument()
 		if closeErr == nil {
 			return
 		}
-		if err != nil {
-			err = errors.Wrapf(closeErr, "close pure-simdjson document after walk failed: %v", err)
-			return
-		}
-		err = errors.Wrap(closeErr, "close pure-simdjson document")
+		err = newParserLifecycleError(
+			errors.Wrap(closeErr, "close pure-simdjson document"),
+			err,
+		)
 	}()
 
-	state := sink.BeginDocument(rgID)
-	return s.walkElement(doc.Root(), "$", state, sink)
+	return walk()
 }
 
 func (s *simdParser) walkElement(
