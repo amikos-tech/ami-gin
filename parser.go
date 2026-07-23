@@ -4,6 +4,44 @@ import (
 	"github.com/pkg/errors"
 )
 
+// parserLifecycleError marks a parser failure after which the parser cannot
+// safely accept another document. cleanupErr is the lifecycle failure and
+// concurrentErr retains any walk or Stage callback failure observed before
+// cleanup completed.
+type parserLifecycleError struct {
+	cleanupErr    error
+	concurrentErr error
+}
+
+func newParserLifecycleError(cleanupErr, concurrentErr error) error {
+	if cleanupErr == nil {
+		return concurrentErr
+	}
+	return &parserLifecycleError{
+		cleanupErr:    cleanupErr,
+		concurrentErr: concurrentErr,
+	}
+}
+
+func (e *parserLifecycleError) Error() string {
+	if e.concurrentErr == nil {
+		return e.cleanupErr.Error()
+	}
+	return e.cleanupErr.Error() + "; concurrent parser failure: " + e.concurrentErr.Error()
+}
+
+func (e *parserLifecycleError) Unwrap() []error {
+	if e.concurrentErr == nil {
+		return []error{e.cleanupErr}
+	}
+	return []error{e.cleanupErr, e.concurrentErr}
+}
+
+func isParserLifecycleError(err error) bool {
+	var lifecycleErr *parserLifecycleError
+	return errors.As(err, &lifecycleErr)
+}
+
 // Parser translates one JSON document into staged per-path observations,
 // writing them through the supplied sink. Implementations MUST preserve the
 // source number's integer or float classification without coercing exact
@@ -15,7 +53,9 @@ import (
 // Parse may add parser-local context to errors it creates. Errors returned by
 // sink Stage callbacks must retain their layer. AddDocument preserves staged
 // error provenance and applies parser hard/soft classification only to errors
-// that did not originate from a Stage callback.
+// that did not originate from a Stage callback. A parser that cannot safely
+// parse another document must return a parserLifecycleError; AddDocument then
+// terminates the builder regardless of ParserFailureMode.
 //
 // External implementability: the sink type referenced by Parse (parserSink)
 // is package-private; third-party Parser implementations outside package gin

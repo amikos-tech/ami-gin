@@ -410,6 +410,10 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 	}()
 
 	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
+		if isParserLifecycleError(err) {
+			b.tragicErr = errors.Wrap(err, "builder tragic: parser lifecycle failure")
+			return b.tragicErr
+		}
 		if isSkipDocument(err) {
 			// Invariant: bare errSkipDocument sentinels (softSkipKindOther)
 			// originate only from the parser path here. Numeric and other
