@@ -6,6 +6,8 @@ import (
 	stderrors "errors"
 	"strings"
 	"testing"
+
+	purejson "github.com/amikos-tech/pure-simdjson"
 )
 
 func newTestSIMDParser(t *testing.T) CloseableParser {
@@ -89,6 +91,55 @@ func TestSIMDParserNativeNumericFailuresUseNumericPolicy(t *testing.T) {
 				parser := newTestSIMDParser(t)
 				cfg, err := NewConfig(
 					WithParserFailureMode(IngestFailureHard),
+					WithNumericFailureMode(IngestFailureSoft),
+				)
+				if err != nil {
+					t.Fatalf("NewConfig: %v", err)
+				}
+				builder, err := NewBuilder(cfg, 1, WithParser(parser))
+				if err != nil {
+					t.Fatalf("NewBuilder: %v", err)
+				}
+
+				if err := builder.AddDocument(DocID(0), tc.jsonDoc); err != nil {
+					t.Fatalf("AddDocument: %v", err)
+				}
+				requireTypedSinkUncommitted(t, builder, 1)
+			})
+
+			t.Run("hard-numeric-hard-parser", func(t *testing.T) {
+				parser := newTestSIMDParser(t)
+				cfg, err := NewConfig(
+					WithParserFailureMode(IngestFailureHard),
+					WithNumericFailureMode(IngestFailureHard),
+				)
+				if err != nil {
+					t.Fatalf("NewConfig: %v", err)
+				}
+				builder, err := NewBuilder(cfg, 1, WithParser(parser))
+				if err != nil {
+					t.Fatalf("NewBuilder: %v", err)
+				}
+
+				addErr := builder.AddDocument(DocID(0), tc.jsonDoc)
+				var ingestErr *IngestError
+				if !stderrors.As(addErr, &ingestErr) {
+					t.Fatalf("AddDocument error = %v, want *IngestError", addErr)
+				}
+				if ingestErr.Layer() != IngestLayerNumeric || ingestErr.Path() != "$.n" {
+					t.Fatalf(
+						"IngestError = (layer=%q, path=%q), want (numeric, $.n)",
+						ingestErr.Layer(),
+						ingestErr.Path(),
+					)
+				}
+				requireTypedSinkUncommitted(t, builder, 0)
+			})
+
+			t.Run("soft-numeric-soft-parser", func(t *testing.T) {
+				parser := newTestSIMDParser(t)
+				cfg, err := NewConfig(
+					WithParserFailureMode(IngestFailureSoft),
 					WithNumericFailureMode(IngestFailureSoft),
 				)
 				if err != nil {
@@ -253,5 +304,73 @@ func TestSIMDParserCloseIsIdempotent(t *testing.T) {
 	}
 	if err := parser.Close(); err != nil {
 		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestSIMDParserCloseErrorPropagatesWhenParserBusy(t *testing.T) {
+	cp, err := NewSIMDParser()
+	if err != nil {
+		t.Fatalf("NewSIMDParser: %v", err)
+	}
+	sp, ok := cp.(*simdParser)
+	if !ok {
+		t.Fatalf("NewSIMDParser() = %T, want *simdParser", cp)
+	}
+
+	doc, err := sp.parser.Parse([]byte(`{"a":1}`))
+	if err != nil {
+		t.Fatalf("underlying Parse: %v", err)
+	}
+
+	closeErr := cp.Close()
+	if closeErr == nil {
+		t.Fatal("Close() while document is live = nil, want ErrParserBusy")
+	}
+	if !stderrors.Is(closeErr, purejson.ErrParserBusy) {
+		t.Fatalf("errors.Is(%v, purejson.ErrParserBusy) = false", closeErr)
+	}
+	if !strings.Contains(closeErr.Error(), "close pure-simdjson SIMD parser") {
+		t.Fatalf("Close() error = %q, want cleanup context", closeErr.Error())
+	}
+
+	if err := doc.Close(); err != nil {
+		t.Fatalf("doc.Close: %v", err)
+	}
+	if err := cp.Close(); err != nil {
+		t.Fatalf("Close() after releasing live doc = %v, want nil", err)
+	}
+}
+
+func TestSIMDParserParseAfterExternalCloseReturnsUsableBuilderError(t *testing.T) {
+	parser, err := NewSIMDParser()
+	if err != nil {
+		t.Fatalf("NewSIMDParser: %v", err)
+	}
+	if err := parser.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	cfg, err := NewConfig(WithParserFailureMode(IngestFailureHard))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder, err := NewBuilder(cfg, 2, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	jsonDocs := [][]byte{[]byte(`{"a":1}`), []byte(`{"b":2}`)}
+	for i, jsonDoc := range jsonDocs {
+		addErr := builder.AddDocument(DocID(i), jsonDoc)
+		var ingestErr *IngestError
+		if !stderrors.As(addErr, &ingestErr) {
+			t.Fatalf("AddDocument[%d] error = %v, want *IngestError", i, addErr)
+		}
+		if ingestErr.Layer() != IngestLayerParser {
+			t.Fatalf("AddDocument[%d] IngestError.Layer() = %q, want parser", i, ingestErr.Layer())
+		}
+		if builder.Err() != nil {
+			t.Fatalf("builder.Err() after AddDocument[%d] = %v, want nil", i, builder.Err())
+		}
 	}
 }
