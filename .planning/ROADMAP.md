@@ -41,7 +41,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 - [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
 - [x] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
-- [x] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam. (completed 2026-07-22)
+- [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
 - [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
 - [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
 - [ ] **Phase 24: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
@@ -96,7 +96,7 @@ Plans:
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
 
-**Plans:** 4/4 plans complete
+**Plans:** 4/5 plans complete
 
 Plans:
 **Wave 1**
@@ -111,6 +111,10 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 21-04-PLAN.md — Fatal lifecycle routing, builder poisoning, combined-error provenance, and deterministic native-free tests (SIMD-04, SIMD-06, SIMD-07)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 21-05-PLAN.md — Panic-aware cleanup routing and native-free panic-plus-close terminal-state regression (SIMD-04)
 
 ### Phase 22: SIMD Validation, Benchmarks & CI
 
@@ -185,7 +189,7 @@ Plans:
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
-| 21. SIMD Parser Adapter | v1.3 | 4/4 | Complete   | 2026-07-23 |
+| 21. SIMD Parser Adapter | v1.3 | 4/5 | In Progress | - |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
