@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci)
 Plan: Not started
 Status: Ready to discuss
-Last activity: 2026-07-29 - Completed quick task 260729-mg8: Fix SIMD parser adapter to handle pure-simdjson TypeBigInt (unblocks dependabot PR #48)
+Last activity: 2026-07-29 - Shipped quick task 260729-mg8: SIMD parser TypeBigInt fix — PR #48 (all checks green)
 
 Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
@@ -158,7 +158,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260722-li1 | Fix #43: reuse zstd encoder/decoder in serialize.go (was constructing per call, ~589 MB/op Encode → ~1000x fewer bytes, 3-7x faster) | 2026-07-22 | this commit | Verified | [260722-li1-reuse-zstd-encoder-decoder-in-serialize-](./quick/260722-li1-reuse-zstd-encoder-decoder-in-serialize-/) |
 | 260723-l22 | Phase 21 re-review follow-ups: structured SIMD close-error logging, numeric-routing depth guard + recursion coverage, Close/lifecycle/crossover test matrix, stdlib/SIMD byte parity | 2026-07-23 | ca9ebd5 | Verified | [260723-l22-simd-parser-re-review-follow-ups-structu](./quick/260723-l22-simd-parser-re-review-follow-ups-structu/) |
 | 260729-eb3 | Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings | 2026-07-29 | 760c489 |  | [260729-eb3-address-simd-parser-parity-findings-pres](./quick/260729-eb3-address-simd-parser-parity-findings-pres/) |
-| 260729-mg8 | Fix SIMD parser adapter to handle pure-simdjson TypeBigInt so out-of-range integers route to numeric failure policy (unblocks dependabot PR #48) | 2026-07-29 | 8a48b15 |  | [260729-mg8-fix-simd-parser-adapter-to-handle-pure-s](./quick/260729-mg8-fix-simd-parser-adapter-to-handle-pure-s/) |
+| 260729-mg8 | Fix SIMD parser adapter to handle pure-simdjson TypeBigInt so out-of-range integers route to numeric failure policy (unblocks dependabot PR #48) | 2026-07-29 | 8a48b15 | Verified | [260729-mg8-fix-simd-parser-adapter-to-handle-pure-s](./quick/260729-mg8-fix-simd-parser-adapter-to-handle-pure-s/) |
 
 ## Deferred Items
 
