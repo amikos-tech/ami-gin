@@ -57,7 +57,7 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	doc, err := s.parser.Parse(jsonDoc)
 	if err != nil {
 		if errors.Is(err, purejson.ErrInvalidJSON) {
-			if fallbackErr, routed := routeSIMDNumericParseFailure(jsonDoc, rgID, sink); routed {
+			if fallbackErr, routed := routeSIMDWellFormedFallback(jsonDoc, rgID, sink); routed {
 				return fallbackErr
 			}
 		}
@@ -73,11 +73,11 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	)
 }
 
-// routeSIMDNumericParseFailure distinguishes malformed or over-depth JSON from
+// routeSIMDWellFormedFallback distinguishes malformed or over-depth JSON from
 // a well-formed document rejected by the native parser's numeric limits. Once
 // validated, the document uses the normal stdlib staging path so transformers,
 // duplicate-key handling, and numeric failure policy remain parser-independent.
-func routeSIMDNumericParseFailure(
+func routeSIMDWellFormedFallback(
 	jsonDoc []byte,
 	rgID int,
 	sink parserSink,
@@ -128,7 +128,8 @@ func reachesSIMDNestingDepthLimit(value any, depth int) bool {
 // finishSIMDDocument runs a document walk and releases the native document
 // exactly once. A walk panic is re-raised unchanged unless closing also fails.
 // In that case a parserLifecycleError carries both failures, and the close
-// error is also logged through logger.
+// error is also logged through logger. If the walk returns, a close failure is
+// returned as a parserLifecycleError that retains any walk error.
 func finishSIMDDocument(walk func() error, closeDocument func() error, logger logging.Logger) (err error) {
 	defer func() {
 		recovered := recover()

@@ -318,7 +318,7 @@ func TestSIMDParserNumericRoutingPicksDeterministicFirstOffender(t *testing.T) {
 	}
 }
 
-func TestRouteSIMDNumericParseFailureSkipsAtNestingDepthLimit(t *testing.T) {
+func TestRouteSIMDWellFormedFallbackSkipsAtNestingDepthLimit(t *testing.T) {
 	depth := simdNestingDepthLimit
 	jsonDoc := []byte(strings.Repeat(`{"a":`, depth) + "1e400" + strings.Repeat("}", depth))
 
@@ -327,9 +327,9 @@ func TestRouteSIMDNumericParseFailureSkipsAtNestingDepthLimit(t *testing.T) {
 		t.Fatalf("NewBuilder: %v", err)
 	}
 
-	numericErr, routed := routeSIMDNumericParseFailure(jsonDoc, 0, builder)
-	if numericErr != nil || routed {
-		t.Fatalf("routeSIMDNumericParseFailure() = (%v, %v), want (nil, false)", numericErr, routed)
+	fallbackErr, routed := routeSIMDWellFormedFallback(jsonDoc, 0, builder)
+	if fallbackErr != nil || routed {
+		t.Fatalf("routeSIMDWellFormedFallback() = (%v, %v), want (nil, false)", fallbackErr, routed)
 	}
 }
 
