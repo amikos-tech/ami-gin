@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: SIMD-First Performance
 status: ready_to_plan
 stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
-last_updated: 2026-07-23T08:28:09Z
-last_activity: 2026-07-23 -- Phase 21 completed
+last_updated: 2026-07-29T07:46:15Z
+last_activity: 2026-07-29 - Completed quick task 260729-eb3: Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings
 progress:
   total_phases: 8
   completed_phases: 3
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci)
 Plan: Not started
 Status: Ready to discuss
-Last activity: 2026-07-23
+Last activity: 2026-07-29
 
 Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
@@ -157,6 +157,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | 001970c | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
 | 260722-li1 | Fix #43: reuse zstd encoder/decoder in serialize.go (was constructing per call, ~589 MB/op Encode → ~1000x fewer bytes, 3-7x faster) | 2026-07-22 | this commit | Verified | [260722-li1-reuse-zstd-encoder-decoder-in-serialize-](./quick/260722-li1-reuse-zstd-encoder-decoder-in-serialize-/) |
 | 260723-l22 | Phase 21 re-review follow-ups: structured SIMD close-error logging, numeric-routing depth guard + recursion coverage, Close/lifecycle/crossover test matrix, stdlib/SIMD byte parity | 2026-07-23 | ca9ebd5 | Verified | [260723-l22-simd-parser-re-review-follow-ups-structu](./quick/260723-l22-simd-parser-re-review-follow-ups-structu/) |
+| 260729-eb3 | Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings | 2026-07-29 | 760c489 |  | [260729-eb3-address-simd-parser-parity-findings-pres](./quick/260729-eb3-address-simd-parser-parity-findings-pres/) |
 
 ## Deferred Items
 
