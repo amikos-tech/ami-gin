@@ -61,10 +61,8 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	doc, err := s.parser.Parse(jsonDoc)
 	if err != nil {
 		if errors.Is(err, purejson.ErrInvalidJSON) {
-			if numericErr, routed := routeSIMDNumericParseFailure(jsonDoc, rgID, sink); routed {
-				if numericErr != nil {
-					return numericErr
-				}
+			if fallbackErr, routed := routeSIMDNumericParseFailure(jsonDoc, rgID, sink); routed {
+				return fallbackErr
 			}
 		}
 		return errors.Wrap(err, "failed to parse JSON")
@@ -79,11 +77,10 @@ func (s *simdParser) Parse(jsonDoc []byte, rgID int, sink parserSink) (err error
 	)
 }
 
-// routeSIMDNumericParseFailure distinguishes malformed JSON from valid numeric
-// literals that the native parser rejects before it can expose a typed element.
-// It performs no indexing work: only the first unstageable number is sent
-// through StageJSONNumber so NumericFailureMode and path reporting remain
-// identical to the stdlib path.
+// routeSIMDNumericParseFailure distinguishes malformed or over-depth JSON from
+// a well-formed document rejected by the native parser's numeric limits. Once
+// validated, the document uses the normal stdlib staging path so transformers,
+// duplicate-key handling, and numeric failure policy remain parser-independent.
 func routeSIMDNumericParseFailure(
 	jsonDoc []byte,
 	rgID int,
@@ -103,41 +100,7 @@ func routeSIMDNumericParseFailure(
 		return nil, false
 	}
 
-	path, raw, ok := findUnstageableJSONNumber("$", value)
-	if !ok {
-		return nil, false
-	}
-
-	state := sink.BeginDocument(rgID)
-	return sink.StageJSONNumber(state, normalizeWalkPath(path), raw), true
-}
-
-func findUnstageableJSONNumber(path string, value any) (string, string, bool) {
-	switch v := value.(type) {
-	case json.Number:
-		if _, _, _, err := parseJSONNumberLiteral(v.String()); err != nil {
-			return path, v.String(), true
-		}
-	case []any:
-		for i, item := range v {
-			if invalidPath, raw, ok := findUnstageableJSONNumber(
-				fmt.Sprintf("%s[%d]", path, i),
-				item,
-			); ok {
-				return invalidPath, raw, true
-			}
-		}
-	case map[string]any:
-		for _, key := range sortedObjectKeys(v) {
-			if invalidPath, raw, ok := findUnstageableJSONNumber(
-				path+"."+key,
-				v[key],
-			); ok {
-				return invalidPath, raw, true
-			}
-		}
-	}
-	return "", "", false
+	return stdlibParser{}.Parse(jsonDoc, rgID, sink), true
 }
 
 // exceedsSIMDMaxNestingDepth reports whether value nests arrays/objects

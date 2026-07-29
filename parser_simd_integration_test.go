@@ -159,6 +159,65 @@ func TestSIMDParserNativeNumericFailuresUseNumericPolicy(t *testing.T) {
 	}
 }
 
+func TestSIMDParserRejectedNumericFallbackPreservesTransformerPolicy(t *testing.T) {
+	parsers := []struct {
+		name   string
+		parser Parser
+	}{
+		{name: "stdlib", parser: stdlibParser{}},
+		{name: "simd", parser: newTestSIMDParser(t)},
+	}
+
+	for _, tc := range parsers {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := NewConfig(
+				WithParserFailureMode(IngestFailureHard),
+				WithNumericFailureMode(IngestFailureSoft),
+				WithCustomTransformer("$.z", "reject", func(any) (any, bool) {
+					return nil, false
+				}),
+			)
+			if err != nil {
+				t.Fatalf("NewConfig: %v", err)
+			}
+			builder, err := NewBuilder(cfg, 1, WithParser(tc.parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			addErr := builder.AddDocument(DocID(0), []byte(`{"z":1e400}`))
+			var ingestErr *IngestError
+			if !stderrors.As(addErr, &ingestErr) {
+				t.Fatalf("AddDocument error = %v, want *IngestError", addErr)
+			}
+			if ingestErr.Layer() != IngestLayerTransformer || ingestErr.Path() != "$.z" {
+				t.Fatalf(
+					"IngestError = (layer=%q, path=%q), want (transformer, $.z)",
+					ingestErr.Layer(),
+					ingestErr.Path(),
+				)
+			}
+			requireTypedSinkUncommitted(t, builder, 0)
+		})
+	}
+}
+
+func TestSIMDParserRejectedNumericFallbackHonorsLastKeyWins(t *testing.T) {
+	fx := parityFixture{
+		Name:   "simd-rejected-numeric-last-key-wins",
+		Config: DefaultConfig,
+		NumRGs: 2,
+		JSONDocs: [][]byte{
+			[]byte(`{"n":1e400,"n":1}`),
+			[]byte(`{"n":2}`),
+		},
+	}
+
+	stdlibEncoded := buildAndEncodeWithParser(t, fx, stdlibParser{})
+	simdEncoded := buildAndEncodeWithParser(t, fx, newTestSIMDParser(t))
+	assertByteIdentical(t, fx.Name, simdEncoded, stdlibEncoded)
+}
+
 func TestSIMDParserNumericRoutingRecursesIntoArraysAndObjects(t *testing.T) {
 	tests := []struct {
 		name     string
