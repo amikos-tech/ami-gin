@@ -106,7 +106,8 @@ type GINBuilder struct {
 	docIDToPos                 map[DocID]int
 	posToDocID                 []DocID
 	nextPos                    int
-	// tragicErr closes the builder after an internal invariant violation or recovered merge panic.
+	// tragicErr closes the builder after an internal invariant violation or a
+	// recovered parser/merge panic.
 	// Finalize then returns nil because prior partial merges may have left an undefined subset of paths.
 	tragicErr error
 
@@ -404,12 +405,21 @@ func (b *GINBuilder) AddDocument(docID DocID, jsonDoc []byte) error {
 	// BeginDocument exactly once with the expected row-group id.
 	b.currentDocState = nil
 	b.beginDocumentCalls = 0
+	parsing := true
 	defer func() {
 		b.currentDocState = nil
 		b.beginDocumentCalls = 0
+		if recovered := recover(); recovered != nil {
+			if parsing {
+				b.tragicErr = errors.Wrap(panicValueAsError(recovered), "builder tragic: parser panic")
+			}
+			panic(recovered)
+		}
 	}()
 
-	if err := b.parser.Parse(jsonDoc, pos, b); err != nil {
+	parseErr := b.parser.Parse(jsonDoc, pos, b)
+	parsing = false
+	if err := parseErr; err != nil {
 		if isParserLifecycleError(err) {
 			b.tragicErr = errors.Wrap(err, "builder tragic: parser lifecycle failure")
 			return b.tragicErr

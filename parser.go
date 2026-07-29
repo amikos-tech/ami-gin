@@ -42,6 +42,13 @@ func isParserLifecycleError(err error) bool {
 	return errors.As(err, &lifecycleErr)
 }
 
+func panicValueAsError(value any) error {
+	if err, ok := value.(error); ok {
+		return err
+	}
+	return errors.Errorf("%v", value)
+}
+
 // Parser translates one JSON document into staged per-path observations,
 // writing them through the supplied sink. Implementations MUST preserve the
 // source number's integer or float classification without coercing exact

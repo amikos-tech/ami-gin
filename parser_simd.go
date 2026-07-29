@@ -131,10 +131,9 @@ func exceedsSIMDMaxNestingDepth(value any, depth int) bool {
 }
 
 // finishSIMDDocument runs a document walk and releases the native document
-// exactly once. A walk panic always remains the primary outcome; a concurrent
-// close error is logged through logger before the original panic value is
-// re-raised. logger is used only for that concurrent-close-during-panic
-// report, never for the primary returned error.
+// exactly once. A walk panic is re-raised unchanged unless closing also fails.
+// In that case a parserLifecycleError carries both failures, and the close
+// error is also logged through logger.
 func finishSIMDDocument(walk func() error, closeDocument func() error, logger logging.Logger) (err error) {
 	defer func() {
 		recovered := recover()
@@ -146,6 +145,10 @@ func finishSIMDDocument(walk func() error, closeDocument func() error, logger lo
 					logging.AttrErrorType(telemetry.ErrorTypeOther),
 					logging.Attr{Key: simdCloseErrorAttrKey, Value: closeErr.Error()},
 				)
+				panic(newParserLifecycleError(
+					errors.Wrap(closeErr, "close pure-simdjson document"),
+					errors.Wrap(panicValueAsError(recovered), "walk panic"),
+				))
 			}
 			panic(recovered)
 		}

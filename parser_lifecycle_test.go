@@ -113,6 +113,70 @@ func (p *parserLifecycleFailureParser) Parse(_ []byte, rgID int, sink parserSink
 	return p.err
 }
 
+type parserPanicTestParser struct {
+	calls      int
+	panicValue any
+}
+
+func (*parserPanicTestParser) Name() string { return "panic-test" }
+
+func (p *parserPanicTestParser) Parse(_ []byte, rgID int, sink parserSink) error {
+	p.calls++
+	state := sink.BeginDocument(rgID)
+	if err := sink.StageScalar(state, "$.name", "not-committed"); err != nil {
+		return err
+	}
+	panic(p.panicValue)
+}
+
+func TestParserPanicPoisonsBuilderAfterCallerRecovery(t *testing.T) {
+	panicCause := errors.New("parser panic sentinel")
+	parser := &parserPanicTestParser{panicValue: panicCause}
+	builder, err := NewBuilder(DefaultConfig(), 2, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	var recovered any
+	func() {
+		defer func() {
+			recovered = recover()
+		}()
+		_ = builder.AddDocument(DocID(1), []byte(`{"name":"first"}`))
+	}()
+
+	recoveredErr, ok := recovered.(error)
+	if !ok || !stderrors.Is(recoveredErr, panicCause) {
+		t.Fatalf("recovered panic = %v, want error wrapping %v", recovered, panicCause)
+	}
+	if builder.Err() == nil {
+		t.Fatal("builder.Err() = nil, want tragic parser panic")
+	}
+	if !stderrors.Is(builder.Err(), panicCause) {
+		t.Fatalf("errors.Is(%v, panicCause) = false", builder.Err())
+	}
+	if !strings.Contains(builder.Err().Error(), "builder tragic: parser panic") {
+		t.Fatalf("builder.Err() = %q, want parser panic context", builder.Err())
+	}
+	if builder.numDocs != 0 || builder.nextPos != 0 || len(builder.pathData) != 0 {
+		t.Fatalf(
+			"builder committed state after parser panic: numDocs=%d nextPos=%d pathData=%d",
+			builder.numDocs,
+			builder.nextPos,
+			len(builder.pathData),
+		)
+	}
+
+	storedErr := builder.Err()
+	secondErr := builder.AddDocument(DocID(2), []byte(`{"name":"second"}`))
+	if !stderrors.Is(secondErr, storedErr) {
+		t.Fatalf("second AddDocument error = %v, want stored tragic error %v", secondErr, storedErr)
+	}
+	if parser.calls != 1 {
+		t.Fatalf("parser calls = %d, want 1", parser.calls)
+	}
+}
+
 func TestParserLifecycleFailurePoisonsBuilderOnce(t *testing.T) {
 	for _, mode := range []IngestFailureMode{IngestFailureHard, IngestFailureSoft} {
 		t.Run(string(mode), func(t *testing.T) {
