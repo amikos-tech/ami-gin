@@ -318,8 +318,8 @@ func TestSIMDParserNumericRoutingPicksDeterministicFirstOffender(t *testing.T) {
 	}
 }
 
-func TestRouteSIMDNumericParseFailureSkipsWhenNestingExceedsMaxDepth(t *testing.T) {
-	depth := simdMaxNestingDepth + 10
+func TestRouteSIMDNumericParseFailureSkipsAtNestingDepthLimit(t *testing.T) {
+	depth := simdNestingDepthLimit
 	jsonDoc := []byte(strings.Repeat(`{"a":`, depth) + "1e400" + strings.Repeat("}", depth))
 
 	builder, err := NewBuilder(DefaultConfig(), 1)
@@ -331,6 +331,86 @@ func TestRouteSIMDNumericParseFailureSkipsWhenNestingExceedsMaxDepth(t *testing.
 	if numericErr != nil || routed {
 		t.Fatalf("routeSIMDNumericParseFailure() = (%v, %v), want (nil, false)", numericErr, routed)
 	}
+}
+
+func TestSIMDParserNestingDepthBoundaryContract(t *testing.T) {
+	acceptedFixture := parityFixture{
+		Name:   "simd-nesting-depth-accepted-boundary",
+		Config: DefaultConfig,
+		NumRGs: 1,
+		JSONDocs: [][]byte{
+			nestedObjectJSON(simdNestingDepthLimit - 1),
+		},
+	}
+	stdlibEncoded := buildAndEncodeWithParser(t, acceptedFixture, stdlibParser{})
+	simdEncoded := buildAndEncodeWithParser(t, acceptedFixture, newTestSIMDParser(t))
+	assertByteIdentical(t, acceptedFixture.Name, simdEncoded, stdlibEncoded)
+
+	rejectedDoc := nestedObjectJSON(simdNestingDepthLimit)
+	stdlibBuilder, err := NewBuilder(DefaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("NewBuilder stdlib: %v", err)
+	}
+	if err := stdlibBuilder.AddDocument(DocID(0), rejectedDoc); err != nil {
+		t.Fatalf("stdlib AddDocument at SIMD depth limit: %v", err)
+	}
+
+	simdBuilder, err := NewBuilder(DefaultConfig(), 1, WithParser(newTestSIMDParser(t)))
+	if err != nil {
+		t.Fatalf("NewBuilder SIMD: %v", err)
+	}
+	addErr := simdBuilder.AddDocument(DocID(0), rejectedDoc)
+	var ingestErr *IngestError
+	if !stderrors.As(addErr, &ingestErr) {
+		t.Fatalf("SIMD AddDocument error = %v, want *IngestError", addErr)
+	}
+	if ingestErr.Layer() != IngestLayerParser {
+		t.Fatalf("SIMD IngestError.Layer() = %q, want parser", ingestErr.Layer())
+	}
+	if !stderrors.Is(addErr, purejson.ErrDepthLimitExceeded) {
+		t.Fatalf("errors.Is(%v, purejson.ErrDepthLimitExceeded) = false", addErr)
+	}
+	if simdBuilder.Err() != nil {
+		t.Fatalf("SIMD builder.Err() = %v, want nil for document-local depth failure", simdBuilder.Err())
+	}
+}
+
+func TestSIMDParserMalformedTrailingNumericKnownPolicyAsymmetry(t *testing.T) {
+	cfg, err := NewConfig(
+		WithParserFailureMode(IngestFailureHard),
+		WithNumericFailureMode(IngestFailureSoft),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	jsonDoc := []byte(`1e400 garbage`)
+
+	stdlibBuilder, err := NewBuilder(cfg, 1)
+	if err != nil {
+		t.Fatalf("NewBuilder stdlib: %v", err)
+	}
+	if err := stdlibBuilder.AddDocument(DocID(0), jsonDoc); err != nil {
+		t.Fatalf("stdlib AddDocument: %v", err)
+	}
+	requireTypedSinkUncommitted(t, stdlibBuilder, 1)
+
+	simdBuilder, err := NewBuilder(cfg, 1, WithParser(newTestSIMDParser(t)))
+	if err != nil {
+		t.Fatalf("NewBuilder SIMD: %v", err)
+	}
+	addErr := simdBuilder.AddDocument(DocID(0), jsonDoc)
+	var ingestErr *IngestError
+	if !stderrors.As(addErr, &ingestErr) {
+		t.Fatalf("SIMD AddDocument error = %v, want *IngestError", addErr)
+	}
+	if ingestErr.Layer() != IngestLayerParser {
+		t.Fatalf("SIMD IngestError.Layer() = %q, want parser", ingestErr.Layer())
+	}
+	requireTypedSinkUncommitted(t, simdBuilder, 0)
+}
+
+func nestedObjectJSON(depth int) []byte {
+	return []byte(strings.Repeat(`{"a":`, depth) + "0" + strings.Repeat("}", depth))
 }
 
 func TestSIMDParserMalformedJSONStillUsesParserPolicy(t *testing.T) {

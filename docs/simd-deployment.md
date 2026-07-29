@@ -23,7 +23,9 @@ Enabling SIMD has three independent gates:
 3. **Builder selection:** pass the successfully constructed parser to
    `NewBuilder(..., WithParser(p))`. A tagged build alone does not select SIMD.
 
-There is no silent fallback at any gate.
+There is no silent parser-selection fallback at any gate. A narrow
+per-document compatibility path for native numeric rejection is described
+under [Numeric limits](#numeric-limits).
 
 ## Enable the parser
 
@@ -180,6 +182,19 @@ The loading routes have separate trust controls:
 Upstream also documents optional cosign provenance verification. It is an
 additional operator control; it does not replace the automatic SHA-256 check.
 
+## Nesting limit
+
+`pure-simdjson` v0.1.4 accepts at most 1,023 nested array/object containers
+and returns `ErrDepthLimitExceeded` at depth 1,024. The stdlib decoder has a
+10,000-container syntax limit, so otherwise well-formed documents between
+those boundaries can be indexed with the default parser but rejected by the
+SIMD parser. This is an explicit parser-parity limitation.
+
+A SIMD depth rejection is a parser-layer document failure governed by
+`ParserFailureMode`. The adapter does not retry an over-depth document through
+stdlib staging. Use the default parser when inputs can legitimately exceed the
+native limit, or enforce a 1,023-container maximum before ingest.
+
 ## Numeric limits
 
 GIN Index stores integer observations in the signed `int64` range. Integer
@@ -190,14 +205,29 @@ Valid floating-point literals outside the finite `float64` range, such as
 documents return an error or are discarded atomically.
 
 The native parser can reject an out-of-range literal before it exposes a DOM
-element. After that specific native `invalid JSON` result, the adapter performs
-a stdlib validation pass only to distinguish malformed JSON from a valid,
-unstageable number and recover its path. It never indexes the document through
-the stdlib parser. Malformed JSON remains governed by `ParserFailureMode`.
+element. After a native `invalid JSON` result, the adapter validates the full
+document and its trailing input with the stdlib decoder. A well-formed document
+within the native nesting limit then uses the normal stdlib staging path. This
+rare compatibility path preserves transformer policy, path reporting, and
+`encoding/json` last-key-wins behavior for duplicate object keys. Malformed or
+over-depth JSON does not enter it.
+
+### Malformed trailing-number edge case
+
+Failure-layer parity is intentionally not claimed for malformed input such as
+`1e400 garbage`. With `NumericFailureMode` set to soft and
+`ParserFailureMode` set to hard, stdlib encounters the out-of-range number
+before its trailing-input check and soft-skips the document. SIMD validates
+the full input before entering its numeric compatibility path, so the same
+bytes return a hard parser-layer error. Well-formed JSON is unaffected; callers
+should not rely on numeric soft-skip policy to admit malformed documents.
 
 ## Validation scope
 
 CI verifies byte-identical stdlib/SIMD output for the authored parity fixtures
-on Linux amd64. Measured performance, broader runtime-platform coverage, and
-end-to-end operational verification remain separate work; no speedup or
-five-platform certification is claimed here.
+on Linux amd64, including mixed integer/float paths, array siblings, and
+transformer-buffered numeric containers. Tagged tests also pin the 1,023/1,024
+nesting boundary and the malformed trailing-number classification difference
+as explicit exclusions from byte parity. Measured performance, broader
+runtime-platform coverage, and end-to-end operational verification remain
+separate work; no speedup or five-platform certification is claimed here.

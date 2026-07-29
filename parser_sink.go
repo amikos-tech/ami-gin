@@ -24,8 +24,9 @@ import (
 //
 // Numeric staging: prefer StageJSONNumber when the parser still has raw source
 // text. Exact typed parsers should use StageInt64 for signed integers,
-// StageUint64 only for values no larger than math.MaxInt64, and StageFloat64
-// for lexeme-classified floats. Larger integers fail under NumericFailureMode.
+// StageUint64 for unsigned integers, and StageFloat64 for lexeme-classified
+// floats. Unsigned values above math.MaxInt64 fail at the numeric layer under
+// NumericFailureMode.
 // StageFloat64 always preserves float classification; StageNativeNumeric is for
 // already-materialized Go values and may fold whole float64 values to integers.
 type parserSink interface {
@@ -63,8 +64,8 @@ func (b *GINBuilder) StageInt64(state *documentBuildState, canonicalPath string,
 	return tagStageError(b.stageNativeNumeric(canonicalPath, v, state))
 }
 
-// StageUint64 requires v no larger than math.MaxInt64; see StageFloat64 and
-// StageNativeNumeric for related numeric-staging contracts.
+// StageUint64 routes values above math.MaxInt64 to the numeric failure policy;
+// see StageFloat64 and StageNativeNumeric for related staging contracts.
 func (b *GINBuilder) StageUint64(state *documentBuildState, canonicalPath string, v uint64) error {
 	return tagStageError(b.stageNativeNumeric(canonicalPath, v, state))
 }

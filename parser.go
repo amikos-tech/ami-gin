@@ -54,9 +54,9 @@ func panicValueAsError(value any) error {
 // source number's integer or float classification without coercing exact
 // integers through float64. Raw-text parsers use sink.StageJSONNumber so the
 // builder classifies the source lexeme. Exact typed parsers may use
-// sink.StageInt64 for signed integers, sink.StageUint64 for unsigned integers
-// no larger than math.MaxInt64, and sink.StageFloat64 for lexeme-classified
-// floats. Larger integer values fail at the numeric layer.
+// sink.StageInt64 for signed integers, sink.StageUint64 for unsigned integers,
+// and sink.StageFloat64 for lexeme-classified floats. Unsigned integer values
+// above math.MaxInt64 fail at the numeric layer.
 //
 // Parse may add parser-local context to errors it creates. Errors returned by
 // sink Stage callbacks must retain their layer. AddDocument preserves staged
@@ -75,10 +75,11 @@ type Parser interface {
 	// MUST NOT return the empty string; NewBuilder rejects an empty name.
 	Name() string
 
-	// Parse walks jsonDoc and stages observations for rgID via sink.
-	// The parser's first sink call MUST be sink.BeginDocument(rgID), and
-	// Parse MUST call BeginDocument exactly once. AddDocument enforces
-	// this with a post-Parse runtime guard.
+	// Parse walks jsonDoc and stages observations for rgID via sink. The
+	// parser's first sink call MUST be sink.BeginDocument(rgID), and Parse
+	// MUST call BeginDocument exactly once. After Parse returns successfully,
+	// AddDocument verifies the call count and rgID; call ordering and error
+	// paths remain the parser implementation's responsibility.
 	//
 	// Present-marking contract: for object and array roots, Parse MUST
 	// call sink.MarkPresent for the container's canonicalPath before

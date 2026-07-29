@@ -31,6 +31,24 @@ func authoredParityFixtures() []parityFixture {
 			},
 		},
 		{
+			Name:   "mixed-float-int",
+			Config: DefaultConfig,
+			NumRGs: 3,
+			JSONDocs: [][]byte{
+				[]byte(`{"metrics":{"score":1,"ratio":1.25},"status":"warm"}`),
+				[]byte(`{"metrics":{"score":2.5,"ratio":2},"status":"cold"}`),
+				[]byte(`{"metrics":{"score":3,"ratio":3.75},"status":"hot"}`),
+			},
+		},
+		{
+			Name:   "single-rg-array-siblings",
+			Config: DefaultConfig,
+			NumRGs: 1,
+			JSONDocs: [][]byte{
+				[]byte(`{"items":[{"label":"alpha","score":1.5},{"label":"beta","score":2}],"meta":{"flag":true}}`),
+			},
+		},
+		{
 			Name:   "nulls-and-missing",
 			Config: DefaultConfig,
 			NumRGs: 4,
@@ -76,6 +94,25 @@ func authoredParityFixtures() []parityFixture {
 			JSONDocs: [][]byte{
 				[]byte(`{"text": "` + repeatASCII("the quick brown fox jumps over the lazy dog ", 20) + `"}`),
 				[]byte(`{"text": "` + repeatASCII("abcdefghijklmnopqrstuvwxyz0123456789 ", 30) + `"}`),
+			},
+		},
+		{
+			Name: "transformer-buffered-container-numerics",
+			Config: func() GINConfig {
+				cfg := DefaultConfig()
+				if err := WithToLowerTransformer(
+					"$.payload",
+					"lower",
+					WithTransformerFailureMode(IngestFailureSoft),
+				)(&cfg); err != nil {
+					panic(err)
+				}
+				return cfg
+			},
+			NumRGs: 2,
+			JSONDocs: [][]byte{
+				[]byte(`{"payload":{"integer":2,"whole":2.0,"fraction":2.5,"items":[3,3.0,{"nested":4.0}]}}`),
+				[]byte(`{"payload":[{"integer":-5,"whole":6.0},7.25]}`),
 			},
 		},
 		{

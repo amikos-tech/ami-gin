@@ -24,14 +24,10 @@ const simdParserName = "pure-simdjson"
 // close-error text in the walk-panic close-failure report.
 const simdCloseErrorAttrKey = "error"
 
-// simdMaxNestingDepth matches pure-simdjson v0.1.4's native bridge
-// (src/native/simdjson_bridge.cpp, MAX_MATERIALIZE_FRAME_DEPTH), which itself
-// matches upstream simdjson's own default max parse depth. routeSIMDNumericParseFailure
-// is only reachable once the outer purejson.ErrInvalidJSON gate has already
-// matched, so this guard is defense-in-depth: it stops
-// findUnstageableJSONNumber's recursion from diverging from the native
-// parser's own depth cap on adversarial deeply-nested input.
-const simdMaxNestingDepth = 1024
+// simdNestingDepthLimit is the first rejected container depth in
+// pure-simdjson v0.1.4. The native parser accepts 1,023 nested containers and
+// reports ErrDepthLimitExceeded at 1,024.
+const simdNestingDepthLimit = 1024
 
 type simdParser struct {
 	parser *purejson.Parser
@@ -96,33 +92,32 @@ func routeSIMDNumericParseFailure(
 	if err := ensureDecoderEOF(decoder); err != nil {
 		return nil, false
 	}
-	if exceedsSIMDMaxNestingDepth(value, 0) {
+	if reachesSIMDNestingDepthLimit(value, 0) {
 		return nil, false
 	}
 
 	return stdlibParser{}.Parse(jsonDoc, rgID, sink), true
 }
 
-// exceedsSIMDMaxNestingDepth reports whether value nests arrays/objects
-// deeper than simdMaxNestingDepth beyond depth. It inspects only container
-// shape, not numeric literals.
-func exceedsSIMDMaxNestingDepth(value any, depth int) bool {
+// reachesSIMDNestingDepthLimit reports whether an array or object reaches the
+// native parser's first rejected depth. It inspects only container shape.
+func reachesSIMDNestingDepthLimit(value any, depth int) bool {
 	switch v := value.(type) {
 	case []any:
-		if depth+1 > simdMaxNestingDepth {
+		if depth+1 >= simdNestingDepthLimit {
 			return true
 		}
 		for _, item := range v {
-			if exceedsSIMDMaxNestingDepth(item, depth+1) {
+			if reachesSIMDNestingDepthLimit(item, depth+1) {
 				return true
 			}
 		}
 	case map[string]any:
-		if depth+1 > simdMaxNestingDepth {
+		if depth+1 >= simdNestingDepthLimit {
 			return true
 		}
 		for _, item := range v {
-			if exceedsSIMDMaxNestingDepth(item, depth+1) {
+			if reachesSIMDNestingDepthLimit(item, depth+1) {
 				return true
 			}
 		}

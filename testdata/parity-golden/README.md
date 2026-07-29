@@ -42,10 +42,14 @@ authored fixture; names match `authoredParityFixtures()` in
 | File | Coverage |
 |------|----------|
 | `int64-boundaries.bin` | MaxInt64, -MaxInt64, 2^53+1, 0 (BUILD-03 / Pitfall #1) |
+| `simd-numeric-parity.bin` | Integer, whole-float, exponent, fraction, and exact-large-integer paths |
+| `mixed-float-int.bin` | Integer/float widening on the same paths across row groups |
+| `single-rg-array-siblings.bin` | Mixed numeric array siblings in one row group |
 | `nulls-and-missing.bin` | Explicit null vs. absent paths |
 | `deep-nested.bin` | Object/array recursion |
 | `unicode-keys.bin` | Non-ASCII keys (NormalizePath exercise) |
 | `empty-arrays.bin` | `[]` and `[[], []]` edges |
 | `large-strings.bin` | Trigram-index stress |
+| `transformer-buffered-container-numerics.bin` | Buffered object/array materialization with integers, whole floats, fractions, and nested numbers |
 | `transformers-iso-date-and-lower.bin` | WithISODateTransformer + WithToLowerTransformer (D-05 dim #4 / Pitfall #2) |
 | `transformers-soft-fail-wire.bin` | Full v9 payload pin for companion transformer `soft_fail` wire tokens |
