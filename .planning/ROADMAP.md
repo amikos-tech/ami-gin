@@ -41,7 +41,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 
 - [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
 - [x] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
-- [ ] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam.
+- [x] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam. (completed 2026-07-23)
 - [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
 - [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
 - [ ] **Phase 24: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
@@ -55,9 +55,11 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 **Depends on:** Phase 13
 **Requirements:** SIMD-01, SIMD-02, SIMD-03
 **Success Criteria:**
+
 1. The milestone records a clear decision on the SIMD dependency source, license/NOTICE posture, version/tag pinning, and shared-library distribution/loading strategy.
 2. The build strategy is specified before implementation: build tags, default stdlib behavior, opt-in API shape, unsupported-platform behavior, and CI expectations.
 3. If a blocker remains unresolved, the phase produces an explicit fallback or stop condition rather than silently pushing SIMD behind unrelated work.
+
 **Plans:** 1 plan
 
 Plans:
@@ -70,9 +72,11 @@ Plans:
 **Depends on:** Nothing
 **Requirements:** DATA-01, DATA-02, DATA-03
 **Success Criteria:**
+
 1. Dataset policy defines whether fixtures are vendored, generated, or downloaded, including license/NOTICE handling and size limits.
 2. Smoke fixtures cover at least nested/high-cardinality, mixed-type array, and number-heavy cases.
 3. Benchmarks can run in a default smoke mode without network access or large downloads.
+
 **Plans:** 2/2 plans complete
 
 Plans:
@@ -86,11 +90,31 @@ Plans:
 **Depends on:** Phase 19
 **Requirements:** SIMD-04, SIMD-05, SIMD-06, SIMD-07
 **Success Criteria:**
+
 1. `parser_simd.go` behind `//go:build simdjson` adds a same-package SIMD parser constructor and `WithParser(...)` can select it explicitly.
 2. Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement.
 3. SIMD numeric handling preserves Phase 07 exact-int semantics and never silently coerces overflow-sensitive values to `float64`.
 4. The parser sink gains typed scalar fast paths where needed so SIMD tape tags do not round-trip through `any` for scalar leaves.
-**Plans:** TBD
+
+**Plans:** 5/5 plans complete
+
+Plans:
+**Wave 1**
+
+- [x] 21-01-PLAN.md — Typed sink contract, committed-state numeric tests, and buildable parity fixture/golden (SIMD-06, SIMD-07)
+- [x] 21-02-PLAN.md — Pinned NOTICE, accurate deployment/BIGINT guidance, README activation, and CHANGELOG (SIMD-04, SIMD-05, SIMD-06)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [x] 21-03-PLAN.md — Lifecycle-safe tagged adapter, transform/duplicate-key parity semantics, and default-graph isolation (SIMD-04..07)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [x] 21-04-PLAN.md — Fatal lifecycle routing, builder poisoning, combined-error provenance, and deterministic native-free tests (SIMD-04, SIMD-06, SIMD-07)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [x] 21-05-PLAN.md — Panic-aware cleanup routing and native-free panic-plus-close terminal-state regression (SIMD-04)
 
 ### Phase 22: SIMD Validation, Benchmarks & CI
 
@@ -98,10 +122,12 @@ Plans:
 **Depends on:** Phase 20, Phase 21
 **Requirements:** SIMD-08, SIMD-09, SIMD-10, SIMD-11
 **Success Criteria:**
+
 1. Parity tests prove SIMD and stdlib produce identical encoded indexes and query results across authored fixtures and Phase 20 datasets.
 2. Benchmarks compare stdlib vs SIMD typed-sink ingest on realistic fixtures and report CPU, allocation, and bytes/op deltas.
 3. CI covers default builds and `-tags simdjson` builds with explicit skip/fail behavior when platform or shared-library requirements are unmet.
 4. Runtime loading and release/distribution guidance explains how consumers enable SIMD without guesswork.
+
 **Plans:** TBD
 
 ### Phase 23: Row-Level Pruning Positioning
@@ -110,9 +136,11 @@ Plans:
 **Depends on:** Nothing
 **Requirements:** POS-01, POS-02
 **Success Criteria:**
+
 1. README/product copy explains row groups as a caller-chosen granularity and states that `rg=1` enables row-level pruning.
 2. CLI/docs terminology consistently describes grouped and single-row-group pruning without suggesting full row-level document storage.
 3. At least one example or experiment note demonstrates the row-level mental model using existing APIs.
+
 **Plans:** TBD
 
 ### Phase 24: Developer Quality Gates & Janitorial Clarity
@@ -121,9 +149,11 @@ Plans:
 **Depends on:** Nothing
 **Requirements:** QG-01, CLAR-01
 **Success Criteria:**
+
 1. A lightweight pre-push quality gate runs native repo checks such as `make lint` and `make test`, with clear missing-tool behavior.
 2. The gate is documented and does not require contributors to use a specific shell beyond documented prerequisites.
 3. Phase 06 clarity backlog is closed with comments or small test cleanups only; no behavior changes.
+
 **Plans:** TBD
 
 ### Phase 25: Follow-On Profiling & Measurement-Backed Optimizations
@@ -132,10 +162,12 @@ Plans:
 **Depends on:** Phase 20
 **Requirements:** PROF-01, PROF-02, PROF-03, PROF-04, PROF-05, ENC-01, ENC-02, ENC-03, ING-01, ING-02, ING-03
 **Success Criteria:**
+
 1. Profiling quantifies encode CPU, `NormalizePath`, bloom `AddString`, and wildcard staging costs on realistic fixtures.
 2. `WithEncodeStrategy` is implemented only if encode profiling justifies the API surface.
 3. `NormalizePath` fast-path, bloom allocation cleanup, and/or wildcard opt-out are implemented only if ingest profiling justifies them.
 4. Any implemented optimization has benchmark proof and no false-negative pruning regressions.
+
 **Plans:** TBD
 
 ## Progress
@@ -157,7 +189,7 @@ Plans:
 | 18. Structured IngestError + CLI integration | v1.2 | 4/4 | Complete | 2026-04-24 |
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
-| 21. SIMD Parser Adapter | v1.3 | 0/- | Planned | - |
+| 21. SIMD Parser Adapter | v1.3 | 5/5 | Complete    | 2026-07-23 |
 | 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
@@ -177,4 +209,5 @@ Plans:
 **Context:** Build tags are a valid Go pattern for optional compile-time feature surfaces, especially when dependency, binary, licensing, or platform shape changes. For JSON/SIMD parser UX, runtime dispatch/fallback can reduce consumer friction once the dependency is acceptable. This backlog item should compare the current `-tags simdjson` + `NewSIMDParser` contract against an alternative such as `NewAutoParser` / `NewBestAvailableParser` with explicit observability and no silent correctness changes.
 
 Plans:
+
 - [ ] TBD (promote with $gsd-review-backlog when ready)

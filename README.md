@@ -77,6 +77,48 @@ The index decouples **pruning** (which row groups to read) from **execution** (D
 go get github.com/amikos-tech/ami-gin
 ```
 
+### Optional SIMD parser
+
+Ordinary builds and the default `NewBuilder` remain stdlib-only. To opt in,
+compile with `-tags simdjson`, construct the same-package adapter backed by
+[`github.com/amikos-tech/pure-simdjson` v0.1.4](https://github.com/amikos-tech/pure-simdjson/tree/v0.1.4),
+and select it explicitly:
+
+```bash
+go build -tags simdjson ./...
+```
+
+```go
+package app
+
+import (
+	"errors"
+
+	gin "github.com/amikos-tech/ami-gin"
+)
+
+func newSIMDBuilder(
+	config gin.GINConfig,
+	numRGs int,
+) (*gin.GINBuilder, gin.CloseableParser, error) {
+	p, err := gin.NewSIMDParser()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(p))
+	if err != nil {
+		return nil, nil, errors.Join(err, p.Close())
+	}
+	return builder, p, nil
+}
+```
+
+The caller must retain the returned parser and close it after the builder has
+stopped parsing. See the [SIMD deployment guide](docs/simd-deployment.md) for
+native bootstrap, ownership, corporate mirrors, air-gapped loading, artifact
+integrity, explicit stdlib fallback, and numeric limits.
+
 ## Quick Start
 
 ```go

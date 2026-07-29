@@ -62,7 +62,7 @@ func buildAndEncode(t *testing.T, fx parityFixture) []byte {
 	return buildAndEncodeWithParser(t, fx, stdlibParser{})
 }
 
-func TestParserParity_AuthoredFixtures(t *testing.T) {
+func TestStdlibParserGolden_AuthoredFixtures(t *testing.T) {
 	for _, fx := range authoredParityFixtures() {
 		fx := fx
 		t.Run(fx.Name, func(t *testing.T) {
@@ -124,33 +124,8 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 	}
 }
 
-func parserEquivalenceFixtures() []parityFixture {
-	fixtures := append([]parityFixture{}, authoredParityFixtures()...)
-	fixtures = append(fixtures,
-		parityFixture{
-			Name:   "mixed-float-int",
-			Config: DefaultConfig,
-			NumRGs: 3,
-			JSONDocs: [][]byte{
-				[]byte(`{"metrics":{"score":1,"ratio":1.25},"status":"warm"}`),
-				[]byte(`{"metrics":{"score":2.5,"ratio":2},"status":"cold"}`),
-				[]byte(`{"metrics":{"score":3,"ratio":3.75},"status":"hot"}`),
-			},
-		},
-		parityFixture{
-			Name:   "single-rg-array-siblings",
-			Config: DefaultConfig,
-			NumRGs: 1,
-			JSONDocs: [][]byte{
-				[]byte(`{"items":[{"label":"alpha","score":1.5},{"label":"beta","score":2}],"meta":{"flag":true}}`),
-			},
-		},
-	)
-	return fixtures
-}
-
 func TestParserParity_StdlibMatchesMaterializingParser(t *testing.T) {
-	for _, fx := range parserEquivalenceFixtures() {
+	for _, fx := range authoredParityFixtures() {
 		fx := fx
 		t.Run(fx.Name, func(t *testing.T) {
 			stdlibEncoded := buildAndEncodeWithParser(t, fx, stdlibParser{})

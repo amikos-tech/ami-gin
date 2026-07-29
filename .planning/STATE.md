@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: "Phase 20 shipped — PR #41"
-stopped_at: Phase 20 complete; Phase 21 unplanned
-last_updated: "2026-07-22T09:52:02.841Z"
-last_activity: 2026-07-22
+status: ready_to_plan
+stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
+last_updated: 2026-07-29T07:46:15Z
+last_activity: 2026-07-29 - Completed quick task 260729-eb3: Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings
 progress:
   total_phases: 8
-  completed_phases: 2
-  total_plans: 3
-  completed_plans: 3
-  percent: 25
+  completed_phases: 3
+  total_plans: 8
+  completed_plans: 8
+  percent: 38
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 21 — SIMD Parser Adapter
+**Current focus:** Phase 22 — simd-validation-benchmarks-ci
 
 ## Current Position
 
-Phase: 21
+Phase: 22 (simd-validation-benchmarks-ci)
 Plan: Not started
-Status: Phase 20 shipped — PR #41
-Last activity: 2026-07-22
+Status: Ready to discuss
+Last activity: 2026-07-29
 
-Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete)
+Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
 ## Performance Metrics
 
@@ -59,6 +59,8 @@ Progress: [##--------] 25% for v1.3 (2/8 phases complete, Phase 20: 2/2 complete
 | 16 | 4 | Complete (4/4 plans complete) |
 | 17 | 4 | Complete (4/4 plans complete) |
 | 18 | 4 | Complete (4/4 plans complete) |
+| Phase 21 P04 | 8 min | 2 tasks | 5 files |
+| Phase 21 P05 | 7 min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -89,6 +91,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **18-04 completion**: Public API docs and CHANGELOG now state `IngestError.Value` is verbatim, not redacted, and not truncated by the library; `18-VALIDATION.md` records green focused Phase 18 tests, full `go test ./...`, and `make lint`.
 - **18 verification**: Phase 18 verification passed 16/16 must-haves on 2026-04-24. Advisory code review is clean with 0 findings, focused root/CLI tests passed, full `go test ./...` passed, and `make lint` passed.
 - **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
+- [Phase 21]: Parser cleanup failures are terminal builder integrity failures, with cleanup and concurrent walk causes preserved as peer unwrap branches — Prevents soft mode from hiding a permanently busy native parser
+- [Phase 21]: Panic-aware SIMD cleanup preserves ordinary panic identity but routes failed close through terminal builder state — Prevents parser soft mode from hiding a busy native parser after caller recovery
 
 ### Roadmap Evolution
 
@@ -113,7 +117,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Plan Phase 21: SIMD Parser Adapter.
+- Discuss and plan Phase 22: SIMD Validation, Benchmarks & CI (`$gsd-discuss-phase 22`).
 
 ### Blockers/Concerns
 
@@ -152,6 +156,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260722-eje | Address Phase 20 benchmark review findings and harden external corpus coverage | 2026-07-22 | ff5fe7e | Verified | [260722-eje-address-phase-20-benchmark-review-findin](./quick/260722-eje-address-phase-20-benchmark-review-findin/) |
 | 260722-ke3 | PR #41 review item 2: stream external corpus directory entries via File.ReadDir batches to enforce the file cap early instead of eager os.ReadDir | 2026-07-22 | 001970c | Verified | [260722-ke3-fix-pr41-item2-stream-directory-entries-](./quick/260722-ke3-fix-pr41-item2-stream-directory-entries-/) |
 | 260722-li1 | Fix #43: reuse zstd encoder/decoder in serialize.go (was constructing per call, ~589 MB/op Encode → ~1000x fewer bytes, 3-7x faster) | 2026-07-22 | this commit | Verified | [260722-li1-reuse-zstd-encoder-decoder-in-serialize-](./quick/260722-li1-reuse-zstd-encoder-decoder-in-serialize-/) |
+| 260723-l22 | Phase 21 re-review follow-ups: structured SIMD close-error logging, numeric-routing depth guard + recursion coverage, Close/lifecycle/crossover test matrix, stdlib/SIMD byte parity | 2026-07-23 | ca9ebd5 | Verified | [260723-l22-simd-parser-re-review-follow-ups-structu](./quick/260723-l22-simd-parser-re-review-follow-ups-structu/) |
+| 260729-eb3 | Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings | 2026-07-29 | 760c489 |  | [260729-eb3-address-simd-parser-parity-findings-pres](./quick/260729-eb3-address-simd-parser-parity-findings-pres/) |
 
 ## Deferred Items
 
@@ -170,8 +176,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-21T08:55:33Z
-Stopped at: Phase 20 complete; Phase 21 unplanned
-Resume file: .planning/phases/20-realistic-benchmark-dataset-foundation/20-CONTEXT.md
+Last session: 2026-07-23T08:28:09Z
+Stopped at: Phase 21 complete and independently verified
+Resume file: None
 
-**Next step:** Plan Phase 21 before executing it.
+**Next step:** Discuss Phase 22 — run `$gsd-discuss-phase 22`.

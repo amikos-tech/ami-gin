@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+
+	"github.com/amikos-tech/ami-gin/logging"
 )
 
 func TestWithParserRejectsNil(t *testing.T) {
@@ -196,6 +198,21 @@ func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string,
 	return nil
 }
 
+func (s *recordingSink) StageInt64(_ *documentBuildState, canonicalPath string, v int64) error {
+	s.events = append(s.events, fmt.Sprintf("int64:%s=%d", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageUint64(_ *documentBuildState, canonicalPath string, v uint64) error {
+	s.events = append(s.events, fmt.Sprintf("uint64:%s=%d", canonicalPath, v))
+	return nil
+}
+
+func (s *recordingSink) StageFloat64(_ *documentBuildState, canonicalPath string, v float64) error {
+	s.events = append(s.events, fmt.Sprintf("float64:%s=%g", canonicalPath, v))
+	return nil
+}
+
 func (s *recordingSink) StageJSONNumber(_ *documentBuildState, canonicalPath, raw string) error {
 	s.events = append(s.events, "json-number:"+canonicalPath+"="+raw)
 	return nil
@@ -213,6 +230,10 @@ func (s *recordingSink) StageMaterialized(_ *documentBuildState, path string, _ 
 
 func (s *recordingSink) ShouldBufferForTransform(canonicalPath string) bool {
 	return s.bufferPaths[canonicalPath]
+}
+
+func (s *recordingSink) Logger() logging.Logger {
+	return logging.NewNoop()
 }
 
 func TestStdlibParserBeginsDocumentBeforeStaging(t *testing.T) {

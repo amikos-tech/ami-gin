@@ -4,12 +4,39 @@ GOTESTSUM_VERSION ?= v1.13.0
 build:
 	go build ./...
 
+# Intentionally stricter than Go: native importers keep the build tag on line 1 for easy auditing.
+.PHONY: simd-isolation-check
+simd-isolation-check:
+	@set -eu; \
+	importers=0; \
+	for file in $$(git ls-files '*.go' ':(exclude).planning/**'); do \
+		if grep -Fq '"github.com/amikos-tech/pure-simdjson"' "$$file"; then \
+			importers=$$((importers + 1)); \
+			if [ "$$(sed -n '1p' "$$file")" != '//go:build simdjson' ]; then \
+				printf 'pure-simdjson importer lacks exact first-line build tag: %s\n' "$$file" >&2; \
+				exit 1; \
+			fi; \
+		fi; \
+	done; \
+	if [ "$$importers" -eq 0 ]; then \
+		printf '%s\n' 'no tagged pure-simdjson product importer found' >&2; \
+		exit 1; \
+	fi
+	@set -eu; \
+	deps="$$(go list -deps -test ./...)"; \
+	if printf '%s\n' "$$deps" | grep -Fxq 'github.com/amikos-tech/pure-simdjson'; then \
+		printf '%s\n' 'default Go dependency graph includes github.com/amikos-tech/pure-simdjson' >&2; \
+		exit 1; \
+	fi
+	go build ./...
+	go vet ./...
+
 .PHONY: gotestsum-bin
 gotestsum-bin:
 	go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
 
 .PHONY: test
-test: gotestsum-bin
+test: simd-isolation-check gotestsum-bin
 	gotestsum \
 		--format short-verbose \
 		--packages="./... ./testdata/phase20" \
@@ -71,6 +98,7 @@ clean:
 help:
 	@echo "Available targets:"
 	@echo "  build     - Build all packages"
+	@echo "  simd-isolation-check - Verify optional SIMD code stays out of default builds"
 	@echo "  test      - Run tests with coverage"
 	@echo "  integration-test - Run integration test suite"
 	@echo "  lint      - Run validator marker checks and golangci-lint"

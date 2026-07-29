@@ -7,7 +7,7 @@
 - **Scope delivered (v1.0):** canonical JSONPath hot path, explicit-number builder ingest, adaptive high-cardinality indexing, additive derived representations, v9 compact serialization, real-corpus benchmarking, and a reconciled milestone evidence chain
 - **Scope delivered (v1.1):** pluggable Parser interface + parity harness, observability seams (Logger/Telemetry/Signals with slog and stdlib adapters), and a new `gin-index experiment` JSONL CLI
 - **Library size:** ~25,500 LOC Go, 12 operators, 13 built-in transformers (+3 CIDR/subnet helpers), Parquet + S3 integrations
-- **Current milestone:** v1.3 SIMD-First Performance — Phases 19 and 20 completed the SIMD unblock decisions and realistic offline benchmark dataset foundation; Phases 21-25 continue SIMD implementation/validation and lower-impact backlog work
+- **Current milestone:** v1.3 SIMD-First Performance — Phases 19-21 completed the SIMD unblock decisions, realistic offline benchmark dataset foundation, and opt-in parser adapter; Phases 22-25 continue SIMD validation and lower-impact backlog work
 
 ## Current Milestone: v1.3 SIMD-First Performance
 
@@ -61,10 +61,11 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - ✓ Unified ingest failure-mode taxonomy with `IngestFailureMode`, parser/numeric config knobs, v9 transformer metadata compatibility, whole-document soft skips, changelog migration note, and deterministic failure-modes example — validated in Phase 17
 - ✓ SIMD dependency source, license/NOTICE posture, version/tag pin, shared-library loading strategy, opt-in API shape, CI expectations, and stop/fallback policy — validated in Phase 19
 - ✓ Governed, deterministic JSONL benchmark corpus with offline Build/Encode/Query smoke coverage and a strictly opt-in local external-data tier — validated in Phase 20 (DATA-01..03)
+- ✓ Opt-in same-package SIMD parser with typed scalar staging, exact-int handling, default-build isolation, deployment guidance, and terminal native cleanup failures — validated in Phase 21 (SIMD-04..07)
 
 ### Active
 
-- **v1.3 SIMD-First Performance.** SIMD-04..11, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 remain active across Phases 21-25.
+- **v1.3 SIMD-First Performance.** SIMD-08..11, POS-01..02, QG-01, CLAR-01, PROF-01..05, ENC-01..03, and ING-01..03 remain active across Phases 22-25.
 
 ### Out of Scope
 
@@ -96,6 +97,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 - v1.2 shipped and archived on 2026-04-27 with 8/8 requirements complete and milestone archives in `.planning/milestones/`
 - v1.3 planned on 2026-04-27 from backlog and SEED-001, then reprioritized the same day to make SIMD the soonest possible top priority: dependency decision, dataset foundation, SIMD adapter, SIMD validation/CI, then remaining backlog work.
 - Phase 19 completed on 2026-04-27: `19-SIMD-STRATEGY.md` locks `pure-simdjson v0.1.4`, MIT/NOTICE posture, upstream loading delegation, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI, and hard/soft stop policy.
+- Phase 21 completed on 2026-07-23: the tagged `pure-simdjson` adapter is explicitly selectable through `WithParser`, keeps stdlib as the default, stages scalar leaves through typed paths, preserves exact numeric semantics, and treats every failed native document close as a terminal builder failure.
 - Field transformers now support raw-plus-derived companion representations with explicit alias routing
 - Prefix-compressed path and term dictionary encoding is now part of the shipped serialized format, with real-corpus impact documented in Phase 11
 
@@ -121,7 +123,7 @@ In order: **correctness → usefulness → performance**. A perf bottleneck only
 | Adopt validate-before-mutate atomicity (Strategy C) for v1.2 | Smallest diff that delivers the Lucene per-document contract; leverages existing two-phase architecture | Done in Phase 16 |
 | Rename `TransformerFailureMode` → `IngestFailureMode` (breaking) | Clarity over convenience; one mental model across parser/transformer/numeric layers | Done in Phase 17 |
 | Make SIMD the first v1.3 priority | SIMD is the largest expected performance lever; resolve blockers immediately rather than hiding it behind lower-impact backlog work | Done in Phase 19 |
-| Keep stdlib as default while adding SIMD | Preserve compatibility and avoid forcing optional dependencies on default builds | Locked in Phase 19 |
+| Keep stdlib as default while adding SIMD | Preserve compatibility and avoid forcing optional dependencies on default builds | Done in Phase 21 |
 | Prioritize evidence before non-SIMD performance APIs in v1.3 | Avoid speculative knobs or optimizations; benchmark and profile after SIMD is underway, then implement only justified changes | Planned |
 
 ## Evolution
@@ -140,4 +142,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Refresh Context to reflect the new starting point
 
 ---
-*Last updated: 2026-07-21 — Phase 20 completed the realistic benchmark dataset foundation.*
+*Last updated: 2026-07-23 — Phase 21 completed the opt-in SIMD parser adapter.*

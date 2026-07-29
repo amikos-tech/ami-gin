@@ -24,10 +24,10 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 
 ### SIMD Parser Adapter
 
-- [ ] **SIMD-04**: Callers can explicitly select a same-package SIMD parser through the existing parser seam without changing the default stdlib path.
-- [ ] **SIMD-05**: Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement unless the build tag and parser selection are explicit.
-- [ ] **SIMD-06**: SIMD parsing preserves Phase 07 exact-int numeric semantics and does not silently coerce overflow-sensitive values to `float64`.
-- [ ] **SIMD-07**: The parser sink exposes typed scalar fast paths where needed so SIMD scalar leaves do not round-trip through `any`.
+- [x] **SIMD-04**: Callers can explicitly select a same-package SIMD parser through the existing parser seam without changing the default stdlib path.
+- [x] **SIMD-05**: Default builds remain stdlib-only with no SIMD dependency or runtime shared-library requirement unless the build tag and parser selection are explicit.
+- [x] **SIMD-06**: SIMD parsing preserves Phase 07 exact-int numeric semantics and does not silently coerce overflow-sensitive values to `float64`.
+- [x] **SIMD-07**: The parser sink exposes typed scalar fast paths where needed so SIMD scalar leaves do not round-trip through `any`.
 
 ### SIMD Validation And Operations
 
@@ -83,10 +83,10 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 | DATA-01 | Phase 20 | Complete |
 | DATA-02 | Phase 20 | Complete |
 | DATA-03 | Phase 20 | Complete |
-| SIMD-04 | Phase 21 | Planned |
-| SIMD-05 | Phase 21 | Planned |
-| SIMD-06 | Phase 21 | Planned |
-| SIMD-07 | Phase 21 | Planned |
+| SIMD-04 | Phase 21 | Complete |
+| SIMD-05 | Phase 21 | Complete |
+| SIMD-06 | Phase 21 | Complete |
+| SIMD-07 | Phase 21 | Complete |
 | SIMD-08 | Phase 22 | Planned |
 | SIMD-09 | Phase 22 | Planned |
 | SIMD-10 | Phase 22 | Planned |

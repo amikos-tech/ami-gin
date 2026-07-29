@@ -86,8 +86,37 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: go.sum
 
+      - name: Verify SIMD build isolation
+        run: make simd-isolation-check
+
       - name: Build
         run: make build
+
+  simd:
+    name: SIMD parser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+
+      - name: Install verified native SIMD library
+        env:
+          PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+        run: go run github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@v0.1.4 fetch
+
+      - name: Run SIMD-tagged tests
+        env:
+          PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+          PURE_SIMDJSON_WARN_LEAKS: "1"
+        run: go test -tags simdjson -race -timeout=30m ./...
 
   govulncheck:
     runs-on: ubuntu-latest
