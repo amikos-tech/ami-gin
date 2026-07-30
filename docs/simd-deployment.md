@@ -191,6 +191,11 @@ configuration accepts at most 1,023 nested array/object containers and returns
 those boundaries can be indexed with the default parser but rejected by the
 SIMD parser. This is an explicit parser-parity limitation.
 
+Upstream `pure-simdjson` exposes `WithMaxDepth` at parser construction. This
+adapter's `NewSIMDParser()` accepts no options and constructs the upstream
+parser with its defaults, so callers cannot configure maximum depth through
+this adapter.
+
 A SIMD depth rejection is a parser-layer document failure governed by
 `ParserFailureMode`. The adapter does not retry an over-depth document through
 stdlib staging. Use the default parser when inputs can legitimately exceed the

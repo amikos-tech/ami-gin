@@ -24,9 +24,9 @@ const simdParserName = "pure-simdjson"
 // close-error text in the walk-panic close-failure report.
 const simdCloseErrorAttrKey = "error"
 
-// simdNestingDepthLimit is the first rejected container depth in
-// pure-simdjson v0.1.4. The native parser accepts 1,023 nested containers and
-// reports ErrDepthLimitExceeded at 1,024.
+// simdNestingDepthLimit is the first rejected container depth in the
+// default pure-simdjson parser configuration. The native parser accepts 1,023
+// nested containers and reports ErrDepthLimitExceeded at 1,024.
 const simdNestingDepthLimit = 1024
 
 type simdParser struct {
