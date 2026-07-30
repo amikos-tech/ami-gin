@@ -68,6 +68,9 @@ jobs:
       - name: Check validator markers
         run: make check-validator-markers
 
+      - name: Check NOTICE version alignment
+        run: make check-notice-version
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
