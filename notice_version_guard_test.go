@@ -33,6 +33,21 @@ func TestNoticeVersionGuard(t *testing.T) {
 		runNoticeVersionGuard(t, dir)
 	})
 
+	t.Run("unversioned local replacement fails", func(t *testing.T) {
+		dir := copyNoticeGuardInputs(t)
+		localModule := filepath.Join(dir, "local-pure-simdjson")
+		if err := os.Mkdir(localModule, 0o700); err != nil {
+			t.Fatalf("Mkdir(%s) error = %v", localModule, err)
+		}
+		if err := os.WriteFile(filepath.Join(localModule, "go.mod"), []byte("module "+pureSIMDJSONModule+"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile(%s/go.mod) error = %v", localModule, err)
+		}
+		appendFileText(t, filepath.Join(dir, "go.mod"), "\nreplace "+pureSIMDJSONModule+" v0.1.7 => ./local-pure-simdjson\n")
+
+		output := runNoticeVersionGuardFailure(t, dir)
+		requireOutputContains(t, output, "effective replacement version", "not a complete Go semantic-version token")
+	})
+
 	t.Run("invisible version character is escaped", func(t *testing.T) {
 		dir := copyNoticeGuardInputs(t)
 		replaceFileText(t, filepath.Join(dir, "NOTICE.md"), "## pure-simdjson v0.1.7", "## pure-simdjson v\u200b0.1.7")
