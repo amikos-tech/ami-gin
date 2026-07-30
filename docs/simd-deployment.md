@@ -184,8 +184,9 @@ additional operator control; it does not replace the automatic SHA-256 check.
 
 ## Nesting limit
 
-`pure-simdjson` v0.1.7 accepts at most 1,023 nested array/object containers
-and returns `ErrDepthLimitExceeded` at depth 1,024. The stdlib decoder has a
+`NewSIMDParser` currently uses `pure-simdjson`'s default maximum depth. That
+configuration accepts at most 1,023 nested array/object containers and returns
+`ErrDepthLimitExceeded` at depth 1,024. The stdlib decoder has a
 10,000-container syntax limit, so otherwise well-formed documents between
 those boundaries can be indexed with the default parser but rejected by the
 SIMD parser. This is an explicit parser-parity limitation.
