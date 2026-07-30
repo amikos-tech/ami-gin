@@ -1,18 +1,18 @@
 # Third-Party Notices
 
 GIN Index can optionally use
-[`github.com/amikos-tech/pure-simdjson` v0.1.4](https://github.com/amikos-tech/pure-simdjson/tree/v0.1.4).
+[`github.com/amikos-tech/pure-simdjson` v0.1.7](https://github.com/amikos-tech/pure-simdjson/tree/v0.1.7).
 
-## pure-simdjson v0.1.4
+## pure-simdjson v0.1.7
 
 `pure-simdjson` is distributed under the MIT License. Its pinned
-[`LICENSE`](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.4/LICENSE)
+[`LICENSE`](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.7/LICENSE)
 contains the copyright notice:
 
 > Copyright (c) 2026 Amikos Tech
 
 The dependency's pinned
-[`NOTICE`](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.4/NOTICE)
+[`NOTICE`](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.7/NOTICE)
 also records that its source tree vendors the upstream `simdjson` project under
 `third_party/simdjson`. That bundled tree carries both of these license texts:
 

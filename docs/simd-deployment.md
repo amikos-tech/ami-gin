@@ -1,10 +1,10 @@
 # Optional SIMD parser deployment
 
 GIN Index offers an opt-in parser adapter for
-[`github.com/amikos-tech/pure-simdjson` v0.1.4](https://github.com/amikos-tech/pure-simdjson/tree/v0.1.4).
-Use the tagged module version `v0.1.4` in consumer dependency configuration.
-The tag's recorded commit is repository audit evidence, not alternate
-installation syntax.
+[`github.com/amikos-tech/pure-simdjson`](https://github.com/amikos-tech/pure-simdjson).
+The authoritative version is the one pinned in this repository's `go.mod`; use
+that same tagged module version in consumer dependency configuration. The tag's
+recorded commit is repository audit evidence, not alternate installation syntax.
 
 ## Default behavior
 
@@ -76,7 +76,7 @@ must not run while parsing is in progress.
 
 ## Automatic bootstrap
 
-When `PURE_SIMDJSON_LIB_PATH` is unset, the upstream v0.1.4 bootstrap performs
+When `PURE_SIMDJSON_LIB_PATH` is unset, the upstream bootstrap performs
 native resolution during `NewSIMDParser()`:
 
 1. load a previously installed cache entry, if present;
@@ -87,16 +87,16 @@ native resolution during `NewSIMDParser()`:
    install it atomically in the cache, load it, and verify its ABI.
 
 Cache hits are not hashed again; upstream verifies them when they are first
-installed. See the pinned
-[`pure-simdjson` v0.1.4 bootstrap guide](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.4/docs/bootstrap.md)
+installed. See the
+[`pure-simdjson` bootstrap guide](https://github.com/amikos-tech/pure-simdjson/blob/main/docs/bootstrap.md)
 for the exact resolution order, supported artifact names, retry behavior, and
 pre-fetch commands.
 
 ## Air-gapped and explicit-path loading
 
-For an air-gapped host, fetch and verify the correct v0.1.4 artifact on a
-connected machine, transport it through the operator's approved channel, and
-set its absolute path on the target host:
+For an air-gapped host, fetch and verify the artifact matching the `go.mod`
+version on a connected machine, transport it through the operator's approved
+channel, and set its absolute path on the target host:
 
 ```bash
 export PURE_SIMDJSON_LIB_PATH=/approved/path/to/libpure_simdjson.so
@@ -119,9 +119,9 @@ The upstream bootstrap recognizes four variables:
 | `PURE_SIMDJSON_DISABLE_GH_FALLBACK` | Set to `1` to prevent fallback to the upstream release source when the primary source or mirror fails. |
 | `PURE_SIMDJSON_CACHE_DIR` | Override the base directory used for automatically downloaded artifacts. |
 
-For a corporate mirror, publish the v0.1.4 assets using the layout documented
-upstream, set `PURE_SIMDJSON_BINARY_MIRROR`, and decide explicitly whether
-fallback egress is permitted. A hermetic deployment normally combines the
+For a corporate mirror, publish the assets for the `go.mod` version using the
+layout documented upstream, set `PURE_SIMDJSON_BINARY_MIRROR`, and decide
+explicitly whether fallback egress is permitted. A hermetic deployment normally combines the
 mirror with `PURE_SIMDJSON_DISABLE_GH_FALLBACK=1` and a controlled
 `PURE_SIMDJSON_CACHE_DIR`. Automatically downloaded artifacts still follow
 the upstream SHA-256 install check; an explicit `PURE_SIMDJSON_LIB_PATH` does
@@ -175,7 +175,7 @@ The loading routes have separate trust controls:
 
 | Route | Integrity boundary |
 | --- | --- |
-| Go wrapper module | The Go tool verifies the `pure-simdjson` v0.1.4 module content against the checksum recorded in `go.sum`. This does not verify a separately supplied native library. |
+| Go wrapper module | The Go tool verifies the `pure-simdjson` module content against the checksum recorded in `go.sum`. This does not verify a separately supplied native library. |
 | Automatic download or mirror | Upstream resolves published SHA-256 metadata and verifies the native artifact before installing it in the cache. ABI verification also runs when the library is loaded. |
 | `PURE_SIMDJSON_LIB_PATH` | Download and cache verification are bypassed. The operator must verify the selected file's checksum, provenance, permissions, and update process. |
 
@@ -184,7 +184,7 @@ additional operator control; it does not replace the automatic SHA-256 check.
 
 ## Nesting limit
 
-`pure-simdjson` v0.1.4 accepts at most 1,023 nested array/object containers
+`pure-simdjson` v0.1.7 accepts at most 1,023 nested array/object containers
 and returns `ErrDepthLimitExceeded` at depth 1,024. The stdlib decoder has a
 10,000-container syntax limit, so otherwise well-formed documents between
 those boundaries can be indexed with the default parser but rejected by the
