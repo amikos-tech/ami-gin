@@ -81,17 +81,15 @@ check-validator-markers:
 .PHONY: check-notice-version
 check-notice-version:
 	@set -eu; \
-	print_notice_context() { \
-		printf '%s\n' 'NOTICE.md pure-simdjson references (line number followed by byte-escaped content):' >&2; \
+	export LC_ALL=C; \
+	fail_notice() { \
+		printf 'NOTICE.md alignment failed: %s; expected effective module version %s\n' "$$1" "$$expected_version" >&2; \
+		printf '%s\n' 'NOTICE.md content (line number followed by byte-escaped content):' >&2; \
 		if [ -r NOTICE.md ]; then \
-			LC_ALL=C sed -n '/pure-simdjson/{=;l;}' NOTICE.md >&2 || printf '%s\n' 'NOTICE.md context could not be read' >&2; \
+			sed -n '=;l' NOTICE.md >&2 || printf '%s\n' 'NOTICE.md context could not be read' >&2; \
 		else \
 			printf '%s\n' 'NOTICE.md is missing or unreadable; byte-escaped context is unavailable' >&2; \
 		fi; \
-	}; \
-	fail_notice() { \
-		printf 'NOTICE.md alignment failed: %s; expected effective module version %s\n' "$$1" "$$expected_version" >&2; \
-		print_notice_context; \
 		exit 1; \
 	}; \
 	if ! module_selection="$$(go list -m -f '{{if .Replace}}replacement{{else}}requirement{{end}}:{{with .Replace}}{{.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"; then \
@@ -114,28 +112,25 @@ check-notice-version:
 	license_line="$$(printf '[`LICENSE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/LICENSE)' "$$expected_version")"; \
 	notice_line="$$(printf '[`NOTICE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/NOTICE)' "$$expected_version")"; \
 	for required_line in "$$dependency_line" "$$heading_line" "$$license_line" "$$notice_line"; do \
-		if ! required_count="$$(awk -v required_line="$$required_line" '$$0 == required_line { count++ } END { print count + 0 }' NOTICE.md)"; then \
-			fail_notice 'could not read canonical pure-simdjson NOTICE pins'; \
+		if required_count="$$(grep -Fxc "$$required_line" NOTICE.md)"; then \
+			:; \
+		else \
+			grep_status=$$?; \
+			if [ "$$grep_status" -eq 1 ]; then \
+				required_count=0; \
+			else \
+				fail_notice 'could not read canonical pure-simdjson NOTICE pins'; \
+			fi; \
 		fi; \
 		if [ "$$required_count" -ne 1 ]; then \
 			fail_notice "pure-simdjson pin shape mismatch; expected exactly one required line: $$required_line"; \
 		fi; \
 	done; \
-	if ! notice_references="$$(awk 'index($$0, "pure-simdjson") { print NR ":" $$0 }' NOTICE.md)"; then \
-		fail_notice 'could not scan pure-simdjson NOTICE references'; \
+	if ! offending_versions="$$(awk -v version_pattern="$$version_pattern" -v expected_version="$$expected_version" '{ remainder = $$0; while (match(remainder, version_pattern)) { version = substr(remainder, RSTART, RLENGTH); if (version != expected_version) print NR ":" version; remainder = substr(remainder, RSTART + RLENGTH) } }' NOTICE.md)"; then \
+		fail_notice 'could not scan NOTICE.md semantic-version tokens'; \
 	fi; \
-	if [ -z "$$notice_references" ]; then \
-		fail_notice 'does not contain a pure-simdjson reference'; \
-	fi; \
-	if ! notice_versions="$$(awk -v version_pattern="$$version_pattern" 'index($$0, "pure-simdjson") { remainder = $$0; while (match(remainder, version_pattern)) { print NR ":" substr(remainder, RSTART, RLENGTH); remainder = substr(remainder, RSTART + RLENGTH) } }' NOTICE.md)"; then \
-		fail_notice 'could not extract pure-simdjson version tokens'; \
-	fi; \
-	if [ -z "$$notice_versions" ]; then \
-		fail_notice 'does not contain a complete semantic-version token on a pure-simdjson reference'; \
-	fi; \
-	offending_versions="$$(printf '%s\n' "$$notice_versions" | awk -F: -v expected_version="$$expected_version" '$$2 != expected_version { print }')"; \
 	if [ -n "$$offending_versions" ]; then \
-		fail_notice "pure-simdjson version drift; offending line:version tokens: $$offending_versions"; \
+		fail_notice "NOTICE.md version drift; offending line:version tokens: $$offending_versions"; \
 	fi
 
 .PHONY: lint

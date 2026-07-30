@@ -17,9 +17,9 @@ func TestNoticeVersionGuard(t *testing.T) {
 		runNoticeVersionGuard(t, dir)
 	})
 
-	t.Run("stale reference anywhere fails", func(t *testing.T) {
+	t.Run("stale version anywhere in NOTICE fails", func(t *testing.T) {
 		dir := copyNoticeGuardInputs(t)
-		appendNotice(t, dir, "\nSupplemental pure-simdjson v0.0.0 reference.\n")
+		appendNotice(t, dir, "\nHistorical note: previously pinned v0.1.2 before the current pin.\n")
 
 		output := runNoticeVersionGuardFailure(t, dir)
 		requireOutputContains(t, output, "NOTICE.md", "v0.1.7")
@@ -56,6 +56,13 @@ func TestNoticeVersionGuard(t *testing.T) {
 		requireOutputContains(t, output, "NOTICE.md", "\\342\\200\\213")
 	})
 
+	t.Run("uses a bytewise locale", func(t *testing.T) {
+		makefile := readTestFile(t, filepath.Join(repositoryRoot(t), "Makefile"))
+		if !strings.Contains(string(makefile), "check-notice-version:\n\t@set -eu; \\\n\texport LC_ALL=C; \\") {
+			t.Fatal("check-notice-version must export LC_ALL=C before comparing NOTICE content")
+		}
+	})
+
 	t.Run("CI runs the dedicated guard before golangci-lint", func(t *testing.T) {
 		workflow := readTestFile(t, filepath.Join(repositoryRoot(t), ".github", "workflows", "ci.yml"))
 		lintJob := ciJobSection(t, string(workflow), "lint")
@@ -64,7 +71,7 @@ func TestNoticeVersionGuard(t *testing.T) {
 		setupGo := strings.Index(lintJob, "      - name: Set up Go\n")
 		validatorMarkers := strings.Index(lintJob, "      - name: Check validator markers\n")
 		noticeGuard := strings.Index(lintJob, "      - name: Check NOTICE version alignment\n        run: make check-notice-version\n")
-		golangCILint := strings.Index(lintJob, "      - name: Run golangci-lint\n        uses: golangci/golangci-lint-action@v9\n")
+		golangCILint := strings.Index(lintJob, "      - name: Run golangci-lint\n        uses: golangci/golangci-lint-action@")
 
 		if checkout < 0 || setupGo < 0 || validatorMarkers < 0 || noticeGuard < 0 || golangCILint < 0 {
 			t.Fatalf("lint job does not contain the required dedicated NOTICE guard sequence:\n%s", lintJob)
@@ -93,7 +100,7 @@ func copyNoticeGuardInputs(t *testing.T) string {
 func runNoticeVersionGuard(t *testing.T, dir string) {
 	t.Helper()
 
-	command := exec.Command("make", "--no-print-directory", "-C", dir, "check-notice-version")
+	command := noticeVersionGuardCommand(dir)
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s failed: %v\n%s", strings.Join(command.Args, " "), err, output)
@@ -103,12 +110,18 @@ func runNoticeVersionGuard(t *testing.T, dir string) {
 func runNoticeVersionGuardFailure(t *testing.T, dir string) string {
 	t.Helper()
 
-	command := exec.Command("make", "--no-print-directory", "-C", dir, "check-notice-version")
+	command := noticeVersionGuardCommand(dir)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		t.Fatalf("%s unexpectedly succeeded\n%s", strings.Join(command.Args, " "), output)
 	}
 	return string(output)
+}
+
+func noticeVersionGuardCommand(dir string) *exec.Cmd {
+	command := exec.Command("make", "--no-print-directory", "-C", dir, "check-notice-version")
+	command.Env = append(os.Environ(), "LC_ALL=en_US.UTF-8")
+	return command
 }
 
 func appendNotice(t *testing.T, dir, extra string) {
