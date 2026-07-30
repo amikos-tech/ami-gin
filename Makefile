@@ -82,21 +82,42 @@ check-validator-markers:
 check-notice-version:
 	@set -eu; \
 	expected_version="$$(go list -m -f '{{.Version}}' github.com/amikos-tech/pure-simdjson)"; \
-	pinned_lines="$$(grep -E 'pure-simdjson.*v[0-9]+\.[0-9]+\.[0-9]+' NOTICE.md || true)"; \
+	version_pattern='v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?(\+[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?'; \
+	if ! printf '%s\n' "$$expected_version" | grep -Exq "$$version_pattern"; then \
+		printf 'NOTICE.md alignment cannot validate expected module version %s: not a complete Go semantic-version token\n' "$$expected_version" >&2; \
+		exit 1; \
+	fi; \
+	pinned_lines="$$(grep -E "pure-simdjson.*$$version_pattern" NOTICE.md || true)"; \
 	pinned_line_count="$$(printf '%s\n' "$$pinned_lines" | sed '/^$$/d' | wc -l | tr -d '[:space:]')"; \
 	if [ "$$pinned_line_count" -ne 4 ]; then \
 		printf 'NOTICE.md pure-simdjson pins must contain exactly 4 version-bearing lines; expected module version %s, found %s lines:\n' "$$expected_version" "$$pinned_line_count" >&2; \
 		printf '%s\n' "$$pinned_lines" >&2; \
 		exit 1; \
 	fi; \
-	pinned_versions="$$(printf '%s\n' "$$pinned_lines" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)"; \
+	pinned_versions="$$(printf '%s\n' "$$pinned_lines" | grep -oE "$$version_pattern" || true)"; \
+	pinned_version_count="$$(printf '%s\n' "$$pinned_versions" | sed '/^$$/d' | wc -l | tr -d '[:space:]')"; \
+	if [ "$$pinned_version_count" -ne 5 ]; then \
+		printf 'NOTICE.md pure-simdjson pins must contain exactly 5 complete version tokens; expected module version %s, found %s tokens:\n%s\n' "$$expected_version" "$$pinned_version_count" "$$pinned_lines" >&2; \
+		exit 1; \
+	fi; \
 	offending_versions="$$(printf '%s\n' "$$pinned_versions" | grep -Fvx "$$expected_version" || true)"; \
 	if [ -n "$$offending_versions" ]; then \
 		printf 'NOTICE.md pure-simdjson version drift; expected module version %s, found offending pinned versions:\n' "$$expected_version" >&2; \
 		printf '%s\n' "$$offending_versions" >&2; \
 		printf 'Pinned NOTICE.md lines:\n%s\n' "$$pinned_lines" >&2; \
 		exit 1; \
-	fi
+	fi; \
+	dependency_line="$$(printf '[`github.com/amikos-tech/pure-simdjson` %s](https://github.com/amikos-tech/pure-simdjson/tree/%s).' "$$expected_version" "$$expected_version")"; \
+	heading_line="## pure-simdjson $$expected_version"; \
+	license_line="$$(printf '[`LICENSE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/LICENSE)' "$$expected_version")"; \
+	notice_line="$$(printf '[`NOTICE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/NOTICE)' "$$expected_version")"; \
+	for required_line in "$$dependency_line" "$$heading_line" "$$license_line" "$$notice_line"; do \
+		required_count="$$(grep -Fxc "$$required_line" NOTICE.md || true)"; \
+		if [ "$$required_count" -ne 1 ]; then \
+			printf 'NOTICE.md pure-simdjson pin shape mismatch; expected module version %s and exactly one required line:\n%s\nPinned lines:\n%s\n' "$$expected_version" "$$required_line" "$$pinned_lines" >&2; \
+			exit 1; \
+		fi; \
+	done
 
 .PHONY: lint
 lint: check-validator-markers check-notice-version
