@@ -258,6 +258,12 @@ func (s *simdParser) walkElement(
 			return errors.Wrapf(err, "iterate pure-simdjson array at %s", canonicalPath)
 		}
 		return nil
+	case purejson.TypeBigInt:
+		raw, err := element.GetBigInt()
+		if err != nil {
+			return errors.Wrapf(err, "read pure-simdjson bigint at %s", canonicalPath)
+		}
+		return sink.StageJSONNumber(state, canonicalPath, raw)
 	case purejson.TypeInvalid:
 		return errors.Errorf("invalid pure-simdjson element at %s", canonicalPath)
 	default:
@@ -347,6 +353,12 @@ func materializeElement(element purejson.Element, rawPath string) (any, error) {
 			return nil, errors.Wrapf(err, "materialize pure-simdjson object iterator at %s", canonicalPath)
 		}
 		return values, nil
+	case purejson.TypeBigInt:
+		raw, err := element.GetBigInt()
+		if err != nil {
+			return nil, errors.Wrapf(err, "materialize pure-simdjson bigint at %s", canonicalPath)
+		}
+		return json.Number(raw), nil
 	case purejson.TypeInvalid:
 		return nil, errors.Errorf("cannot materialize invalid pure-simdjson element at %s", canonicalPath)
 	default:
