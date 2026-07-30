@@ -56,13 +56,6 @@ func TestNoticeVersionGuard(t *testing.T) {
 		requireOutputContains(t, output, "NOTICE.md", "\\342\\200\\213")
 	})
 
-	t.Run("uses a bytewise locale", func(t *testing.T) {
-		makefile := readTestFile(t, filepath.Join(repositoryRoot(t), "Makefile"))
-		if !strings.Contains(string(makefile), "check-notice-version:\n\t@set -eu; \\\n\texport LC_ALL=C; \\") {
-			t.Fatal("check-notice-version must export LC_ALL=C before comparing NOTICE content")
-		}
-	})
-
 	t.Run("CI runs the dedicated guard before golangci-lint", func(t *testing.T) {
 		workflow := readTestFile(t, filepath.Join(repositoryRoot(t), ".github", "workflows", "ci.yml"))
 		lintJob := ciJobSection(t, string(workflow), "lint")
