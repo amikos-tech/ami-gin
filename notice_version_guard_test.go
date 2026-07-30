@@ -69,7 +69,7 @@ func TestNoticeVersionGuard(t *testing.T) {
 		if checkout < 0 || setupGo < 0 || validatorMarkers < 0 || noticeGuard < 0 || golangCILint < 0 {
 			t.Fatalf("lint job does not contain the required dedicated NOTICE guard sequence:\n%s", lintJob)
 		}
-		if !(checkout < setupGo && setupGo < validatorMarkers && validatorMarkers < noticeGuard && noticeGuard < golangCILint) {
+		if checkout >= setupGo || setupGo >= validatorMarkers || validatorMarkers >= noticeGuard || noticeGuard >= golangCILint {
 			t.Fatalf("lint job NOTICE guard step has the wrong order:\n%s", lintJob)
 		}
 	})
