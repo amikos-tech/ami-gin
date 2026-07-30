@@ -78,8 +78,28 @@ check-validator-markers:
 		exit bad \
 	}' *.go
 
+.PHONY: check-notice-version
+check-notice-version:
+	@set -eu; \
+	expected_version="$$(go list -m -f '{{.Version}}' github.com/amikos-tech/pure-simdjson)"; \
+	pinned_lines="$$(grep -E 'pure-simdjson.*v[0-9]+\.[0-9]+\.[0-9]+' NOTICE.md || true)"; \
+	pinned_line_count="$$(printf '%s\n' "$$pinned_lines" | sed '/^$$/d' | wc -l | tr -d '[:space:]')"; \
+	if [ "$$pinned_line_count" -ne 4 ]; then \
+		printf 'NOTICE.md pure-simdjson pins must contain exactly 4 version-bearing lines; expected module version %s, found %s lines:\n' "$$expected_version" "$$pinned_line_count" >&2; \
+		printf '%s\n' "$$pinned_lines" >&2; \
+		exit 1; \
+	fi; \
+	pinned_versions="$$(printf '%s\n' "$$pinned_lines" | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)"; \
+	offending_versions="$$(printf '%s\n' "$$pinned_versions" | grep -Fvx "$$expected_version" || true)"; \
+	if [ -n "$$offending_versions" ]; then \
+		printf 'NOTICE.md pure-simdjson version drift; expected module version %s, found offending pinned versions:\n' "$$expected_version" >&2; \
+		printf '%s\n' "$$offending_versions" >&2; \
+		printf 'Pinned NOTICE.md lines:\n%s\n' "$$pinned_lines" >&2; \
+		exit 1; \
+	fi
+
 .PHONY: lint
-lint: check-validator-markers
+lint: check-validator-markers check-notice-version
 	golangci-lint run
 
 .PHONY: lint-fix
@@ -101,6 +121,7 @@ help:
 	@echo "  simd-isolation-check - Verify optional SIMD code stays out of default builds"
 	@echo "  test      - Run tests with coverage"
 	@echo "  integration-test - Run integration test suite"
+	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against all packages"
