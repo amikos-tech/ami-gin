@@ -163,6 +163,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260730-ftv | Resolve issue #49: derive the pure-simdjson CI bootstrap version from go.mod and scope nesting-limit guidance | 2026-07-30 | 4fd7977 | Verified | [260730-ftv-issue-49](./quick/260730-ftv-issue-49/) |
 | 260730-ije | Address stale pure-simdjson version references, enforce NOTICE version alignment, and clarify SIMD max-depth configurability | 2026-07-30 | 36125d7 | Verified | [260730-ije-address-stale-pure-simdjson-version-refe](./quick/260730-ije-address-stale-pure-simdjson-version-refe/) |
 | 260730-kny | Address NOTICE guard review findings: effective replacements, full-file drift, escaped diagnostics, and explicit CI gating | 2026-07-30 | 74a79fa | Verified | [260730-kny-address-notice-version-guard-review-find](./quick/260730-kny-address-notice-version-guard-review-find/) |
+| 260730-pcc | NOTICE guard polish: drop brittle bytewise-locale source assertion, document single-attribution scan constraint, narrow failure dump to relevant lines | 2026-07-30 | 4f69414 | Verified | [260730-pcc-polish-notice-version-guard-drop-brittle](./quick/260730-pcc-polish-notice-version-guard-drop-brittle/) |
+| 260730-fast2 | Remove the staticcheck QF1001 finding this branch introduced (De Morgan rewrite of the CI step-order assertion) | 2026-07-30 | 028c6b8 | Verified | _(fast task — no plan dir)_ |
 
 ## Deferred Items
 
