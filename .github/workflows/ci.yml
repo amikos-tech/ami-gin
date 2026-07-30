@@ -109,7 +109,9 @@ jobs:
         env:
           PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
           PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
-        run: go run github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@v0.1.7 fetch
+        run: |
+          pure_simdjson_version="$(go list -m -f '{{.Version}}' github.com/amikos-tech/pure-simdjson)"
+          go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${pure_simdjson_version}" fetch
 
       - name: Run SIMD-tagged tests
         env:
