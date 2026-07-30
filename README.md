@@ -81,7 +81,7 @@ go get github.com/amikos-tech/ami-gin
 
 Ordinary builds and the default `NewBuilder` remain stdlib-only. To opt in,
 compile with `-tags simdjson`, construct the same-package adapter backed by
-[`github.com/amikos-tech/pure-simdjson` v0.1.4](https://github.com/amikos-tech/pure-simdjson/tree/v0.1.4),
+[`github.com/amikos-tech/pure-simdjson`](https://github.com/amikos-tech/pure-simdjson) (version pinned in `go.mod`),
 and select it explicitly:
 
 ```bash
