@@ -78,15 +78,17 @@ check-validator-markers:
 		exit bad \
 	}' *.go
 
+# The version scan treats pure-simdjson as the only versioned attribution allowed in NOTICE.md.
+# Adding a second vendored dependency with its own version requires widening the scan.
 .PHONY: check-notice-version
 check-notice-version:
 	@set -eu; \
 	export LC_ALL=C; \
 	fail_notice() { \
 		printf 'NOTICE.md alignment failed: %s; expected effective module version %s\n' "$$1" "$$expected_version" >&2; \
-		printf '%s\n' 'NOTICE.md content (line number followed by byte-escaped content):' >&2; \
+		printf '%s\n' 'NOTICE.md pure-simdjson and version lines (line number followed by byte-escaped content):' >&2; \
 		if [ -r NOTICE.md ]; then \
-			sed -n '=;l' NOTICE.md >&2 || printf '%s\n' 'NOTICE.md context could not be read' >&2; \
+			sed -n -E "/pure-simdjson|$$version_pattern/{=;l;}" NOTICE.md >&2 || printf '%s\n' 'NOTICE.md context could not be read' >&2; \
 		else \
 			printf '%s\n' 'NOTICE.md is missing or unreadable; byte-escaped context is unavailable' >&2; \
 		fi; \
