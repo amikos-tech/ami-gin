@@ -13,30 +13,36 @@ import (
 // quoted module path and requires a simdjson build tag on any file containing it.
 const pureSIMDJSONModule = "github.com/amikos-tech/" + "pure-simdjson"
 
+// sentinelReplacementVersion is a synthetic version used only to prove the
+// guard reads the effective (replaced) version, never a real published tag.
+// Major version must stay 0 or 1: pure-simdjson's module path carries no
+// /vN suffix, so go.mod parsing rejects any other major version outright.
+const sentinelReplacementVersion = "v0.9.9"
+
 func TestNoticeVersionGuard(t *testing.T) {
 	t.Run("aligned notice passes", func(t *testing.T) {
-		dir := copyNoticeGuardInputs(t)
+		dir, _ := copyNoticeGuardInputs(t)
 		runNoticeVersionGuard(t, dir)
 	})
 
 	t.Run("stale version anywhere in NOTICE fails", func(t *testing.T) {
-		dir := copyNoticeGuardInputs(t)
+		dir, version := copyNoticeGuardInputs(t)
 		appendNotice(t, dir, "\nHistorical note: previously pinned v0.1.2 before the current pin.\n")
 
 		output := runNoticeVersionGuardFailure(t, dir)
-		requireOutputContains(t, output, "NOTICE.md", "v0.1.7")
+		requireOutputContains(t, output, "NOTICE.md", version)
 	})
 
 	t.Run("replacement version is effective", func(t *testing.T) {
-		dir := copyNoticeGuardInputs(t)
-		appendFileText(t, filepath.Join(dir, "go.mod"), "\nreplace "+pureSIMDJSONModule+" v0.1.7 => "+pureSIMDJSONModule+" v0.1.8\n")
-		replaceFileText(t, filepath.Join(dir, "NOTICE.md"), "v0.1.7", "v0.1.8")
+		dir, version := copyNoticeGuardInputs(t)
+		appendFileText(t, filepath.Join(dir, "go.mod"), "\nreplace "+pureSIMDJSONModule+" "+version+" => "+pureSIMDJSONModule+" "+sentinelReplacementVersion+"\n")
+		replaceFileText(t, filepath.Join(dir, "NOTICE.md"), version, sentinelReplacementVersion)
 
 		runNoticeVersionGuard(t, dir)
 	})
 
 	t.Run("unversioned local replacement fails", func(t *testing.T) {
-		dir := copyNoticeGuardInputs(t)
+		dir, version := copyNoticeGuardInputs(t)
 		localModule := filepath.Join(dir, "local-pure-simdjson")
 		if err := os.Mkdir(localModule, 0o700); err != nil {
 			t.Fatalf("Mkdir(%s) error = %v", localModule, err)
@@ -44,15 +50,15 @@ func TestNoticeVersionGuard(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(localModule, "go.mod"), []byte("module "+pureSIMDJSONModule+"\n"), 0o600); err != nil {
 			t.Fatalf("WriteFile(%s/go.mod) error = %v", localModule, err)
 		}
-		appendFileText(t, filepath.Join(dir, "go.mod"), "\nreplace "+pureSIMDJSONModule+" v0.1.7 => ./local-pure-simdjson\n")
+		appendFileText(t, filepath.Join(dir, "go.mod"), "\nreplace "+pureSIMDJSONModule+" "+version+" => ./local-pure-simdjson\n")
 
 		output := runNoticeVersionGuardFailure(t, dir)
 		requireOutputContains(t, output, "effective replacement version", "not a complete Go semantic-version token")
 	})
 
 	t.Run("invisible version character is escaped", func(t *testing.T) {
-		dir := copyNoticeGuardInputs(t)
-		replaceFileText(t, filepath.Join(dir, "NOTICE.md"), "## pure-simdjson v0.1.7", "## pure-simdjson v\u200b0.1.7")
+		dir, version := copyNoticeGuardInputs(t)
+		replaceFileText(t, filepath.Join(dir, "NOTICE.md"), "## pure-simdjson "+version, "## pure-simdjson v"+"\u200b"+strings.TrimPrefix(version, "v"))
 
 		output := runNoticeVersionGuardFailure(t, dir)
 		requireOutputContains(t, output, "NOTICE.md", "\\342\\200\\213")
@@ -77,7 +83,7 @@ func TestNoticeVersionGuard(t *testing.T) {
 	})
 }
 
-func copyNoticeGuardInputs(t *testing.T) string {
+func copyNoticeGuardInputs(t *testing.T) (string, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -89,7 +95,19 @@ func copyNoticeGuardInputs(t *testing.T) string {
 			t.Fatalf("WriteFile(%s) error = %v", destination, err)
 		}
 	}
-	return dir
+	return dir, effectivePureSIMDJSONVersion(t)
+}
+
+func effectivePureSIMDJSONVersion(t *testing.T) string {
+	t.Helper()
+
+	command := exec.Command("go", "list", "-m", "-f", "{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}", pureSIMDJSONModule)
+	command.Dir = repositoryRoot(t)
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("%s failed: %v", strings.Join(command.Args, " "), err)
+	}
+	return strings.TrimSpace(string(output))
 }
 
 func runNoticeVersionGuard(t *testing.T, dir string) {
