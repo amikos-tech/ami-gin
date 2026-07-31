@@ -1,4 +1,6 @@
 GOTESTSUM_VERSION ?= v1.13.0
+BENCHTIME ?= 1s
+COUNT ?= 1
 
 .PHONY: build
 build:
@@ -48,6 +50,14 @@ test: simd-isolation-check gotestsum-bin
 
 .PHONY: integration-test
 integration-test: test
+
+.PHONY: bench
+bench:
+	go test -run '^$$' -bench . -benchmem -benchtime=$(BENCHTIME) -count=$(COUNT)
+
+.PHONY: bench-phase20
+bench-phase20:
+	go test -run '^$$' -bench '^BenchmarkPhase20RealisticJSON$$' -benchmem -benchtime=$(BENCHTIME) -count=$(COUNT)
 
 .PHONY: check-validator-markers
 check-validator-markers:
