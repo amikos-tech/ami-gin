@@ -54,7 +54,7 @@ integration-test: test
 
 .PHONY: bench
 bench:
-	go test -run '^$$' -bench . -benchmem -benchtime=$(BENCHTIME) -timeout=$(BENCH_TIMEOUT) -count=$(COUNT)
+	go test -run '^$$' -bench . -benchmem -benchtime=$(BENCHTIME) -timeout=$(BENCH_TIMEOUT) -count=$(COUNT) ./...
 
 .PHONY: bench-phase20
 bench-phase20:
@@ -169,7 +169,7 @@ help:
 	@echo "  simd-isolation-check - Verify optional SIMD code stays out of default builds"
 	@echo "  test      - Run tests with coverage"
 	@echo "  integration-test - Run integration test suite"
-	@echo "  bench     - Run all benchmarks (-benchmem); override BENCHTIME/BENCH_TIMEOUT/COUNT, e.g. make bench BENCH_TIMEOUT=1h"
+	@echo "  bench     - Run all benchmarks in all packages (-benchmem; slow, takes minutes); override BENCHTIME/BENCH_TIMEOUT/COUNT, e.g. make bench BENCH_TIMEOUT=1h"
 	@echo "  bench-phase20 - Run BenchmarkPhase20RealisticJSON only; set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> to include the external corpus tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
