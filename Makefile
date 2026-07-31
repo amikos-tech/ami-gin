@@ -78,8 +78,65 @@ check-validator-markers:
 		exit bad \
 	}' *.go
 
+# The version scan treats pure-simdjson as the only versioned attribution allowed in NOTICE.md.
+# Adding a second vendored dependency with its own version requires widening the scan.
+.PHONY: check-notice-version
+check-notice-version:
+	@set -eu; \
+	export LC_ALL=C; \
+	fail_notice() { \
+		printf 'NOTICE.md alignment failed: %s; expected effective module version %s\n' "$$1" "$$expected_version" >&2; \
+		printf '%s\n' 'NOTICE.md pure-simdjson and version lines (line number followed by byte-escaped content):' >&2; \
+		if [ -r NOTICE.md ]; then \
+			sed -n -E "/pure-simdjson|$$version_pattern/{=;l;}" NOTICE.md >&2 || printf '%s\n' 'NOTICE.md context could not be read' >&2; \
+		else \
+			printf '%s\n' 'NOTICE.md is missing or unreadable; byte-escaped context is unavailable' >&2; \
+		fi; \
+		exit 1; \
+	}; \
+	if ! module_selection="$$(go list -m -f '{{if .Replace}}replacement{{else}}requirement{{end}}:{{with .Replace}}{{.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"; then \
+		printf '%s\n' 'NOTICE.md alignment cannot resolve the effective pure-simdjson module version' >&2; \
+		exit 1; \
+	fi; \
+	version_source="$${module_selection%%:*}"; \
+	expected_version="$${module_selection#*:}"; \
+	version_pattern='v[0-9]+[.][0-9]+[.][0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?([+][0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?'; \
+	if ! printf '%s\n' "$$expected_version" | grep -Exq "$$version_pattern"; then \
+		if [ "$$version_source" = 'replacement' ]; then \
+			printf 'NOTICE.md alignment cannot validate effective replacement version %s: not a complete Go semantic-version token\n' "$$expected_version" >&2; \
+		else \
+			printf 'NOTICE.md alignment cannot validate expected module version %s: not a complete Go semantic-version token\n' "$$expected_version" >&2; \
+		fi; \
+		exit 1; \
+	fi; \
+	dependency_line="$$(printf '[`github.com/amikos-tech/pure-simdjson` %s](https://github.com/amikos-tech/pure-simdjson/tree/%s).' "$$expected_version" "$$expected_version")"; \
+	heading_line="## pure-simdjson $$expected_version"; \
+	license_line="$$(printf '[`LICENSE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/LICENSE)' "$$expected_version")"; \
+	notice_line="$$(printf '[`NOTICE`](https://github.com/amikos-tech/pure-simdjson/blob/%s/NOTICE)' "$$expected_version")"; \
+	for required_line in "$$dependency_line" "$$heading_line" "$$license_line" "$$notice_line"; do \
+		if required_count="$$(grep -Fxc "$$required_line" NOTICE.md)"; then \
+			:; \
+		else \
+			grep_status=$$?; \
+			if [ "$$grep_status" -eq 1 ]; then \
+				required_count=0; \
+			else \
+				fail_notice 'could not read canonical pure-simdjson NOTICE pins'; \
+			fi; \
+		fi; \
+		if [ "$$required_count" -ne 1 ]; then \
+			fail_notice "pure-simdjson pin shape mismatch; expected exactly one required line: $$required_line"; \
+		fi; \
+	done; \
+	if ! offending_versions="$$(awk -v version_pattern="$$version_pattern" -v expected_version="$$expected_version" '{ remainder = $$0; while (match(remainder, version_pattern)) { version = substr(remainder, RSTART, RLENGTH); if (version != expected_version) print NR ":" version; remainder = substr(remainder, RSTART + RLENGTH) } }' NOTICE.md)"; then \
+		fail_notice 'could not scan NOTICE.md semantic-version tokens'; \
+	fi; \
+	if [ -n "$$offending_versions" ]; then \
+		fail_notice "NOTICE.md version drift; offending line:version tokens: $$offending_versions"; \
+	fi
+
 .PHONY: lint
-lint: check-validator-markers
+lint: check-validator-markers check-notice-version
 	golangci-lint run
 
 .PHONY: lint-fix
@@ -101,6 +158,7 @@ help:
 	@echo "  simd-isolation-check - Verify optional SIMD code stays out of default builds"
 	@echo "  test      - Run tests with coverage"
 	@echo "  integration-test - Run integration test suite"
+	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against all packages"

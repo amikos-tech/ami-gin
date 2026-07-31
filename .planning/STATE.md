@@ -4,8 +4,8 @@ milestone: v1.3
 milestone_name: SIMD-First Performance
 status: ready_to_plan
 stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
-last_updated: 2026-07-29T07:46:15Z
-last_activity: 2026-07-29 - Completed quick task 260729-eb3: Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings
+last_updated: 2026-07-30T12:04:30Z
+last_activity: 2026-07-30 - Completed quick task 260730-kny: Hardened the NOTICE version guard for effective replacements, full-file drift, escaped diagnostics, and explicit CI gating
 progress:
   total_phases: 8
   completed_phases: 3
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci)
 Plan: Not started
 Status: Ready to discuss
-Last activity: 2026-07-30 - Synced stale pure-simdjson doc version references after the v0.1.7 bump (relates to #49)
+Last activity: 2026-07-31 - Completed quick task 260731-e8d: Closed the last two version-drift gaps on PR #51 — replace-aware CI bootstrap derivation and derived (no longer hardcoded) versions in the NOTICE guard tests
 
 Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
@@ -160,6 +160,12 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260729-eb3 | Address SIMD parser fallback, lifecycle, parity-test, and deployment-documentation findings | 2026-07-29 | 760c489 |  | [260729-eb3-address-simd-parser-parity-findings-pres](./quick/260729-eb3-address-simd-parser-parity-findings-pres/) |
 | 260729-mg8 | Fix SIMD parser adapter to handle pure-simdjson TypeBigInt so out-of-range integers route to numeric failure policy (unblocks dependabot PR #48) | 2026-07-29 | 8a48b15 | Verified | [260729-mg8-fix-simd-parser-adapter-to-handle-pure-s](./quick/260729-mg8-fix-simd-parser-adapter-to-handle-pure-s/) |
 | 260730-fast | Sync 13 stale pure-simdjson v0.1.4 doc references after the v0.1.7 bump; hybrid pin strategy (NOTICE.md + depth claim pinned, prose pointers unpinned to go.mod). Relates to #49 | 2026-07-30 | 3c18616 | — | _(fast task — no plan dir)_ |
+| 260730-ftv | Resolve issue #49: derive the pure-simdjson CI bootstrap version from go.mod and scope nesting-limit guidance | 2026-07-30 | 4fd7977 | Verified | [260730-ftv-issue-49](./quick/260730-ftv-issue-49/) |
+| 260730-ije | Address stale pure-simdjson version references, enforce NOTICE version alignment, and clarify SIMD max-depth configurability | 2026-07-30 | 36125d7 | Verified | [260730-ije-address-stale-pure-simdjson-version-refe](./quick/260730-ije-address-stale-pure-simdjson-version-refe/) |
+| 260730-kny | Address NOTICE guard review findings: effective replacements, full-file drift, escaped diagnostics, and explicit CI gating | 2026-07-30 | 74a79fa | Verified | [260730-kny-address-notice-version-guard-review-find](./quick/260730-kny-address-notice-version-guard-review-find/) |
+| 260730-pcc | NOTICE guard polish: drop brittle bytewise-locale source assertion, document single-attribution scan constraint, narrow failure dump to relevant lines | 2026-07-30 | 4f69414 | Verified | [260730-pcc-polish-notice-version-guard-drop-brittle](./quick/260730-pcc-polish-notice-version-guard-drop-brittle/) |
+| 260730-fast2 | Remove the staticcheck QF1001 finding this branch introduced (De Morgan rewrite of the CI step-order assertion) | 2026-07-30 | 028c6b8 | Verified | _(fast task — no plan dir)_ |
+| 260731-e8d | PR #51 review: honor go.mod `replace` in the CI bootstrap version derivation, and derive the expected version in the NOTICE guard tests instead of hardcoding v0.1.7 | 2026-07-31 | 48ac6d8 | Verified | [260731-e8d-address-pr-51-review-honor-go-mod-replac](./quick/260731-e8d-address-pr-51-review-honor-go-mod-replac/) |
 
 ## Deferred Items
 
