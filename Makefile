@@ -168,6 +168,8 @@ help:
 	@echo "  simd-isolation-check - Verify optional SIMD code stays out of default builds"
 	@echo "  test      - Run tests with coverage"
 	@echo "  integration-test - Run integration test suite"
+	@echo "  bench     - Run all benchmarks (-benchmem); override BENCHTIME/COUNT, e.g. make bench COUNT=10"
+	@echo "  bench-phase20 - Run BenchmarkPhase20RealisticJSON only; set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> to include the external corpus tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
