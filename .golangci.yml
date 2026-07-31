@@ -18,7 +18,6 @@ linters:
     - unparam
   settings:
     goconst:
-      ignore-tests: true
       ignore-string-values:
         - '^(true|false)$'
     gocritic:
