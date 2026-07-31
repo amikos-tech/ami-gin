@@ -20,8 +20,8 @@ created: 2026-07-31
 | **Framework** | Go `testing`, `testing.F`, and benchmarks (module baseline Go 1.25.5) |
 | **Config file** | None — package tests, build tags, and Make targets define the test surface |
 | **Quick run command** | `go test ./... && make simd-isolation-check` |
-| **Focused tagged command** | `AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -run '^(TestSIMDParserGoldenAuthoredFixtures|TestSIMDParserPhase20Parity|TestSIMDParserEvaluateParity|FuzzParserParity)$' -count=1 .` |
-| **Full suite command** | `go test ./... && AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -race -timeout=30m ./... && make security-scan` |
+| **Focused tagged command** | `AMI_GIN_SIMD_REQUIRED=1 go test -v -tags simdjson -run '^(TestSupportedSIMDPlatform|TestClassifySIMDLoadError|TestSIMDConstructionPolicy|TestSIMDConstructorCallPolicy|TestSIMDParser.*|TestFuzzParserParityCorpus|TestClassifyFuzzParserOutcomes|FuzzParserParity)$' -count=1 .` |
+| **Full suite command** | `go test ./... && AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -race -timeout=30m ./... && make security-scan` (`security-scan` runs default and `-tags simdjson` govulncheck after Plan 22-07) |
 | **Estimated runtime** | Quick: under 2 minutes; full local suite: under 30 minutes; five-platform CI is remote |
 
 ---
@@ -42,24 +42,33 @@ created: 2026-07-31
 | T-22-01 | A supported CI leg silently skips SIMD after native loading fails | `AMI_GIN_SIMD_REQUIRED=1` converts supported-platform construction failures into classified fatal errors |
 | T-22-02 | A cache restores a native library for the wrong module version or platform | Exact version/platform cache key, no `restore-keys`, and version derived from `go list -m` |
 | T-22-03 | Deeply nested fuzz input exhausts CPU in shared builder staging | Reject fuzz inputs over 4096 bytes or array nesting depth 8 before either parser arm runs |
-| T-22-04 | CI tooling or uploaded artifacts expand the supply-chain or disclosure surface | Human-verify flagged modules, keep `contents: read`, and upload benchmark text only |
+| T-22-04 | CI tooling, optional tagged dependencies, or uploaded artifacts expand the supply-chain/disclosure surface | Blocking provenance decisions, default plus tagged govulncheck, `contents: read`, and benchmark-text-only uploads |
 
 ---
 
 ## Per-Task Verification Map
 
-Task IDs are provisional planning anchors; the planner may renumber them but must preserve every requirement/command mapping.
+Task IDs match the revised eight-plan execution graph.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 22-01-01 | 01 | 1 | SIMD-08 | — | Both parser arms receive identical options and fixtures | unit/integration | `go test -tags simdjson -run '^(TestSIMDParserGoldenAuthoredFixtures|TestSIMDParserPhase20Parity|TestSIMDParserEvaluateParity)$' .` | ❌ W0 | ⬜ pending |
-| 22-01-02 | 01 | 1 | SIMD-08 | T-22-03 | Fuzz seeds are bounded before either parser executes; byte divergence hard-fails | fuzz-seed regression | `go test -tags simdjson -run '^FuzzParserParity$' .` | ❌ W0 | ⬜ pending |
-| 22-02-01 | 02 | 2 | SIMD-09 | — | Setup is outside timing and paired output reports ns/op, B/op, allocs/op, and MB/s | benchmark smoke | `make bench-simd COUNT=1 BENCHTIME=100ms` | ❌ W0 | ⬜ pending |
-| 22-02-02 | 02 | 2 | SIMD-09 | T-22-04 | Evidence uses the human-approved exact benchstat version and contains no environment dump | artifact check | `test -s .planning/phases/22-simd-validation-benchmarks-ci/22-SIMD-BENCHMARK-RESULTS.md && test -s .planning/phases/22-simd-validation-benchmarks-ci/22-SIMD-BENCHMARK-REPORT.md` | ❌ W0 | ⬜ pending |
-| 22-03-01 | 03 | 1 | SIMD-11 | T-22-02 | Docs derive version/env/path facts from machine-readable sources and pin upstream links | contract test | `make check-simd-docs` | ❌ W0 | ⬜ pending |
-| 22-03-02 | 03 | 1 | SIMD-11 | — | Consumer example compiles under the tag without loading the native library | compile test | `go test -tags simdjson -run '^Example' .` | ❌ W0 | ⬜ pending |
-| 22-04-01 | 04 | 2 | SIMD-10 | T-22-01, T-22-02, T-22-04 | Five explicit legs, two required race legs, three advisory legs, exact cache, and explicit-path rerun are enforced | workflow contract | `go test -run '^TestSIMDWorkflowContract$' .` | ❌ W0 | ⬜ pending |
-| 22-04-02 | 04 | 3 | SIMD-10 | T-22-01 | Default isolation stays green and every supported remote leg attempts SIMD without a permitted skip | build/remote integration | `make simd-isolation-check` plus the GitHub Actions `simd` matrix | Workflow update ❌ W0 | ⬜ pending |
+| 22-01-01 | 01 | 1 | SIMD-09 prerequisite | T-22-04 | Current pure-simdjson pin is explicitly approved before new Phase 22 tagged evidence; dependency files remain unchanged | blocking decision + diff gate | `git diff --exit-code -- go.mod go.sum` | Existing files ✅ | ⬜ pending |
+| 22-01-02 | 01 | 1 | SIMD-09 | T-22-04 | Exact x/perf pseudo-version is approved and remains ephemeral | blocking decision + source assertion | `! rg -q '^\s*golang.org/x/perf\s' go.mod` | Existing files ✅ | ⬜ pending |
+| 22-02-01 | 02 | 2 | SIMD-08, SIMD-10 | T-22-01 | Three-state policy and all six sentinel classes are native-free; an AST guard inspects identifier and selector callees, permits only the shared helper plus the exact no-output compile-only Example, and an external-package `gin.NewSIMDParser()` test mutation proves every executable bypass is rejected | tagged unit/integration contract | `go test -tags simdjson -run '^(TestSupportedSIMDPlatform|TestClassifySIMDLoadError|TestSIMDConstructionPolicy|TestSIMDConstructorCallPolicy)$' . && AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -run '^TestSIMDParser' .` | ❌ W0 | ⬜ pending |
+| 22-02-02 | 02 | 2 | SIMD-08 | — | Authored plus all four Phase 20 byte/query oracles and 24 Evaluate cases hard-fail on divergence | tagged integration | `AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -run '^(TestSIMDParserGoldenAuthoredFixtures|TestSIMDParserPhase20Parity|TestSIMDParserEvaluateParity|TestSIMDParserMalformedTrailingNumericKnownPolicyAsymmetry)$' .` | ❌ W0 | ⬜ pending |
+| 22-03-01 | 03 | 3 | SIMD-08 | T-22-03 | Five standard corpus files cover two authored, two Phase 20, and one known-exclusion category | corpus source check | `test "$(find testdata/fuzz/FuzzParserParity -type f | wc -l | tr -d ' ')" -eq 5` | ❌ W0 | ⬜ pending |
+| 22-03-02 | 03 | 3 | SIMD-08 | T-22-03 | Bounds run before either arm; committed state and attribution classes are explicit; verbose seed replay exposes non-failing one-sided outcomes under `SIMD_FUZZ_OUTCOME class=unexpected_one_sided_commit` without timed fuzzing | tagged unit/fuzz replay | `AMI_GIN_SIMD_REQUIRED=1 go test -v -tags simdjson -run '^(TestFuzzParserParityCorpus|TestClassifyFuzzParserOutcomes|TestFuzzParserParityRejectsOverLimitBeforeArms|FuzzParserParity)$' .` | ❌ W0 | ⬜ pending |
+| 22-04-01 | 04 | 4 | SIMD-11 | T-22-02 | Current parity is rerun, guide uses effective-tag links, the tagged consumer Example compiles without native execution, and the constructor guard accepts only its exact no-output selector exception | tagged integration/compile | `go test -tags simdjson -run '^(TestSIMDConstructorCallPolicy|TestSIMDParserPhase20Parity|FuzzParserParity|ExampleNewSIMDParser)$' .` | ❌ W0 | ⬜ pending |
+| 22-04-02 | 04 | 4 | SIMD-10, SIMD-11 | T-22-02, T-22-04 | One authoritative Go guard validates env/path/link/release/snippet contracts through Make | contract test | `make check-simd-docs` | ❌ W0 | ⬜ pending |
+| 22-05-01 | 05 | 5 | SIMD-09 | T-22-04 | Paired steady-state smoke leaves report ns/op, B/op, allocs/op, and MB/s; external skip is subtree-only | benchmark smoke | `env -u GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL -u GIN_PHASE20_SIMDJSON_DIR AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -run '^$' -bench '^BenchmarkSIMDTypedSinkIngest$' -benchmem -benchtime=100ms -count=1 .` | ❌ W0 | ⬜ pending |
+| 22-05-02 | 05 | 5 | SIMD-09 | — | Make target stays anchored and overridable | command contract | `env -u GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL -u GIN_PHASE20_SIMDJSON_DIR AMI_GIN_SIMD_REQUIRED=1 make bench-simd COUNT=1 BENCHTIME=100ms` | ❌ W0 | ⬜ pending |
+| 22-07-01 | 07 | 6 | SIMD-10 | T-22-01, T-22-02 | Full-workflow assertions cover top-level policy; job-local assertions cover exact five rows/cache | workflow contract | `go test -run '^TestSIMDWorkflowContract/matrix_and_cache$' .` | ❌ W0 | ⬜ pending |
+| 22-07-02 | 07 | 6 | SIMD-09, SIMD-10, SIMD-11 | T-22-02, T-22-04 | Explicit path is file-validated, trend output is non-PR text only, docs lint is ordered, and security scan covers both call graphs | workflow/Make contract | `go test -run '^TestSIMDWorkflowContract$' . && rg -Uq 'govulncheck ./...\n\s+govulncheck -tags simdjson ./...' Makefile` | ❌ W0 | ⬜ pending |
+| 22-06-01 | 06 | 7 | SIMD-08, SIMD-09 | T-22-02, T-22-04 | Controlled clean-source smoke capture has exactly 80 samples and no external tier | artifact cardinality | `test -s .planning/phases/22-simd-validation-benchmarks-ci/22-SIMD-BENCHMARK-RESULTS.md && ! rg '^Benchmark.*tier=external/' .planning/phases/22-simd-validation-benchmarks-ci/22-SIMD-BENCHMARK-RESULTS.md` | ❌ W0 | ⬜ pending |
+| 22-06-02 | 06 | 7 | SIMD-09 | — | Report traces raw results and ends in exactly one ship/defer/narrow class | artifact contract | `rg -q '^Recommendation class: \*\*(ship|defer|narrow)\*\*$' .planning/phases/22-simd-validation-benchmarks-ci/22-SIMD-BENCHMARK-REPORT.md` | ❌ W0 | ⬜ pending |
+| 22-08-01 | 08 | 8 | SIMD-08..11 | T-22-01..04 | Default, required tagged-race, and both default/tagged vulnerability scans are green | full phase gate | `go test ./... && AMI_GIN_SIMD_REQUIRED=1 go test -tags simdjson -race -timeout=30m ./... && make security-scan` | Prior artifacts | ⬜ pending |
+| 22-08-02 | 08 | 8 | SIMD-10 | T-22-01 | A completed PR run for the exact workflow head SHA exists before remote inspection | human action | Run URL + head SHA | Remote state | ⬜ pending |
+| 22-08-03 | 08 | 8 | SIMD-08..11 | T-22-01, T-22-02, T-22-04 | Five remote outcomes, SIMD-only required bindings, and controlled recommendation receive one read-only approval | human verification | Local workflow/artifact contracts plus completed-run/ruleset review | Remote state + evidence | ⬜ pending |
 
 ---
 
@@ -69,9 +78,10 @@ Task IDs are provisional planning anchors; the planner may renumber them but mus
 - [ ] `parser_parity_fuzz_simd_test.go` and `testdata/fuzz/FuzzParserParity/*` — bounded seed replay for SIMD-08.
 - [ ] Shared Evaluate-case extraction and variadic parser options in `parser_parity_test.go`; variadic Phase 20 build helper in `benchmark_test.go`.
 - [ ] `benchmark_simd_test.go` and `bench-simd` — paired SIMD-09 measurement.
-- [ ] `simd_contract_guard_test.go` and `check-simd-docs` — SIMD-10/11 workflow and documentation contracts.
+- [ ] `simd_docs_guard_test.go` and `check-simd-docs` — authoritative SIMD-11 documentation contract.
+- [ ] `simd_workflow_contract_test.go` — full-workflow plus job-local SIMD-10 CI contract.
 - [ ] `simd_example_test.go` — tagged compile-only consumer example.
-- [ ] CI matrix, explicit-path rerun, non-PR trend artifact, and the two benchmark evidence documents.
+- [ ] CI matrix, validated explicit-path smoke, non-PR trend artifact, dual-call-graph security target, and two benchmark evidence documents.
 
 ---
 
@@ -79,10 +89,9 @@ Task IDs are provisional planning anchors; the planner may renumber them but mus
 
 | Behavior | Requirement | Why Manual | Test Instructions |
 |----------|-------------|------------|-------------------|
-| Accept `github.com/amikos-tech/pure-simdjson` and the selected `golang.org/x/perf` pseudo-version after the research legitimacy warnings | SIMD-08, SIMD-09, SIMD-10 | The package audit returned `[SUS]`, requiring human provenance review before first use/download | Verify module paths, resolved versions, and source origins; record approval before tagged evidence or pinned `go run benchstat` |
-| Only the stable Linux/amd64 and Darwin/arm64 matrix check names block merge | SIMD-10 | Repository rulesets are external state and are not represented by workflow YAML | After the workflow lands, inspect the ruleset and require exactly the two required-tier check names; record advisory names as non-blocking |
-| All five supported platform legs load and run under the intended required/advisory policy | SIMD-10 | Three target platforms are unavailable locally | Inspect one completed PR matrix: required legs green; advisory outcomes recorded; no supported leg skipped native construction |
-| Controlled benchmark evidence supports a ship, defer, or narrow decision | SIMD-09 | Performance interpretation depends on pinned machine/environment metadata and measured variance | Run `COUNT=10` or higher after parity passes, analyze the single output with approved benchstat, and review both committed evidence documents |
+| Accept `github.com/amikos-tech/pure-simdjson` and the selected `golang.org/x/perf` pseudo-version after the research legitimacy warnings | SIMD-09 prerequisite | The package audit returned `[SUS]`, requiring a blocking decision before new Phase 22 evidence commands | Verify module paths, resolved versions, and source origins; approve or reject each exact module/tool without changing dependency files |
+| Publish or identify a completed PR run for the exact Plan 22-07 workflow revision | SIMD-10 | A remote matrix does not exist until an authorized repository publication action triggers it | Supply run URL and head SHA; do not create/switch branches, merge, or mutate rules during the checkpoint |
+| Verify all five supported legs, SIMD-only required bindings, and the controlled recommendation | SIMD-08..11 | Remote runner/ruleset state and performance interpretation are outside source-only proof | Required legs green, advisory outcomes recorded, no supported skip, only two required among SIMD contexts, and controlled evidence supports one recommendation |
 
 ---
 
