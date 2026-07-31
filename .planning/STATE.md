@@ -5,7 +5,7 @@ milestone_name: SIMD-First Performance
 status: ready_to_plan
 stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
 last_updated: 2026-07-30T12:04:30Z
-last_activity: 2026-07-30 - Completed quick task 260730-kny: Hardened the NOTICE version guard for effective replacements, full-file drift, escaped diagnostics, and explicit CI gating
+last_activity: 2026-07-31 - Completed quick task 260731-f4d: Added make bench / make bench-phase20 targets (issue #42)
 progress:
   total_phases: 8
   completed_phases: 3
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci)
 Plan: Not started
 Status: Ready to discuss
-Last activity: 2026-07-31 - Completed quick task 260731-e8d: Closed the last two version-drift gaps on PR #51 — replace-aware CI bootstrap derivation and derived (no longer hardcoded) versions in the NOTICE guard tests
+Last activity: 2026-07-31 - Completed quick task 260731-f4d: Added make bench / make bench-phase20 targets (issue #42)
 
 Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
 
@@ -166,6 +166,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260730-pcc | NOTICE guard polish: drop brittle bytewise-locale source assertion, document single-attribution scan constraint, narrow failure dump to relevant lines | 2026-07-30 | 4f69414 | Verified | [260730-pcc-polish-notice-version-guard-drop-brittle](./quick/260730-pcc-polish-notice-version-guard-drop-brittle/) |
 | 260730-fast2 | Remove the staticcheck QF1001 finding this branch introduced (De Morgan rewrite of the CI step-order assertion) | 2026-07-30 | 028c6b8 | Verified | _(fast task — no plan dir)_ |
 | 260731-e8d | PR #51 review: honor go.mod `replace` in the CI bootstrap version derivation, and derive the expected version in the NOTICE guard tests instead of hardcoding v0.1.7 | 2026-07-31 | 48ac6d8 | Verified | [260731-e8d-address-pr-51-review-honor-go-mod-replac](./quick/260731-e8d-address-pr-51-review-honor-go-mod-replac/) |
+| 260731-f4d | Resolve issue #42: add `make bench` and `make bench-phase20` targets with overridable BENCHTIME/COUNT, documented in `make help` | 2026-07-31 | 22c7dca |  | [260731-f4d-bld-add-make-bench-target-for-phase-20-a](./quick/260731-f4d-bld-add-make-bench-target-for-phase-20-a/) |
 
 ## Deferred Items
 
