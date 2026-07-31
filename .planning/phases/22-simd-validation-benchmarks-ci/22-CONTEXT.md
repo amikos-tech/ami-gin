@@ -28,6 +28,12 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
 - `parser_stdlib.go` is **untagged**, so under `-tags simdjson` both parsers are in scope in one binary. `parser_simd_integration_test.go:216` already compares `stdlibParser{}` against a SIMD parser in a single tagged file. There is no need for two-tag-set invocations anywhere in this phase.
 - Two live doc defects exist: `docs/simd-deployment.md:91` links to upstream **`/blob/main/docs/bootstrap.md`** while NOTICE.md pins every upstream link to the effective version tag (`/blob/v0.1.7/...` verified to resolve 200); and nothing fails if `docs/simd-deployment.md` is renamed while `parser_simd.go:43`'s `initializationContext` string keeps naming it.
 
+**Pre-plan de-risking checks (2026-07-31) — these questions are CLOSED, do not re-investigate:**
+- **All five v0.1.7 release assets exist**, each with `.sig` + `.pem` alongside a signed `SHA256SUMS`: `libpure_simdjson-{darwin-amd64.dylib, darwin-arm64.dylib, linux-amd64.so, linux-arm64.so}` and `pure_simdjson-windows-amd64-msvc.dll`. D-05's platform set is asset-backed at the current pin; no leg is aspirational.
+- **Upstream already validates the identical runner matrix nightly.** `pure-simdjson`'s `public-bootstrap-validation.yml` (cron `23 6 * * *`, `fail-fast: false`) runs exactly `ubuntu-latest` / `ubuntu-24.04-arm` / `macos-15-intel` / `macos-15` / `windows-latest` — the same five labels D-05 locks — and the last three scheduled runs (2026-07-29, 07-30, 07-31) were all green. This is independent confirmation that the labels are current and that bootstrap + native load work on all five. **Residual risk is only whether ami-gin's own tagged suite passes there, which is precisely what D-05's advisory tier absorbs — this does NOT need a spike.**
+- **Every sentinel D-07 needs is exported by upstream**, and more besides: `ErrCPUUnsupported`, `ErrABIVersionMismatch`, `ErrChecksumMismatch`, `ErrAllSourcesFailed`, plus `ErrClosed`, `ErrParserBusy`, `ErrInvalidHandle`, `ErrDepthLimitExceeded`, `ErrCapacityLimitExceeded`, `ErrPrecisionLoss`, `ErrNumberOutOfRange`, `ErrWrongType`, `ErrPanic`, `ErrInternal`.
+- **D-15's source-of-truth path is reachable.** `go list -m -f '{{.Dir}}'` resolves to the read-only module cache and all four env-var constants are present there. Upstream is on `github.com/ebitengine/purego v0.10.0` and ships a `library_windows.go`, so the Windows loader is a first-class upstream path rather than an untested edge.
+
 </domain>
 
 <decisions>
@@ -48,6 +54,12 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
   - Real discovery is manual: `go test -tags simdjson -fuzz=FuzzParserParity`. Any crasher found gets promoted into the committed seed corpus so it becomes a permanent regression.
   - **Rationale:** matches the closest ecosystem precedent — minio/simdjson-go verifies `encoding/json` parity by differential fuzzing rather than goldens. D-01 closes SC#1; D-02 buys discovery of divergences nobody thought to author.
 
+- **D-02a: MANDATORY input guard — skip inputs with array nesting depth > 8 or length > 4096 bytes.** Not optional and not a nicety. Spike 002 (Q5) proved `stageMaterializedValue` is **O(2^depth)** for nested arrays on *both* parser arms, because `builder.go:619-627` recurses twice per element (once as `[i]`, once as `[*]`). A 37-byte depth-18 input costs >3 s of CPU. Without the guard the fuzzer appears to hang; with a loose guard it silently under-fuzzes — measured A/B: depth 12 sat at 0 execs/sec for 30 of 60 seconds and found 21 new interesting inputs, while depth 8 found **85** in 45 seconds.
+
+- **D-02b: The harness reuses ONE parser and needs no poisoned-parser recovery logic.** Construct before `f.Fuzz`, close in `f.Cleanup`. Spike 002 established: (a) the builder's tragic path requires a native *document-close* failure (`parser_simd.go:133-162`), which is unreachable from public-API input and already covered by Phase 21's injected-fake lifecycle tests — 88 swept inputs poisoned nothing; (b) one parser survived 25,200 builder cycles with zero drift, zero failures, and no `PURE_SIMDJSON_WARN_LEAKS` warnings; (c) per-iteration construction also works (~1.1 µs warm, 5,581 full cycles/sec) but buys nothing.
+
+- **D-02c: Classify differential outcomes three ways.** Both arms ingest → assert byte equality; a mismatch is the Phase 19 **HARD stop**. Exactly one ingests → the D-04 documented-exclusion class; record, do not fail. Both reject → agreement. Spike 002's deterministic run over 88 seeds + adversarial inputs returned `agree=88, asymmetry=0, byteDivergence=0`, and ~361,000 fuzz executions produced zero crashers — **day-one expectation is zero divergences**, consistent with this phase pinning a passing invariant.
+
 - **D-03: Do NOT extend the golden corpus to Phase 20 data.** Rejected: +~42 KB of incompressible binary (4.2× the current ~10 KB corpus), and a double-regeneration coupling where re-running `testdata/phase20/generate.go` silently invalidates the goldens. It also would not remove the need for a differential.
 
 - **D-04: The surviving stdlib/SIMD divergence is asserted explicitly, not scoped out.** After `routeSIMDWellFormedFallback`, the only divergence is **failure-layer attribution on malformed documents** (`1e400 garbage` → stdlib reports numeric-layer soft-skip, SIMD reports a parser-layer error). It does not affect encoded bytes — both leave the builder uncommitted — and it is already pinned by `TestSIMDParserMalformedTrailingNumericKnownPolicyAsymmetry` (`parser_simd_integration_test.go:378`). No Phase 20 document triggers it (a scan found only `±9223372036854775807` and `9007199254740993`, all in range).
@@ -61,7 +73,7 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
   - **Advisory (`continue-on-error: true`):** `linux/arm64` (`ubuntu-24.04-arm`), `darwin/amd64` (`macos-15-intel`), `windows/amd64` (`windows-latest`).
   - `fail-fast: false`.
   - **Rationale:** this encodes Phase 19's SOFT stop directly in YAML — a single-platform failure is demoted to tier 2 rather than blocking merge, which is exactly what the stop table prescribes. All five runner types are free and unmetered on public repos, so cost is not the constraint; flake-per-PR vs trust-per-PR is. The B+C hybrid (adding a nightly full run) was offered and declined.
-  - **Runner labels are pinned deliberately:** `macos-13` was retired 2025-12-04, so darwin/amd64 must use `macos-15-intel`; `macos-latest` flips to `macos-26` between 2026-06-15 and 2026-07-15, so darwin/arm64 pins `macos-15` rather than `macos-latest`.
+  - **Runner labels are pinned deliberately:** `macos-13` was retired 2025-12-04, so darwin/amd64 must use `macos-15-intel`; `macos-latest` flips to `macos-26` between 2026-06-15 and 2026-07-15, so darwin/arm64 pins `macos-15` rather than `macos-latest`. **These exact five labels are what upstream's own nightly `public-bootstrap-validation.yml` uses, green as of 2026-07-31** — copy that matrix's label choices rather than re-deriving them.
   - **`darwin/amd64` is documented tier 2 from day one** on the strength of the Aug 2027 Intel-macOS sunset alone.
   - **Accepted risk:** advisory legs can rot unnoticed (yellow-check blindness). Accepted deliberately; no nightly notifier in this phase.
 
@@ -69,7 +81,7 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
 
 - **D-07: Three-state skip/fail guard — this is what SIMD-10 actually requires.** One test helper:
   1. `runtime.GOOS/GOARCH` outside the locked 5 → `t.Skip("pure-simdjson unsupported platform")`.
-  2. Supported platform **and** the CI-only required-flag env var is set → `NewSIMDParser()` failure is `t.Fatal`, with `errors.Is` against upstream sentinels (`ErrCPUUnsupported`, `ErrABIVersionMismatch`, `ErrChecksumMismatch`, `ErrAllSourcesFailed`) surfaced in the failure message.
+  2. Supported platform **and** the CI-only required-flag env var is set → `NewSIMDParser()` failure is `t.Fatal`, with `errors.Is` against upstream sentinels surfaced in the failure message. **Verified exported, use this set:** `ErrCPUUnsupported`, `ErrABIVersionMismatch`, `ErrChecksumMismatch`, `ErrAllSourcesFailed`, and additionally `ErrInvalidHandle` and `ErrClosed` (both diagnostic of a load that half-succeeded).
   3. Supported platform without the flag (local dev, air-gapped) → `t.Skip` with the remediation string.
   - This makes "unsupported platform" a legitimate skip and "supported platform but library failed to load" a hard fail, and makes it impossible for CI to go green by skipping everything.
 
@@ -132,6 +144,11 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
 - `.planning/ROADMAP.md` §Phase 22 — goal + 4 success criteria
 - `.planning/REQUIREMENTS.md` §SIMD Implementation — SIMD-08, SIMD-09, SIMD-10, SIMD-11 definitions
 - `.planning/PROJECT.md` §Project Priorities — correctness → usefulness → performance; perf items gated by profiling data (999.5 precedent)
+
+### De-risking evidence — Spike 002 (empirical; read BEFORE implementing D-02)
+- `.planning/spikes/002-simd-differential-fuzz-harness/README.md` — measured answers for parser construction cost, poisoned-builder reachability, handle stability across 25,200 cycles, day-one divergence yield (~361k execs, zero crashers), and the unplanned O(2^depth) array-nesting finding with a full depth/time table. Drives D-02a / D-02b / D-02c.
+- `.planning/spikes/MANIFEST.md` §From Spike 002 — the five requirements that emerged.
+- `.planning/spikes/002-simd-differential-fuzz-harness/harness_test.go` — reference shape for the three-way outcome classification and the `arrayNestingDepth` guard helper.
 
 ### Load-bearing prior-phase decisions (locked — do NOT reopen)
 - `.planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` — platform set, asset labels, cache-key pattern (version literal superseded, see D-08), upstream-ownership boundary, stop table, Phase 22 contract
@@ -233,6 +250,7 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
 - **Promoting `darwin/amd64` out of tier 2** — moot; Intel macOS on GitHub Actions sunsets Aug 2027.
 - **Full documented-recipe CI matrix** (mirror, `DISABLE_GH_FALLBACK`, checksum) — out of scope per the Phase 19 ownership boundary. Belongs upstream in `pure-simdjson`.
 - **CLI `--parser=simd` flag** — still deferred from Phase 21 D-04; revisit with backlog Phase 999.7 (SIMD activation UX).
+- **O(2^depth) array-nesting cost in `stageMaterializedValue`** — discovered by Spike 002 (Q5). `builder.go:619-627` recurses twice per array element (`[i]` and `[*]`), so nested arrays cost 2^depth on the **default** path; a 37-byte depth-18 document burns >3 s of CPU. **Explicitly NOT Phase 22 work** — both parser arms behave identically, so parity (the thing Phase 22 must prove) is unaffected, and absorbing it would be scope creep into an evidence phase. It is an untrusted-input robustness concern for the default ingest path and deserves its own backlog item; the repo already has `serialize_security_test.go` and `security.yml` as precedent for that kind of hardening. Phase 22 only inherits the D-02a input guard.
 
 </deferred>
 
