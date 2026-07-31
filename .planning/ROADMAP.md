@@ -128,7 +128,40 @@ Plans:
 3. CI covers default builds and `-tags simdjson` builds with explicit skip/fail behavior when platform or shared-library requirements are unmet.
 4. Runtime loading and release/distribution guidance explains how consumers enable SIMD without guesswork.
 
-**Plans:** TBD
+**Plans:** 0/8 plans executed
+
+Plans:
+**Wave 1**
+
+- [ ] 22-01-PLAN.md — Clear package-provenance gates for native SIMD and benchmark tooling
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 22-02-PLAN.md — Hard-gate encoded-index and query parity across authored and Phase 20 fixtures
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 22-03-PLAN.md — Add bounded differential fuzzing without deep-array CPU exhaustion
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
+- [ ] 22-04-PLAN.md — Make SIMD consumer and release guidance executable and drift-checked
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
+- [ ] 22-05-PLAN.md — Benchmark stdlib versus SIMD typed-sink ingest on realistic fixtures
+
+**Wave 6** *(blocked on Wave 5 completion)*
+
+- [ ] 22-07-PLAN.md — Enforce five-platform CI, explicit-path loading, and advisory trend artifacts
+
+**Wave 7** *(blocked on Wave 6 completion)*
+
+- [ ] 22-06-PLAN.md — Capture controlled benchmark results and produce the SIMD shipping recommendation
+
+**Wave 8** *(blocked on Wave 7 completion)*
+
+- [ ] 22-08-PLAN.md — Verify merge-rule bindings and approve controlled performance evidence
 
 ### Phase 23: Row-Level Pruning Positioning
 
@@ -190,7 +223,7 @@ Plans:
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 5/5 | Complete    | 2026-07-23 |
-| 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/- | Planned | - |
+| 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/8 | Planned    |  |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
 | 25. Follow-On Profiling & Measurement-Backed Optimizations | v1.3 | 0/- | Planned | - |

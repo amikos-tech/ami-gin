@@ -570,17 +570,19 @@ Use the existing split module-path constant so the untagged guard does not itsel
 
 All external package recommendations remain explicitly flagged by the slopcheck audit rather than hidden as assumptions. [VERIFIED: slopcheck 0.6.1]
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Are the two required matrix check names configured as required external status checks?**
    - What we know: YAML can make failures hard or advisory, but repository rulesets separately control merge blocking. [CITED: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets]
    - What's unclear: that external configuration is not represented in this worktree. [VERIFIED: codebase grep]
    - Recommendation: after stable job names land, add a human checkpoint to require only `linux/amd64` and `darwin/arm64`; do not alter external settings without explicit authority. [CITED: https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/troubleshooting-rules]
+   - **RESOLVED — Plan 22-08:** the final read-only human checkpoint inspects a completed five-leg run and the external required-status-check/ruleset configuration, confirms only the two required-tier names block merge, and pauses on mismatch without mutating external settings.
 
 2. **Do maintainers accept the two slopcheck-SUS modules for this evidence run?**
    - What we know: `pure-simdjson` is already pinned with a verified Git origin, and the selected `x/perf` pseudo-version resolves to the official Go source origin. [VERIFIED: `go.mod`; VERIFIED: `go list -m -json`]
    - What's unclear: slopcheck reports both as suspicious because of apparent age/source metadata. [VERIFIED: slopcheck 0.6.1]
    - Recommendation: planner inserts the required human-verification checkpoints; no alternative dependency is needed. [VERIFIED: package legitimacy protocol]
+   - **RESOLVED — Plan 22-01:** two blocking-human provenance checkpoints approve or reject the pinned `pure-simdjson` module and exact `x/perf` pseudo-version before tagged SIMD evidence or benchstat execution; no alternative or persistent dependency is introduced.
 
 No implementation-design ambiguity remains after those procedural checkpoints. [VERIFIED: `22-CONTEXT.md`]
 
