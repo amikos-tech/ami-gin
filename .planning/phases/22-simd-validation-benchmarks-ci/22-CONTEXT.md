@@ -104,6 +104,23 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
   - Make target follows the `bench-phase20` precedent: scope with `-bench '^BenchmarkSIMD...$'` and add `-tags simdjson`. A bare `-bench .` under the tag would drag in the entire ~141 KB suite.
   - `COUNT ?= 1` stays the Makefile default; override to `COUNT=10` or higher when producing the committed snapshot.
 
+- **D-20: The one-shared-SIMD-parser benchmark lifecycle is confirmed unbiased — keep it (Spike 003).** The cross-AI review raised that reusing one parser across fixtures, while the stdlib arm has no persistent state, could skew per-fixture evidence with no D-12 threshold to catch it. Measured and disproven on all four smoke fixtures:
+  - **No order dependence** — a fixture measured first (fresh parser) vs. last (after three others) differs by ≤0.9% `ns/op` and 0.0% `B/op`/`allocs/op`.
+  - **No lifecycle difference** — shared vs. fresh-per-fixture is within ±2.5% across 20 paired runs; `NewSIMDParser`+`Close` costs 828 ns/op, four orders of magnitude below the ingest deltas.
+  - **Comparison is fair** — both arms produce byte-identical encoded indexes on every fixture.
+  - Consequence: **no change to the benchmark structure.** Cite this evidence rather than re-litigating the lifecycle.
+
+- **D-21: Evidence must state metric semantics explicitly — steady-state, and Go-heap-only `B/op` (Spike 003).** Two labelling obligations on D-10's documents, both measured rather than assumed:
+  - **Steady-state, not cold.** `testing`'s chosen `b.N` lands at 61–312 for these fixtures, and first-iteration cost is not measurable above ±12% run-to-run noise. Every committed number is already a steady-state number; say so rather than leaving it ambiguous.
+  - **`B/op` counts the Go heap only.** pure-simdjson's parser buffers live in native memory reached through purego, and the exported `Parser` surface (`Parse`/`Close`) exposes no native telemetry — upstream's `NativeAllocStats*` is package-internal. A favourable `B/op` must never be reported as a total-memory win. (Moot for the headline here — SIMD uses *more* Go heap — but the caveat must survive into the document.)
+
+- **D-22: A single-run benchmark number is never authoritative (Spike 003).** A `COUNT=1` run produced a **3× wrong** result in one measured session, later collapsed to ±2.5% by 5 repeats × 4 fixtures. This makes two existing choices load-bearing rather than ceremonial: D-14's `COUNT=10` override for the committed snapshot, and D-11's "shared-runner-noisy, trend only" disclaimer. Neither may be relaxed for convenience.
+
+- **D-23: The ship/defer/narrow recommendation must be authored neutrally — the measured prior is that SIMD loses.** On the Phase 20 smoke tier, SIMD is **1.45×–1.84× slower** than stdlib and allocates **18–36% more Go heap** on byte-identical output. A document-size sweep from 265 B to 262 KB found **no crossover** (1.24×–1.51× throughout), so this is not a small-record artifact. Consequences:
+  - D-10's report template must not presuppose a speedup, and D-04's public guidance must claim no performance benefit that Plan 22-06 has not measured.
+  - This is what PROJECT.md's correctness → usefulness → performance ordering is for: parity holding while performance does not is an acceptable, publishable outcome.
+  - **Backlog, not Phase 22:** *why* SIMD is slower is uninstrumented. The per-scalar-FFI-crossing theory fits the evidence (cost tracks total volume, not document count) but confirming it needs the internal `NativeAllocStats` API or a profile.
+
 ### SIMD-11 Guidance Verification (SC#4)
 
 - **D-15: Doc-drift guard is the primary artifact — a make target + Go test extending the `check-notice-version` precedent.** Asserts, against machine-readable sources of truth already on disk:
@@ -149,6 +166,12 @@ This phase produces **evidence and enforcement infrastructure**. It does NOT cha
 - `.planning/spikes/002-simd-differential-fuzz-harness/README.md` — measured answers for parser construction cost, poisoned-builder reachability, handle stability across 25,200 cycles, day-one divergence yield (~361k execs, zero crashers), and the unplanned O(2^depth) array-nesting finding with a full depth/time table. Drives D-02a / D-02b / D-02c.
 - `.planning/spikes/MANIFEST.md` §From Spike 002 — the five requirements that emerged.
 - `.planning/spikes/002-simd-differential-fuzz-harness/harness_test.go` — reference shape for the three-way outcome classification and the `arrayNestingDepth` guard helper.
+
+### De-risking evidence — Spike 003 (empirical; read BEFORE implementing D-09/D-10)
+- `.planning/spikes/003-simd-benchmark-parser-reuse/README.md` — measured answers for benchmark parser-lifecycle bias (none), order dependence (none), cold-vs-steady-state (steady-state already), the document-size crossover sweep (no crossover), and the headline stdlib-vs-SIMD deltas. Drives D-20 / D-21 / D-22 / D-23.
+- `.planning/spikes/MANIFEST.md` §From Spike 003 — the six requirements that emerged.
+- `.planning/spikes/003-simd-benchmark-parser-reuse/harness_test.go` — public-API mirror of `phase20BuildBenchmarkIndex`/`phase20LoadRawJSONL`, and the reason package-internal `_test.go` helpers cannot be imported by an isolated module.
+- `.planning/spikes/003-simd-benchmark-parser-reuse/validity_test.go` — the byte-identical-across-arms guard that makes any performance delta trustworthy.
 
 ### Load-bearing prior-phase decisions (locked — do NOT reopen)
 - `.planning/phases/19-simd-dependency-decision-integration-strategy/19-SIMD-STRATEGY.md` — platform set, asset labels, cache-key pattern (version literal superseded, see D-08), upstream-ownership boundary, stop table, Phase 22 contract
