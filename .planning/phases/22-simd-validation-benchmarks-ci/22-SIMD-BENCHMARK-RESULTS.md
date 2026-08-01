@@ -222,4 +222,3 @@ geomean                                                             64.33k      
 ```
 
 No regression threshold or performance gate is defined by this evidence.
-
