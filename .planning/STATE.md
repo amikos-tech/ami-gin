@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Completed 22-07-PLAN.md
-last_updated: "2026-08-01T09:55:33.296Z"
+stopped_at: Completed 22-06-PLAN.md
+last_updated: "2026-08-01T10:12:11.503Z"
 last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 14
+  completed_plans: 15
   percent: 38
 ---
 
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 7 of 8
+Plan: 8 of 8
 Status: Ready to execute
 Last activity: 2026-08-01
 
-Progress: [█████████░] 88%
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -67,6 +67,7 @@ Progress: [█████████░] 88%
 | Phase 22 P04 | 9 min | 2 tasks | 5 files |
 | Phase 22 P05 | 8 min | 2 tasks | 2 files |
 | Phase 22 P07 | 9 min | 2 tasks | 3 files |
+| Phase 22 P06 | 12 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -116,6 +117,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - [Phase 22]: Required-host enforcement and leak warnings stay job-wide, while runner-derived cache paths are step-local. — GitHub Actions does not expose the runner context to job-level env.
 - [Phase 22]: workflow_dispatch intentionally runs every CI job; the non-gating SIMD trend job is separately event-guarded. — GitHub dispatch is workflow-scoped, while the trend artifact must run only on dispatch or push-main.
 - [Phase 22]: Explicit-path parity reuses one validated effective-version cache file. — The focused second pass proves local loading without adding a downstream download or bootstrap path.
+- [Phase 22]: Defer the SIMD path as a shippable v1.3 performance option — Controlled parity passed, but all four smoke fixtures favored stdlib for time, throughput, Go-heap bytes, and allocations.
+- [Phase 22]: Treat committed COUNT=10 evidence as authoritative without a performance threshold — Single-run and shared-runner output are noisy trend evidence only.
 
 ### Roadmap Evolution
 
@@ -210,8 +213,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-08-01T09:55:33.289Z
-Stopped at: Completed 22-07-PLAN.md
+Last session: 2026-08-01T10:11:51.812Z
+Stopped at: Completed 22-06-PLAN.md
 Resume file: None
 
-**Next step:** Execute Phase 22 Plan 06.
+**Next step:** Execute Phase 22 Plan 08.
