@@ -25,7 +25,7 @@ release:
     {{- else -}}
     GIN Index {{ .Tag }} release.
 
-    This release continues the library-first module surface and the current adopter guidance. See README for installation, examples, and known limitations.
+    This release continues the library-first module surface and the current adopter guidance. The optional SIMD parser requires an opt-in build tag and a native dependency; see https://github.com/amikos-tech/ami-gin/blob/{{ .Tag }}/docs/simd-deployment.md for loading and ownership guidance. See README for installation, examples, and known limitations.
     {{- end }}
 
 changelog:
