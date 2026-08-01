@@ -5,14 +5,282 @@ package gin
 import (
 	stderrors "errors"
 	"fmt"
+	"go/ast"
+	"go/doc"
+	goparser "go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	purejson "github.com/amikos-tech/pure-simdjson"
 	"github.com/pkg/errors"
 )
+
+const simdRequiredEnv = "AMI_GIN_SIMD_REQUIRED"
+
+type simdLoadErrorClass string
+
+const (
+	simdLoadCPUUnsupported     simdLoadErrorClass = "cpu-unsupported"
+	simdLoadABIVersionMismatch simdLoadErrorClass = "abi-version-mismatch"
+	simdLoadChecksumMismatch   simdLoadErrorClass = "checksum-mismatch"
+	simdLoadAllSourcesFailed   simdLoadErrorClass = "all-sources-failed"
+	simdLoadInvalidHandle      simdLoadErrorClass = "invalid-handle"
+	simdLoadClosed             simdLoadErrorClass = "closed"
+	simdLoadUnknown            simdLoadErrorClass = "unknown"
+)
+
+type simdConstructionAction string
+
+const (
+	simdConstructionUseParser        simdConstructionAction = "use-parser"
+	simdConstructionSkipUnsupported  simdConstructionAction = "skip-unsupported"
+	simdConstructionSkipUnavailable  simdConstructionAction = "skip-unavailable"
+	simdConstructionFatalUnavailable simdConstructionAction = "fatal-unavailable"
+)
+
+type simdTestTB interface {
+	Helper()
+	Cleanup(func())
+	Skip(...any)
+	Skipf(string, ...any)
+	Fatalf(string, ...any)
+	Errorf(string, ...any)
+}
+
+func supportedSIMDPlatform(goos, goarch string) bool {
+	switch goos + "/" + goarch {
+	case "linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64":
+		return true
+	default:
+		return false
+	}
+}
+
+func classifySIMDLoadError(err error) simdLoadErrorClass {
+	switch {
+	case stderrors.Is(err, purejson.ErrCPUUnsupported):
+		return simdLoadCPUUnsupported
+	case stderrors.Is(err, purejson.ErrABIVersionMismatch):
+		return simdLoadABIVersionMismatch
+	case stderrors.Is(err, purejson.ErrChecksumMismatch):
+		return simdLoadChecksumMismatch
+	case stderrors.Is(err, purejson.ErrAllSourcesFailed):
+		return simdLoadAllSourcesFailed
+	case stderrors.Is(err, purejson.ErrInvalidHandle):
+		return simdLoadInvalidHandle
+	case stderrors.Is(err, purejson.ErrClosed):
+		return simdLoadClosed
+	default:
+		return simdLoadUnknown
+	}
+}
+
+func simdConstructionPolicy(
+	goos string,
+	goarch string,
+	required bool,
+	constructionErr error,
+) simdConstructionAction {
+	if !supportedSIMDPlatform(goos, goarch) {
+		return simdConstructionSkipUnsupported
+	}
+	if constructionErr == nil {
+		return simdConstructionUseParser
+	}
+	if required {
+		return simdConstructionFatalUnavailable
+	}
+	return simdConstructionSkipUnavailable
+}
+
+func newTestSIMDParserWith(
+	tb simdTestTB,
+	goos string,
+	goarch string,
+	required bool,
+	construct func() (CloseableParser, error),
+) CloseableParser {
+	tb.Helper()
+	if simdConstructionPolicy(goos, goarch, required, nil) == simdConstructionSkipUnsupported {
+		tb.Skip("pure-simdjson unsupported platform")
+		return nil
+	}
+
+	parser, err := construct()
+	switch simdConstructionPolicy(goos, goarch, required, err) {
+	case simdConstructionSkipUnavailable:
+		tb.Skipf("pure-simdjson unavailable locally: %v; see docs/simd-deployment.md", err)
+		return nil
+	case simdConstructionFatalUnavailable:
+		tb.Fatalf(
+			"pure-simdjson required on %s/%s: class=%s: %v",
+			goos,
+			goarch,
+			classifySIMDLoadError(err),
+			err,
+		)
+		return nil
+	}
+
+	tb.Cleanup(func() {
+		if err := parser.Close(); err != nil {
+			tb.Errorf("Close SIMD parser: %v", err)
+		}
+	})
+	return parser
+}
+
+func newTestSIMDParser(tb testing.TB) CloseableParser {
+	tb.Helper()
+	return newTestSIMDParserWith(
+		tb,
+		runtime.GOOS,
+		runtime.GOARCH,
+		os.Getenv(simdRequiredEnv) == "1",
+		func() (CloseableParser, error) {
+			return NewSIMDParser()
+		},
+	)
+}
+
+type simdConstructorCall struct {
+	file      string
+	function  string
+	qualified bool
+	position  token.Position
+}
+
+func validateSIMDConstructorCalls(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return errors.Wrap(err, "read SIMD test directory")
+	}
+
+	fset := token.NewFileSet()
+	var helperCalls int
+	var exampleCalls int
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return errors.Wrapf(err, "read %s", name)
+		}
+		firstLine, _, _ := strings.Cut(string(source), "\n")
+		if firstLine != "//go:build simdjson" {
+			continue
+		}
+
+		file, err := goparser.ParseFile(fset, path, source, goparser.ParseComments)
+		if err != nil {
+			return errors.Wrapf(err, "parse %s", name)
+		}
+		hasExampleDirective, exampleFound := simdExampleOutputPolicy(file)
+		for _, call := range simdRawConstructorCalls(fset, name, file) {
+			switch {
+			case name == "parser_simd_integration_test.go" &&
+				file.Name.Name == "gin" &&
+				call.function == "newTestSIMDParser" &&
+				!call.qualified:
+				helperCalls++
+			case name == "simd_example_test.go" &&
+				file.Name.Name == "gin_test" &&
+				call.function == "ExampleNewSIMDParser" &&
+				call.qualified:
+				if !exampleFound {
+					return errors.Errorf("%s:%s: ExampleNewSIMDParser is not recognized by go/doc", call.file, call.function)
+				}
+				if hasExampleDirective {
+					return errors.Errorf("%s:%s: constructor Example has an output directive", call.file, call.function)
+				}
+				exampleCalls++
+			default:
+				return errors.Errorf(
+					"%s:%d:%s: raw NewSIMDParser call bypasses newTestSIMDParser",
+					call.file,
+					call.position.Line,
+					call.function,
+				)
+			}
+		}
+	}
+
+	if helperCalls != 1 {
+		return errors.Errorf("raw NewSIMDParser helper calls = %d, want exactly 1", helperCalls)
+	}
+	if exampleCalls > 1 {
+		return errors.Errorf("compile-only ExampleNewSIMDParser calls = %d, want at most 1", exampleCalls)
+	}
+	return nil
+}
+
+func simdRawConstructorCalls(
+	fset *token.FileSet,
+	name string,
+	file *ast.File,
+) []simdConstructorCall {
+	funcs := make([]*ast.FuncDecl, 0)
+	for _, declaration := range file.Decls {
+		if function, ok := declaration.(*ast.FuncDecl); ok {
+			funcs = append(funcs, function)
+		}
+	}
+
+	var calls []simdConstructorCall
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		qualified := false
+		var finalName string
+		switch callee := call.Fun.(type) {
+		case *ast.Ident:
+			finalName = callee.Name
+		case *ast.SelectorExpr:
+			finalName = callee.Sel.Name
+			qualified = true
+		default:
+			return true
+		}
+		if finalName != "NewSIMDParser" {
+			return true
+		}
+
+		functionName := "<package>"
+		for _, function := range funcs {
+			if function.Pos() <= call.Pos() && call.End() <= function.End() {
+				functionName = function.Name.Name
+				break
+			}
+		}
+		calls = append(calls, simdConstructorCall{
+			file:      name,
+			function:  functionName,
+			qualified: qualified,
+			position:  fset.Position(call.Pos()),
+		})
+		return true
+	})
+	return calls
+}
+
+func simdExampleOutputPolicy(file *ast.File) (hasDirective bool, found bool) {
+	for _, example := range doc.Examples(file) {
+		if example.Name != "NewSIMDParser" {
+			continue
+		}
+		return example.Output != "" || example.Unordered || example.EmptyOutput, true
+	}
+	return false, false
+}
 
 func TestSupportedSIMDPlatform(t *testing.T) {
 	tests := []struct {
@@ -262,20 +530,6 @@ func ExampleNewSIMDParser() {
 			t.Fatalf("empty-output example error = %v, want output-directive diagnostic", err)
 		}
 	})
-}
-
-func newTestSIMDParser(t *testing.T) CloseableParser {
-	t.Helper()
-	parser, err := NewSIMDParser()
-	if err != nil {
-		t.Fatalf("NewSIMDParser: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := parser.Close(); err != nil {
-			t.Errorf("Close SIMD parser: %v", err)
-		}
-	})
-	return parser
 }
 
 func TestSIMDParserGoldenAuthoredFixtures(t *testing.T) {
@@ -688,10 +942,7 @@ func TestSIMDParserMalformedJSONStillUsesParserPolicy(t *testing.T) {
 }
 
 func TestSIMDParserCloseIsIdempotent(t *testing.T) {
-	parser, err := NewSIMDParser()
-	if err != nil {
-		t.Fatalf("NewSIMDParser: %v", err)
-	}
+	parser := newTestSIMDParser(t)
 	if err := parser.Close(); err != nil {
 		t.Fatalf("first Close: %v", err)
 	}
@@ -701,10 +952,7 @@ func TestSIMDParserCloseIsIdempotent(t *testing.T) {
 }
 
 func TestSIMDParserCloseErrorPropagatesWhenParserBusy(t *testing.T) {
-	cp, err := NewSIMDParser()
-	if err != nil {
-		t.Fatalf("NewSIMDParser: %v", err)
-	}
+	cp := newTestSIMDParser(t)
 	sp, ok := cp.(*simdParser)
 	if !ok {
 		t.Fatalf("NewSIMDParser() = %T, want *simdParser", cp)
@@ -735,10 +983,7 @@ func TestSIMDParserCloseErrorPropagatesWhenParserBusy(t *testing.T) {
 }
 
 func TestSIMDParserParseAfterExternalCloseReturnsUsableBuilderError(t *testing.T) {
-	parser, err := NewSIMDParser()
-	if err != nil {
-		t.Fatalf("NewSIMDParser: %v", err)
-	}
+	parser := newTestSIMDParser(t)
 	if err := parser.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
