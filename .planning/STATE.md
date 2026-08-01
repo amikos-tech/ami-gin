@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Completed 22-04-PLAN.md
-last_updated: "2026-08-01T09:28:31.153Z"
+stopped_at: Completed 22-05-PLAN.md
+last_updated: "2026-08-01T09:41:58.481Z"
 last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 12
-  percent: 75
+  completed_plans: 13
+  percent: 38
 ---
 
 # Project State
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 5 of 8
+Plan: 6 of 8
 Status: Ready to execute
 Last activity: 2026-08-01
 
-Progress: [████████░░] 75%
+Progress: [████████░░] 81%
 
 ## Performance Metrics
 
@@ -65,6 +65,7 @@ Progress: [████████░░] 75%
 | Phase 22 P02 | 10 min | 2 tasks | 5 files |
 | Phase 22 P03 | 8 min | 2 tasks | 6 files |
 | Phase 22 P04 | 9 min | 2 tasks | 5 files |
+| Phase 22 P05 | 8 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - [Phase 22]: SIMD documentation contract derives effective module version and directory through go list — Honors versioned replacements and rejects unversioned local replacements before forming pinned links
 - [Phase 22]: Tagged public SIMD Example remains compile-only without an output directive — Compiles constructor ownership and cleanup without loading the native library
 - [Phase 22]: SIMD platform guidance records the configured two-required and three-advisory policy pending remote evidence — Avoids claiming a completed five-leg run and keeps parity qualified to documents without parser-layer errors
+- [Phase 22]: Paired SIMD ingest benchmarks select stdlib and one shared sequential SIMD parser through the same Phase 20 build helper. — Preserves identical configuration and row-group packing while honoring Spike 003's no-bias lifecycle evidence.
+- [Phase 22]: SIMD benchmark throughput counts input JSON document bytes and B/op is Go-heap-only. — Keeps throughput tied to ingest payload and avoids treating invisible native buffers as total-memory evidence.
+- [Phase 22]: The optional benchmark corpus remains a dedicated subtree behind the two Phase 20 SIMD variables. — Disabled external input cannot suppress offline smoke siblings or expand the existing loader boundary.
 
 ### Roadmap Evolution
 
@@ -202,8 +206,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-08-01T09:27:35.385Z
-Stopped at: Completed 22-04-PLAN.md
+Last session: 2026-08-01T09:41:58.473Z
+Stopped at: Completed 22-05-PLAN.md
 Resume file: None
 
 **Next step:** Execute Phase 22 Plan 05.
