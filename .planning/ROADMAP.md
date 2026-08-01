@@ -128,12 +128,12 @@ Plans:
 3. CI covers default builds and `-tags simdjson` builds with explicit skip/fail behavior when platform or shared-library requirements are unmet.
 4. Runtime loading and release/distribution guidance explains how consumers enable SIMD without guesswork.
 
-**Plans:** 0/8 plans executed
+**Plans:** 1/8 plans executed
 
 Plans:
 **Wave 1**
 
-- [ ] 22-01-PLAN.md — Clear package-provenance gates for native SIMD and benchmark tooling
+- [x] 22-01-PLAN.md — Clear package-provenance gates for native SIMD and benchmark tooling
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -223,7 +223,7 @@ Plans:
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 5/5 | Complete    | 2026-07-23 |
-| 22. SIMD Validation, Benchmarks & CI | v1.3 | 0/8 | Planned    |  |
+| 22. SIMD Validation, Benchmarks & CI | v1.3 | 1/8 | In Progress|  |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
 | 25. Follow-On Profiling & Measurement-Backed Optimizations | v1.3 | 0/- | Planned | - |

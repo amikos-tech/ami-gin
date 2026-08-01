@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Phase 22 context gathered
-last_updated: "2026-07-31T19:04:06.462Z"
-last_activity: 2026-07-31 -- Phase 22 planning complete
+stopped_at: Completed 22-01-PLAN.md
+last_updated: "2026-08-01T08:43:49.390Z"
+last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 8
+  completed_plans: 9
   percent: 38
 ---
 
@@ -25,12 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 ## Current Position
 
-Phase: 22 (simd-validation-benchmarks-ci)
-Plan: Not started
+Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
+Plan: 2 of 8
 Status: Ready to execute
-Last activity: 2026-07-31 -- Phase 22 planning complete
+Last activity: 2026-08-01
 
-Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
+Progress: [██████░░░░] 56%
 
 ## Performance Metrics
 
@@ -61,6 +61,7 @@ Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Ph
 | 18 | 4 | Complete (4/4 plans complete) |
 | Phase 21 P04 | 8 min | 2 tasks | 5 files |
 | Phase 21 P05 | 7 min | 1 tasks | 2 files |
+| Phase 22 P01 | 2 min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
 - [Phase 21]: Parser cleanup failures are terminal builder integrity failures, with cleanup and concurrent walk causes preserved as peer unwrap branches — Prevents soft mode from hiding a permanently busy native parser
 - [Phase 21]: Panic-aware SIMD cleanup preserves ordinary panic identity but routes failed close through terminal builder state — Prevents parser soft mode from hiding a busy native parser after caller recovery
+- [Phase 22]: Approved github.com/amikos-tech/pure-simdjson v0.1.7 for Phase 22 evidence — Human reviewed the public source/tag, MIT license, NOTICE posture, and accepted the non-SLOP provenance warning
+- [Phase 22]: Approved golang.org/x/perf@v0.0.0-20260709024250-82a0b07e230d for ephemeral benchstat analysis — Use only the exact pinned go run command; keep x/perf out of go.mod
 
 ### Roadmap Evolution
 
@@ -187,8 +190,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-31T13:37:24.140Z
-Stopped at: Phase 22 context gathered
-Resume file: .planning/phases/22-simd-validation-benchmarks-ci/22-CONTEXT.md
+Last session: 2026-08-01T08:42:18.817Z
+Stopped at: Completed 22-01-PLAN.md
+Resume file: None
 
-**Next step:** Discuss Phase 22 — run `$gsd-discuss-phase 22`.
+**Next step:** Execute Phase 22 Plan 02.
