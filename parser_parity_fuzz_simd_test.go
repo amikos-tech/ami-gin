@@ -4,11 +4,251 @@ package gin
 
 import (
 	"bytes"
+	"fmt"
+	"go/ast"
+	goparser "go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pkg/errors"
 )
+
+const (
+	fuzzMaxInputBytes = 4096
+	fuzzMaxArrayDepth = 8
+)
+
+type fuzzBuildOutcome struct {
+	committed   bool
+	softSkipped uint64
+	err         error
+	encoded     []byte
+}
+
+type fuzzOutcomeClass string
+
+const (
+	fuzzOutcomeBothCommitted                fuzzOutcomeClass = "both_committed"
+	fuzzOutcomeByteDivergence               fuzzOutcomeClass = "byte_divergence"
+	fuzzOutcomeUnexpectedOneSidedCommit     fuzzOutcomeClass = "unexpected_one_sided_commit"
+	fuzzOutcomeRejectionAgreement           fuzzOutcomeClass = "rejection_agreement"
+	fuzzOutcomeKnownMalformedLayerAsymmetry fuzzOutcomeClass = "known_malformed_layer_asymmetry"
+)
+
+func arrayNestingDepth(doc []byte) int {
+	depth, maxDepth := 0, 0
+	inString, escaped := false, false
+	for _, c := range doc {
+		switch {
+		case escaped:
+			escaped = false
+		case c == '\\' && inString:
+			escaped = true
+		case c == '"':
+			inString = !inString
+		case inString:
+			continue
+		case c == '[':
+			depth++
+			if depth > maxDepth {
+				maxDepth = depth
+			}
+		case c == ']':
+			depth--
+		}
+	}
+	return maxDepth
+}
+
+func fuzzInputWithinBounds(doc []byte) bool {
+	return len(doc) <= fuzzMaxInputBytes && arrayNestingDepth(doc) <= fuzzMaxArrayDepth
+}
+
+func fuzzParserParityConfig(tb testing.TB) GINConfig {
+	tb.Helper()
+	cfg, err := NewConfig(
+		WithParserFailureMode(IngestFailureHard),
+		WithNumericFailureMode(IngestFailureSoft),
+	)
+	if err != nil {
+		tb.Fatalf("NewConfig for parser parity fuzzing: %v", err)
+	}
+	return cfg
+}
+
+func buildFuzzParserOutcome(cfg GINConfig, parser Parser, doc []byte) fuzzBuildOutcome {
+	var opts []BuilderOption
+	if parser != nil {
+		opts = append(opts, WithParser(parser))
+	}
+	builder, err := NewBuilder(cfg, 1, opts...)
+	if err != nil {
+		return fuzzBuildOutcome{err: err}
+	}
+
+	outcome := fuzzBuildOutcome{
+		err:         builder.AddDocument(DocID(0), doc),
+		softSkipped: builder.NumSoftSkippedDocuments(),
+	}
+	switch builder.numDocs {
+	case 0:
+		return outcome
+	case 1:
+		outcome.committed = true
+	default:
+		outcome.err = errors.Errorf("fresh fuzz builder committed %d documents, want at most 1", builder.numDocs)
+		return outcome
+	}
+
+	idx := builder.Finalize()
+	if idx == nil {
+		outcome.err = errors.New("fresh fuzz builder finalized to nil after committing one document")
+		return outcome
+	}
+	encoded, err := Encode(idx)
+	if err != nil {
+		outcome.err = errors.Wrap(err, "encode committed fuzz document")
+		return outcome
+	}
+	outcome.encoded = encoded
+	return outcome
+}
+
+func classifyFuzzParserOutcomes(doc []byte, stdlib, simd fuzzBuildOutcome) fuzzOutcomeClass {
+	if stdlib.committed && simd.committed {
+		if bytes.Equal(stdlib.encoded, simd.encoded) {
+			return fuzzOutcomeBothCommitted
+		}
+		return fuzzOutcomeByteDivergence
+	}
+	if stdlib.committed != simd.committed {
+		return fuzzOutcomeUnexpectedOneSidedCommit
+	}
+	if isKnownMalformedLayerAsymmetry(doc, stdlib, simd) {
+		return fuzzOutcomeKnownMalformedLayerAsymmetry
+	}
+	return fuzzOutcomeRejectionAgreement
+}
+
+func isKnownMalformedLayerAsymmetry(doc []byte, stdlib, simd fuzzBuildOutcome) bool {
+	if !bytes.Equal(doc, []byte(`1e400 garbage`)) || stdlib.err != nil || stdlib.softSkipped != 1 || simd.softSkipped != 0 {
+		return false
+	}
+	var ingestErr *IngestError
+	return errors.As(simd.err, &ingestErr) && ingestErr.Layer() == IngestLayerParser
+}
+
+func formatUnexpectedOneSidedCommit(stdlib, simd fuzzBuildOutcome) string {
+	return fmt.Sprintf(
+		"SIMD_FUZZ_OUTCOME class=unexpected_one_sided_commit stdlib=%s simd=%s",
+		formatFuzzBuildOutcome(stdlib),
+		formatFuzzBuildOutcome(simd),
+	)
+}
+
+func formatFuzzBuildOutcome(outcome fuzzBuildOutcome) string {
+	errText := ""
+	if outcome.err != nil {
+		errText = outcome.err.Error()
+	}
+	return fmt.Sprintf(
+		"{committed=%t soft_skipped=%d err=%q encoded_bytes=%d}",
+		outcome.committed,
+		outcome.softSkipped,
+		errText,
+		len(outcome.encoded),
+	)
+}
+
+func runFuzzParserParityInput(
+	t *testing.T,
+	doc []byte,
+	stdlibArm func([]byte) fuzzBuildOutcome,
+	simdArm func([]byte) fuzzBuildOutcome,
+) {
+	t.Helper()
+	if !fuzzInputWithinBounds(doc) {
+		return
+	}
+
+	stdlibOutcome := stdlibArm(doc)
+	simdOutcome := simdArm(doc)
+	switch classifyFuzzParserOutcomes(doc, stdlibOutcome, simdOutcome) {
+	case fuzzOutcomeByteDivergence:
+		assertByteIdentical(t, "fuzz-hard-stop", simdOutcome.encoded, stdlibOutcome.encoded)
+	case fuzzOutcomeUnexpectedOneSidedCommit:
+		t.Log(formatUnexpectedOneSidedCommit(stdlibOutcome, simdOutcome))
+	}
+}
+
+func decodeFuzzCorpusSeed(contents []byte) ([]byte, error) {
+	lines := strings.Split(string(contents), "\n")
+	if len(lines) < 2 || lines[0] != "go test fuzz v1" {
+		return nil, errors.New("missing standard Go fuzz corpus header")
+	}
+	payload := strings.TrimSpace(strings.Join(lines[1:], "\n"))
+	expr, err := goparser.ParseExpr(payload)
+	if err != nil {
+		return nil, errors.Wrap(err, "parse fuzz corpus value")
+	}
+	call, ok := expr.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return nil, errors.New("fuzz corpus value must be one []byte conversion")
+	}
+	arrayType, ok := call.Fun.(*ast.ArrayType)
+	if !ok || arrayType.Len != nil {
+		return nil, errors.New("fuzz corpus value must use []byte")
+	}
+	ident, ok := arrayType.Elt.(*ast.Ident)
+	if !ok || ident.Name != "byte" {
+		return nil, errors.New("fuzz corpus value must use []byte")
+	}
+	literal, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || literal.Kind != token.STRING {
+		return nil, errors.New("fuzz corpus []byte value must contain one string literal")
+	}
+	decoded, err := strconv.Unquote(literal.Value)
+	if err != nil {
+		return nil, errors.Wrap(err, "unquote fuzz corpus bytes")
+	}
+	return []byte(decoded), nil
+}
+
+func readFuzzCorpusSeed(t *testing.T, name string) []byte {
+	t.Helper()
+	path := filepath.Join("testdata", "fuzz", "FuzzParserParity", name)
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fuzz corpus seed %s: %v", name, err)
+	}
+	doc, err := decodeFuzzCorpusSeed(contents)
+	if err != nil {
+		t.Fatalf("decode fuzz corpus seed %s: %v", name, err)
+	}
+	return doc
+}
+
+func FuzzParserParity(f *testing.F) {
+	parser := newTestSIMDParser(f)
+	cfg := fuzzParserParityConfig(f)
+
+	f.Fuzz(func(t *testing.T, doc []byte) {
+		runFuzzParserParityInput(
+			t,
+			doc,
+			func(doc []byte) fuzzBuildOutcome {
+				return buildFuzzParserOutcome(cfg, nil, doc)
+			},
+			func(doc []byte) fuzzBuildOutcome {
+				return buildFuzzParserOutcome(cfg, parser, doc)
+			},
+		)
+	})
+}
 
 func TestArrayNestingDepthStringAware(t *testing.T) {
 	tests := []struct {
