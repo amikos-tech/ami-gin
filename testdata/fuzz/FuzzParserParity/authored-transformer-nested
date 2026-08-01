@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"payload\":{\"integer\":2,\"whole\":2.0,\"fraction\":2.5,\"items\":[3,3.0,{\"nested\":4.0}]}}")
