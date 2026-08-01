@@ -62,6 +62,10 @@ bench:
 bench-phase20:
 	go test -run '^$$' -bench '^BenchmarkPhase20RealisticJSON$$' -benchmem -benchtime=$(BENCHTIME) -timeout=$(BENCH_TIMEOUT) -count=$(COUNT)
 
+.PHONY: bench-simd
+bench-simd:
+	go test -tags simdjson -run '^$$' -bench '^BenchmarkSIMDTypedSinkIngest$$' -benchmem -benchtime=$(BENCHTIME) -timeout=$(BENCH_TIMEOUT) -count=$(COUNT) .
+
 .PHONY: check-validator-markers
 check-validator-markers:
 	@awk '\
@@ -177,6 +181,7 @@ help:
 	@echo "  integration-test - Run integration test suite"
 	@echo "  bench     - Run all benchmarks in all packages (-benchmem; slow, takes minutes); override BENCHTIME/BENCH_TIMEOUT/COUNT, e.g. make bench BENCH_TIMEOUT=1h"
 	@echo "  bench-phase20 - Run BenchmarkPhase20RealisticJSON only; set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> to include the external corpus tier"
+	@echo "  bench-simd - Run paired stdlib/SIMD typed-sink smoke fixtures by default; optionally set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> for the local external tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
