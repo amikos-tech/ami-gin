@@ -80,6 +80,9 @@ func TestSIMDWorkflowContract(t *testing.T) {
 			"AMI_GIN_SIMD_REQUIRED: \"1\"",
 			"PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson",
 			"PURE_SIMDJSON_WARN_LEAKS: \"1\"",
+			"if [[ \"${{ matrix.race }}\" == \"true\" ]]; then",
+			"race_flags=(-race)",
+			"go test -tags simdjson \"${race_flags[@]}\" -timeout=30m ./...",
 		} {
 			if !strings.Contains(simdJob, anchor) {
 				t.Errorf("simd job is missing contract anchor %q", anchor)

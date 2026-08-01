@@ -96,8 +96,60 @@ jobs:
         run: make build
 
   simd:
-    name: SIMD parser
-    runs-on: ubuntu-latest
+    name: SIMD (${{ matrix.goos }}/${{ matrix.goarch }}, ${{ matrix.tier }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.advisory }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            tier: required
+            advisory: false
+            race: true
+            release: linux-amd64
+            library: libpure_simdjson.so
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+            tier: required
+            advisory: false
+            race: true
+            release: darwin-arm64
+            library: libpure_simdjson.dylib
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            tier: advisory
+            advisory: true
+            race: false
+            release: linux-arm64
+            library: libpure_simdjson.so
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            tier: advisory
+            advisory: true
+            race: false
+            release: darwin-amd64
+            library: libpure_simdjson.dylib
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            tier: advisory
+            advisory: true
+            race: false
+            release: windows-amd64-msvc
+            library: pure_simdjson-msvc.dll
+    env:
+      AMI_GIN_SIMD_REQUIRED: "1"
+      PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+      PURE_SIMDJSON_WARN_LEAKS: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -108,20 +160,30 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: go.sum
 
+      - name: Resolve effective SIMD version
+        id: simd-version
+        run: |
+          pure_simdjson_version="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"
+          printf 'version=%s\n' "$pure_simdjson_version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native SIMD library
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/pure-simdjson
+          key: pure-simdjson-${{ runner.os }}-${{ runner.arch }}-${{ steps.simd-version.outputs.version }}
+
       - name: Install verified native SIMD library
         env:
           PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
-          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
-        run: |
-          pure_simdjson_version="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"
-          go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${pure_simdjson_version}" fetch
+        run: go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${{ steps.simd-version.outputs.version }}" fetch
 
       - name: Run SIMD-tagged tests
-        env:
-          PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
-          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
-          PURE_SIMDJSON_WARN_LEAKS: "1"
-        run: go test -tags simdjson -race -timeout=30m ./...
+        run: |
+          race_flags=()
+          if [[ "${{ matrix.race }}" == "true" ]]; then
+            race_flags=(-race)
+          fi
+          go test -tags simdjson "${race_flags[@]}" -timeout=30m ./...
 
   govulncheck:
     runs-on: ubuntu-latest
