@@ -167,6 +167,7 @@ lint-fix:
 .PHONY: security-scan
 security-scan:
 	govulncheck ./...
+	govulncheck -tags simdjson ./...
 
 .PHONY: clean
 clean:
@@ -186,6 +187,6 @@ help:
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
-	@echo "  security-scan - Run govulncheck against all packages"
+	@echo "  security-scan - Run govulncheck against default and simdjson-tagged call graphs"
 	@echo "  clean     - Remove generated files"
 	@echo "  help      - Show this help"
