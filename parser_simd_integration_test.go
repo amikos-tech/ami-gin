@@ -4,11 +4,265 @@ package gin
 
 import (
 	stderrors "errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	purejson "github.com/amikos-tech/pure-simdjson"
+	"github.com/pkg/errors"
 )
+
+func TestSupportedSIMDPlatform(t *testing.T) {
+	tests := []struct {
+		name   string
+		goos   string
+		goarch string
+		want   bool
+	}{
+		{name: "linux-amd64", goos: "linux", goarch: "amd64", want: true},
+		{name: "linux-arm64", goos: "linux", goarch: "arm64", want: true},
+		{name: "darwin-amd64", goos: "darwin", goarch: "amd64", want: true},
+		{name: "darwin-arm64", goos: "darwin", goarch: "arm64", want: true},
+		{name: "windows-amd64", goos: "windows", goarch: "amd64", want: true},
+		{name: "linux-386", goos: "linux", goarch: "386", want: false},
+		{name: "freebsd-amd64", goos: "freebsd", goarch: "amd64", want: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := supportedSIMDPlatform(tc.goos, tc.goarch); got != tc.want {
+				t.Fatalf("supportedSIMDPlatform(%q, %q) = %v, want %v", tc.goos, tc.goarch, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClassifySIMDLoadError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want simdLoadErrorClass
+	}{
+		{name: "cpu-unsupported", err: purejson.ErrCPUUnsupported, want: simdLoadCPUUnsupported},
+		{name: "abi-version-mismatch", err: purejson.ErrABIVersionMismatch, want: simdLoadABIVersionMismatch},
+		{name: "checksum-mismatch", err: purejson.ErrChecksumMismatch, want: simdLoadChecksumMismatch},
+		{name: "all-sources-failed", err: purejson.ErrAllSourcesFailed, want: simdLoadAllSourcesFailed},
+		{name: "invalid-handle", err: purejson.ErrInvalidHandle, want: simdLoadInvalidHandle},
+		{name: "closed", err: purejson.ErrClosed, want: simdLoadClosed},
+		{name: "unknown", err: errors.New("unrelated constructor failure"), want: simdLoadUnknown},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := errors.Wrap(tc.err, "outer construction context")
+			if got := classifySIMDLoadError(wrapped); got != tc.want {
+				t.Fatalf("classifySIMDLoadError(%v) = %q, want %q", wrapped, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSIMDConstructionPolicy(t *testing.T) {
+	loadErr := errors.New("load failed")
+	tests := []struct {
+		name     string
+		goos     string
+		goarch   string
+		required bool
+		err      error
+		want     simdConstructionAction
+	}{
+		{name: "unsupported-skips-before-construction", goos: "freebsd", goarch: "amd64", err: loadErr, want: simdConstructionSkipUnsupported},
+		{name: "supported-local-success", goos: "darwin", goarch: "arm64", want: simdConstructionUseParser},
+		{name: "supported-local-failure-skips", goos: "darwin", goarch: "arm64", err: loadErr, want: simdConstructionSkipUnavailable},
+		{name: "supported-required-failure-is-fatal", goos: "darwin", goarch: "arm64", required: true, err: loadErr, want: simdConstructionFatalUnavailable},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := simdConstructionPolicy(tc.goos, tc.goarch, tc.required, tc.err); got != tc.want {
+				t.Fatalf("simdConstructionPolicy() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+type fakeSIMDTestTB struct {
+	cleanups []func()
+	skipped  string
+	fatal    string
+	errors   []string
+}
+
+func (*fakeSIMDTestTB) Helper() {}
+
+func (tb *fakeSIMDTestTB) Cleanup(cleanup func()) {
+	tb.cleanups = append(tb.cleanups, cleanup)
+}
+
+func (tb *fakeSIMDTestTB) Skip(args ...any) {
+	tb.skipped = fmt.Sprint(args...)
+}
+
+func (tb *fakeSIMDTestTB) Skipf(format string, args ...any) {
+	tb.skipped = fmt.Sprintf(format, args...)
+}
+
+func (tb *fakeSIMDTestTB) Fatalf(format string, args ...any) {
+	tb.fatal = fmt.Sprintf(format, args...)
+}
+
+func (tb *fakeSIMDTestTB) Errorf(format string, args ...any) {
+	tb.errors = append(tb.errors, fmt.Sprintf(format, args...))
+}
+
+type fakeSIMDCloseableParser struct {
+	closeCalls int
+	closeErr   error
+}
+
+func (*fakeSIMDCloseableParser) Name() string { return "fake-simd" }
+
+func (*fakeSIMDCloseableParser) Parse([]byte, int, parserSink) error { return nil }
+
+func (p *fakeSIMDCloseableParser) Close() error {
+	p.closeCalls++
+	return p.closeErr
+}
+
+func TestNewTestSIMDParserLifecyclePolicy(t *testing.T) {
+	t.Run("unsupported skips before construction", func(t *testing.T) {
+		tb := &fakeSIMDTestTB{}
+		constructCalls := 0
+		got := newTestSIMDParserWith(tb, "freebsd", "amd64", true, func() (CloseableParser, error) {
+			constructCalls++
+			return &fakeSIMDCloseableParser{}, nil
+		})
+		if got != nil || constructCalls != 0 {
+			t.Fatalf("result = (%v, constructCalls=%d), want (nil, 0)", got, constructCalls)
+		}
+		if tb.skipped != "pure-simdjson unsupported platform" {
+			t.Fatalf("skip diagnostic = %q", tb.skipped)
+		}
+	})
+
+	t.Run("supported local failure skips with remediation", func(t *testing.T) {
+		tb := &fakeSIMDTestTB{}
+		loadErr := errors.Wrap(purejson.ErrChecksumMismatch, "load")
+		got := newTestSIMDParserWith(tb, "linux", "amd64", false, func() (CloseableParser, error) {
+			return nil, loadErr
+		})
+		if got != nil || !strings.Contains(tb.skipped, "docs/simd-deployment.md") || !strings.Contains(tb.skipped, loadErr.Error()) {
+			t.Fatalf("result = (%v, skip=%q), want remediation skip", got, tb.skipped)
+		}
+	})
+
+	t.Run("supported required failure is classified fatal", func(t *testing.T) {
+		tb := &fakeSIMDTestTB{}
+		got := newTestSIMDParserWith(tb, "windows", "amd64", true, func() (CloseableParser, error) {
+			return nil, errors.Wrap(purejson.ErrInvalidHandle, "load")
+		})
+		if got != nil || !strings.Contains(tb.fatal, string(simdLoadInvalidHandle)) {
+			t.Fatalf("result = (%v, fatal=%q), want classified fatal", got, tb.fatal)
+		}
+	})
+
+	t.Run("success registers one cleanup and reports close error", func(t *testing.T) {
+		tb := &fakeSIMDTestTB{}
+		closeErr := errors.New("close failed")
+		parser := &fakeSIMDCloseableParser{closeErr: closeErr}
+		got := newTestSIMDParserWith(tb, "darwin", "arm64", true, func() (CloseableParser, error) {
+			return parser, nil
+		})
+		if got != parser || len(tb.cleanups) != 1 {
+			t.Fatalf("result = (%v, cleanups=%d), want parser and one cleanup", got, len(tb.cleanups))
+		}
+		tb.cleanups[0]()
+		if parser.closeCalls != 1 || len(tb.errors) != 1 || !strings.Contains(tb.errors[0], closeErr.Error()) {
+			t.Fatalf("cleanup = (closeCalls=%d, errors=%v), want one reported close failure", parser.closeCalls, tb.errors)
+		}
+	})
+}
+
+func TestSIMDConstructorCallPolicy(t *testing.T) {
+	if err := validateSIMDConstructorCalls("."); err != nil {
+		t.Fatalf("validate repository SIMD constructor calls: %v", err)
+	}
+
+	const helperSource = `//go:build simdjson
+
+package gin
+
+func newTestSIMDParser() {
+	NewSIMDParser()
+}
+`
+
+	writeFixture := func(t *testing.T, name, source string) string {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "parser_simd_integration_test.go"), []byte(helperSource), 0o600); err != nil {
+			t.Fatalf("write helper fixture: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return dir
+	}
+
+	t.Run("external_qualified_test_mutation", func(t *testing.T) {
+		const source = `//go:build simdjson
+
+package gin_test
+
+import gin "github.com/amikos-tech/ami-gin"
+
+func TestExternalConstructorBypass() {
+	_, _ = gin.NewSIMDParser()
+}
+`
+		err := validateSIMDConstructorCalls(writeFixture(t, "external_bypass_test.go", source))
+		if err == nil || !strings.Contains(err.Error(), "external_bypass_test.go") || !strings.Contains(err.Error(), "TestExternalConstructorBypass") {
+			t.Fatalf("mutation error = %v, want file/function diagnostic", err)
+		}
+	})
+
+	t.Run("compile-only example is accepted", func(t *testing.T) {
+		const source = `//go:build simdjson
+
+package gin_test
+
+import gin "github.com/amikos-tech/ami-gin"
+
+func ExampleNewSIMDParser() {
+	_, _ = gin.NewSIMDParser()
+}
+`
+		if err := validateSIMDConstructorCalls(writeFixture(t, "simd_example_test.go", source)); err != nil {
+			t.Fatalf("compile-only example rejected: %v", err)
+		}
+	})
+
+	t.Run("empty output example is rejected", func(t *testing.T) {
+		const source = `//go:build simdjson
+
+package gin_test
+
+import gin "github.com/amikos-tech/ami-gin"
+
+func ExampleNewSIMDParser() {
+	_, _ = gin.NewSIMDParser()
+	// Output:
+}
+`
+		err := validateSIMDConstructorCalls(writeFixture(t, "simd_example_test.go", source))
+		if err == nil || !strings.Contains(err.Error(), "output directive") {
+			t.Fatalf("empty-output example error = %v, want output-directive diagnostic", err)
+		}
+	})
+}
 
 func newTestSIMDParser(t *testing.T) CloseableParser {
 	t.Helper()
