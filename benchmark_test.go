@@ -1842,13 +1842,13 @@ type phase20BenchmarkFixture struct {
 	predicate Predicate
 }
 
-func phase20BuildBenchmarkIndex(docs [][]byte) (*GINIndex, error) {
+func phase20BuildBenchmarkIndex(docs [][]byte, opts ...BuilderOption) (*GINIndex, error) {
 	if len(docs) == 0 {
 		return nil, errors.New("Phase 20 benchmark fixture contains no documents")
 	}
 
 	rowGroups := (len(docs) + phase20DocsPerRowGroup - 1) / phase20DocsPerRowGroup
-	builder, err := NewBuilder(DefaultConfig(), rowGroups)
+	builder, err := NewBuilder(DefaultConfig(), rowGroups, opts...)
 	if err != nil {
 		return nil, errors.Wrap(err, "NewBuilder")
 	}

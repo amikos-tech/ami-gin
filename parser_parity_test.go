@@ -303,11 +303,11 @@ func evaluateMatrixFixture() parityFixture {
 	}
 }
 
-func buildEvaluateMatrixIndex(t *testing.T) *GINIndex {
+func buildEvaluateMatrixIndex(t *testing.T, opts ...BuilderOption) *GINIndex {
 	t.Helper()
 	fx := evaluateMatrixFixture()
 	cfg := fx.Config()
-	builder, err := NewBuilder(cfg, fx.NumRGs)
+	builder, err := NewBuilder(cfg, fx.NumRGs, opts...)
 	if err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
@@ -331,14 +331,14 @@ func intSliceEqual(a, b []int) bool {
 	return true
 }
 
-func TestParserParity_EvaluateMatrix(t *testing.T) {
-	idx := buildEvaluateMatrixIndex(t)
+type evaluateMatrixCase struct {
+	name    string
+	pred    Predicate
+	wantRGs []int
+}
 
-	cases := []struct {
-		name    string
-		pred    Predicate
-		wantRGs []int
-	}{
+func evaluateMatrixCases() []evaluateMatrixCase {
+	return []evaluateMatrixCase{
 		{"EQ-match", EQ("$.name", "alice"), []int{0, 2}},
 		{"EQ-prune", EQ("$.name", "nobody"), []int{}},
 		{"NE-match", NE("$.name", "alice"), []int{1, 3}},
@@ -364,8 +364,12 @@ func TestParserParity_EvaluateMatrix(t *testing.T) {
 		{"Regex-match", Regex("$.bio", "^hello"), []int{0, 3}},
 		{"Regex-prune", Regex("$.bio", "zzzzzz"), []int{}},
 	}
+}
 
-	for _, c := range cases {
+func TestParserParity_EvaluateMatrix(t *testing.T) {
+	idx := buildEvaluateMatrixIndex(t)
+
+	for _, c := range evaluateMatrixCases() {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			got := idx.Evaluate([]Predicate{c.pred}).ToSlice()
