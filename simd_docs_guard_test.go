@@ -213,6 +213,12 @@ func loadSIMDDocumentationInputs(t *testing.T) simdDocumentationInputs {
 func resolveSIMDModuleListing(t *testing.T, root string) simdModuleListing {
 	t.Helper()
 
+	download := exec.Command("go", "mod", "download", pureSIMDJSONModule)
+	download.Dir = root
+	if output, err := download.CombinedOutput(); err != nil {
+		t.Fatalf("%s failed: %v: %s", strings.Join(download.Args, " "), err, strings.TrimSpace(string(output)))
+	}
+
 	command := exec.Command("go", "list", "-m", "-json", pureSIMDJSONModule)
 	command.Dir = root
 	output, err := command.Output()
