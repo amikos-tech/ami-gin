@@ -148,8 +148,12 @@ check-notice-version:
 		fail_notice "NOTICE.md version drift; offending line:version tokens: $$offending_versions"; \
 	fi
 
+.PHONY: check-simd-docs
+check-simd-docs:
+	go test -run '^TestSIMDDocumentationContract$$' .
+
 .PHONY: lint
-lint: check-validator-markers check-notice-version
+lint: check-validator-markers check-notice-version check-simd-docs
 	$(GOLANGCI_LINT_CMD) run
 
 .PHONY: lint-fix
@@ -174,6 +178,7 @@ help:
 	@echo "  bench     - Run all benchmarks in all packages (-benchmem; slow, takes minutes); override BENCHTIME/BENCH_TIMEOUT/COUNT, e.g. make bench BENCH_TIMEOUT=1h"
 	@echo "  bench-phase20 - Run BenchmarkPhase20RealisticJSON only; set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> to include the external corpus tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
+	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against all packages"
