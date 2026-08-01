@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Completed 22-05-PLAN.md
-last_updated: "2026-08-01T09:41:58.481Z"
+stopped_at: Completed 22-07-PLAN.md
+last_updated: "2026-08-01T09:55:33.296Z"
 last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 13
+  completed_plans: 14
   percent: 38
 ---
 
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 6 of 8
+Plan: 7 of 8
 Status: Ready to execute
 Last activity: 2026-08-01
 
-Progress: [████████░░] 81%
+Progress: [█████████░] 88%
 
 ## Performance Metrics
 
@@ -66,6 +66,7 @@ Progress: [████████░░] 81%
 | Phase 22 P03 | 8 min | 2 tasks | 6 files |
 | Phase 22 P04 | 9 min | 2 tasks | 5 files |
 | Phase 22 P05 | 8 min | 2 tasks | 2 files |
+| Phase 22 P07 | 9 min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -112,6 +113,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - [Phase 22]: Paired SIMD ingest benchmarks select stdlib and one shared sequential SIMD parser through the same Phase 20 build helper. — Preserves identical configuration and row-group packing while honoring Spike 003's no-bias lifecycle evidence.
 - [Phase 22]: SIMD benchmark throughput counts input JSON document bytes and B/op is Go-heap-only. — Keeps throughput tied to ingest payload and avoids treating invisible native buffers as total-memory evidence.
 - [Phase 22]: The optional benchmark corpus remains a dedicated subtree behind the two Phase 20 SIMD variables. — Disabled external input cannot suppress offline smoke siblings or expand the existing loader boundary.
+- [Phase 22]: Required-host enforcement and leak warnings stay job-wide, while runner-derived cache paths are step-local. — GitHub Actions does not expose the runner context to job-level env.
+- [Phase 22]: workflow_dispatch intentionally runs every CI job; the non-gating SIMD trend job is separately event-guarded. — GitHub dispatch is workflow-scoped, while the trend artifact must run only on dispatch or push-main.
+- [Phase 22]: Explicit-path parity reuses one validated effective-version cache file. — The focused second pass proves local loading without adding a downstream download or bootstrap path.
 
 ### Roadmap Evolution
 
@@ -206,8 +210,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-08-01T09:41:58.473Z
-Stopped at: Completed 22-05-PLAN.md
+Last session: 2026-08-01T09:55:33.289Z
+Stopped at: Completed 22-07-PLAN.md
 Resume file: None
 
-**Next step:** Execute Phase 22 Plan 05.
+**Next step:** Execute Phase 22 Plan 06.
