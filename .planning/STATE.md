@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Completed 22-01-PLAN.md
-last_updated: "2026-08-01T08:43:49.390Z"
+stopped_at: Completed 22-02-PLAN.md
+last_updated: "2026-08-01T08:59:13.584Z"
 last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 9
+  completed_plans: 10
   percent: 38
 ---
 
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 2 of 8
+Plan: 3 of 8
 Status: Ready to execute
 Last activity: 2026-08-01
 
-Progress: [██████░░░░] 56%
+Progress: [██████░░░░] 63%
 
 ## Performance Metrics
 
@@ -62,6 +62,7 @@ Progress: [██████░░░░] 56%
 | Phase 21 P04 | 8 min | 2 tasks | 5 files |
 | Phase 21 P05 | 7 min | 1 tasks | 2 files |
 | Phase 22 P01 | 2 min | 2 tasks | 1 files |
+| Phase 22 P02 | 10 min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -96,6 +97,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - [Phase 21]: Panic-aware SIMD cleanup preserves ordinary panic identity but routes failed close through terminal builder state — Prevents parser soft mode from hiding a busy native parser after caller recovery
 - [Phase 22]: Approved github.com/amikos-tech/pure-simdjson v0.1.7 for Phase 22 evidence — Human reviewed the public source/tag, MIT license, NOTICE posture, and accepted the non-SLOP provenance warning
 - [Phase 22]: Approved golang.org/x/perf@v0.0.0-20260709024250-82a0b07e230d for ephemeral benchstat analysis — Use only the exact pinned go run command; keep x/perf out of go.mod
+- [Phase 22]: Supported SIMD tests use one testing.TB helper: unsupported platforms skip before construction, local load failures skip with remediation, and AMI_GIN_SIMD_REQUIRED=1 makes supported-host failures fatal. — Prevents supported CI from succeeding through a silent skip while preserving local and unsupported-host usability.
+- [Phase 22]: Realistic parity remains a live same-process differential; Phase 20 binary goldens are not added. — Avoids duplicate generated artifacts while directly comparing identical inputs and configuration.
+- [Phase 22]: Qualified SIMD parity covers documents that ingest without a parser-layer error; malformed failure-layer attribution is the tested exclusion. — Keeps the Phase 19 HARD stop scoped to encoded-byte or query-result differences.
 
 ### Roadmap Evolution
 
@@ -190,8 +194,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-08-01T08:42:18.817Z
-Stopped at: Completed 22-01-PLAN.md
+Last session: 2026-08-01T08:59:13.577Z
+Stopped at: Completed 22-02-PLAN.md
 Resume file: None
 
-**Next step:** Execute Phase 22 Plan 02.
+**Next step:** Execute Phase 22 Plan 03.
