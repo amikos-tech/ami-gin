@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
 status: executing
-stopped_at: Completed 22-02-PLAN.md
-last_updated: "2026-08-01T08:59:13.584Z"
+stopped_at: Completed 22-03-PLAN.md
+last_updated: "2026-08-01T09:13:16.622Z"
 last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 10
+  completed_plans: 11
   percent: 38
 ---
 
@@ -26,11 +26,11 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 ## Current Position
 
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 3 of 8
+Plan: 4 of 8
 Status: Ready to execute
 Last activity: 2026-08-01
 
-Progress: [██████░░░░] 63%
+Progress: [███████░░░] 69%
 
 ## Performance Metrics
 
@@ -63,6 +63,7 @@ Progress: [██████░░░░] 63%
 | Phase 21 P05 | 7 min | 1 tasks | 2 files |
 | Phase 22 P01 | 2 min | 2 tasks | 1 files |
 | Phase 22 P02 | 10 min | 2 tasks | 5 files |
+| Phase 22 P03 | 8 min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - [Phase 22]: Supported SIMD tests use one testing.TB helper: unsupported platforms skip before construction, local load failures skip with remediation, and AMI_GIN_SIMD_REQUIRED=1 makes supported-host failures fatal. — Prevents supported CI from succeeding through a silent skip while preserving local and unsupported-host usability.
 - [Phase 22]: Realistic parity remains a live same-process differential; Phase 20 binary goldens are not added. — Avoids duplicate generated artifacts while directly comparing identical inputs and configuration.
 - [Phase 22]: Qualified SIMD parity covers documents that ingest without a parser-layer error; malformed failure-layer attribution is the tested exclusion. — Keeps the Phase 19 HARD stop scoped to encoded-byte or query-result differences.
+- [Phase 22]: Fuzz parity uses hard parser failures plus soft numeric failures. — The existing malformed trailing-number attribution difference stays observable without treating either arm as committed.
+- [Phase 22]: Committed fuzz state comes from fresh-builder numDocs bookkeeping. — Encoding runs only after exactly one document commits, so empty finalized indexes cannot masquerade as successful ingestion.
+- [Phase 22]: Unexpected one-sided commits remain non-fatal under a stable structured record. — SIMD_FUZZ_OUTCOME class=unexpected_one_sided_commit preserves both arm outcomes as deterministic verbose evidence without widening the known malformed exclusion.
 
 ### Roadmap Evolution
 
@@ -194,8 +198,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-08-01T08:59:13.577Z
-Stopped at: Completed 22-02-PLAN.md
+Last session: 2026-08-01T09:12:50.393Z
+Stopped at: Completed 22-03-PLAN.md
 Resume file: None
 
-**Next step:** Execute Phase 22 Plan 03.
+**Next step:** Execute Phase 22 Plan 04.
