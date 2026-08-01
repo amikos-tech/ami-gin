@@ -34,7 +34,7 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 - [x] **SIMD-08**: SIMD and stdlib paths produce identical encoded indexes and query results across authored parity fixtures and realistic benchmark fixtures.
 - [x] **SIMD-09**: Benchmarks report stdlib vs SIMD CPU, allocation, and bytes/op deltas on realistic fixtures.
 - [x] **SIMD-10**: CI covers default builds and `-tags simdjson` builds with explicit behavior when platform or shared-library requirements are unmet.
-- [ ] **SIMD-11**: Runtime loading and release/distribution guidance tells consumers how to enable SIMD safely.
+- [x] **SIMD-11**: Runtime loading and release/distribution guidance tells consumers how to enable SIMD safely.
 
 ### Positioning
 
@@ -90,7 +90,7 @@ SIMD is the highest-impact performance lever and is now the top priority. The fi
 | SIMD-08 | Phase 22 | Complete |
 | SIMD-09 | Phase 22 | Complete |
 | SIMD-10 | Phase 22 | Complete |
-| SIMD-11 | Phase 22 | Planned |
+| SIMD-11 | Phase 22 | Complete |
 | POS-01 | Phase 23 | Planned |
 | POS-02 | Phase 23 | Planned |
 | QG-01 | Phase 24 | Planned |
