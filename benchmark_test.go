@@ -1842,6 +1842,7 @@ type phase20BenchmarkFixture struct {
 	predicate Predicate
 }
 
+//nolint:unparam // SIMD-tagged parity and benchmark callers pass parser options.
 func phase20BuildBenchmarkIndex(docs [][]byte, opts ...BuilderOption) (*GINIndex, error) {
 	if len(docs) == 0 {
 		return nil, errors.New("Phase 20 benchmark fixture contains no documents")
