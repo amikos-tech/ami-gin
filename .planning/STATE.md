@@ -143,7 +143,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Discuss and plan Phase 22: SIMD Validation, Benchmarks & CI (`$gsd-discuss-phase 22`).
+- [Bind required SIMD checks in ruleset](todos/pending/2026-08-02-bind-required-simd-checks-in-ruleset.md) — Phase 22 Plan 22-08 is blocked until exactly the two required SIMD contexts bind the default branch.
 
 ### Blockers/Concerns
 
