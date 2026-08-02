@@ -2,7 +2,10 @@
 
 package gin
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func softSkipParityFixture() parityFixture {
 	return parityFixture{
@@ -36,4 +39,28 @@ func TestSIMDParserSoftSkipAndMalformedJSONByteParity(t *testing.T) {
 	simdEncoded := buildAndEncodeWithParser(t, fx, parser)
 
 	assertByteIdentical(t, fx.Name, simdEncoded, stdlibEncoded)
+}
+
+func TestSIMDParserNestedArraysStageOnlyWildcardPaths(t *testing.T) {
+	const depth = 8
+	document := []byte(strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth))
+
+	parser := newTestSIMDParser(t)
+	builder, err := NewBuilder(DefaultConfig(), 1, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	if err := builder.AddDocument(0, document); err != nil {
+		t.Fatalf("AddDocument: %v", err)
+	}
+	idx := builder.Finalize()
+
+	if got, want := len(idx.PathDirectory), depth+1; got != want {
+		t.Fatalf("PathDirectory count = %d, want %d", got, want)
+	}
+	for _, entry := range idx.PathDirectory {
+		if strings.Contains(entry.PathName, "[0]") {
+			t.Fatalf("PathDirectory contains private numeric path %q", entry.PathName)
+		}
+	}
 }

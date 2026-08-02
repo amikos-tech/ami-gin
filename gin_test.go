@@ -3089,14 +3089,20 @@ func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *test
 
 	for _, path := range []string{
 		"$.items[*].label",
-		"$.items[0].label",
-		"$.items[1].label",
 		"$.items[*].score",
-		"$.items[0].score",
-		"$.items[1].score",
 	} {
 		if _, ok := idx.pathLookup[path]; !ok {
 			t.Fatalf("pathLookup[%q] missing", path)
+		}
+	}
+	for _, path := range []string{
+		"$.items[0].label",
+		"$.items[1].label",
+		"$.items[0].score",
+		"$.items[1].score",
+	} {
+		if _, ok := idx.pathLookup[path]; ok {
+			t.Fatalf("pathLookup[%q] present, want private numeric path absent", path)
 		}
 	}
 
@@ -3111,6 +3117,41 @@ func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *test
 	}
 	if got := idx.Evaluate([]Predicate{EQ("$.status", "only")}).ToSlice(); len(got) != 1 || got[0] != 0 {
 		t.Fatalf(`EQ("$.status", "only") = %v, want [0]`, got)
+	}
+}
+
+func TestNestedArraysStageOnlyWildcardPaths(t *testing.T) {
+	const depth = 8
+	document := []byte(strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth))
+
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, document); err != nil {
+		t.Fatalf("AddDocument: %v", err)
+	}
+	idx := builder.Finalize()
+
+	if got, want := len(idx.PathDirectory), depth+1; got != want {
+		t.Fatalf("PathDirectory count = %d, want %d", got, want)
+	}
+	for _, entry := range idx.PathDirectory {
+		if strings.Contains(entry.PathName, "[0]") {
+			t.Fatalf("PathDirectory contains private numeric path %q", entry.PathName)
+		}
+	}
+}
+
+func TestWildcardArrayQueryReturnsOnlyMatchingRowGroup(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	if err := builder.AddDocument(0, []byte(`{"orders":[{"id":"wanted"}]}`)); err != nil {
+		t.Fatalf("AddDocument matching row group: %v", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"orders":[{"id":"other"}]}`)); err != nil {
+		t.Fatalf("AddDocument non-matching row group: %v", err)
+	}
+
+	got := builder.Finalize().Evaluate([]Predicate{EQ("$.orders[*].id", "wanted")}).ToSlice()
+	if len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.orders[*].id", "wanted") = %v, want [0]`, got)
 	}
 }
 

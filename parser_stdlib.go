@@ -88,10 +88,10 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 			}
 			return nil
 		case '[':
-			for decoder.More() {
+			for i := 0; decoder.More(); i++ {
 				item, err := decodeAny(decoder)
 				if err != nil {
-					return errors.Wrapf(err, "parse array element at %s", canonicalPath)
+					return errors.Wrapf(err, "parse array element at %s[%d]", canonicalPath, i)
 				}
 				if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
 					return err
