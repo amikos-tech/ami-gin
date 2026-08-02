@@ -21,6 +21,8 @@ type cliTestRecord struct {
 	Attributes string `parquet:"attributes"`
 }
 
+const windowsOS = "windows"
+
 func createCLIParquetFile(t *testing.T, path string, records []cliTestRecord) {
 	t.Helper()
 
@@ -650,7 +652,7 @@ func TestArtifactFileMode(t *testing.T) {
 }
 
 func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		t.Skip("Windows does not preserve POSIX file permissions")
 	}
 	t.Parallel()
@@ -695,7 +697,7 @@ func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
 }
 
 func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		t.Skip("Windows does not preserve POSIX file permissions")
 	}
 	t.Parallel()
@@ -750,7 +752,7 @@ func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
 }
 
 func TestLocalOutputMode(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == windowsOS {
 		t.Skip("Windows does not preserve POSIX file permissions")
 	}
 	t.Parallel()
