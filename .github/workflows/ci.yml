@@ -202,6 +202,7 @@ jobs:
           go test -tags simdjson "${race_flags[@]}" -timeout=30m ./...
 
       - name: Run explicit-path SIMD parity smoke
+        if: ${{ always() && steps.simd-library.outcome == 'success' }}
         env:
           PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
           PURE_SIMDJSON_LIB_PATH: ${{ steps.simd-library.outputs.path }}

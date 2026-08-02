@@ -121,6 +121,9 @@ func TestSIMDWorkflowContract(t *testing.T) {
 		}
 
 		explicitPathStep := workflowStepSection(t, simdJob, "Run explicit-path SIMD parity smoke")
+		if !strings.Contains(explicitPathStep, "if: ${{ always() && steps.simd-library.outcome == 'success' }}") {
+			t.Errorf("explicit-path smoke must run after a tagged-suite failure when native library resolution succeeded")
+		}
 		for _, forbidden := range []string{
 			"PURE_SIMDJSON_BINARY_MIRROR",
 			"PURE_SIMDJSON_DISABLE_GH_FALLBACK",
