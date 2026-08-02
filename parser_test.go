@@ -275,7 +275,7 @@ func TestStdlibParserBuffersTransformedRootOnGenericSink(t *testing.T) {
 	}
 }
 
-func TestStdlibParserStagesArrayWildcardOnGenericSink(t *testing.T) {
+func TestStdlibParserStagesArrayIndexAndWildcardOnGenericSink(t *testing.T) {
 	sink := &recordingSink{}
 
 	if err := (stdlibParser{}).Parse([]byte(`[{"x":1}]`), 5, sink); err != nil {

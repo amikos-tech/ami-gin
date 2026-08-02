@@ -249,11 +249,8 @@ func (s *simdParser) walkElement(
 		}
 
 		iterator := array.Iter()
-		for i := 0; iterator.Next(); i++ {
+		for iterator.Next() {
 			value := iterator.Value()
-			if err := s.walkElement(value, fmt.Sprintf("%s[%d]", rawPath, i), state, sink); err != nil {
-				return err
-			}
 			if err := s.walkElement(value, rawPath+"[*]", state, sink); err != nil {
 				return err
 			}

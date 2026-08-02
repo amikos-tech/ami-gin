@@ -3,7 +3,6 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -114,10 +113,7 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 		if err := sink.MarkPresent(state, canonicalPath); err != nil {
 			return err
 		}
-		for i, item := range v {
-			if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
-				return err
-			}
+		for _, item := range v {
 			if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
 				return err
 			}

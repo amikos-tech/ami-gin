@@ -3,7 +3,6 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	"github.com/pkg/errors"
 )
@@ -89,13 +88,10 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 			}
 			return nil
 		case '[':
-			for i := 0; decoder.More(); i++ {
+			for decoder.More() {
 				item, err := decodeAny(decoder)
 				if err != nil {
-					return errors.Wrapf(err, "parse array element at %s[%d]", canonicalPath, i)
-				}
-				if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
-					return err
+					return errors.Wrapf(err, "parse array element at %s", canonicalPath)
 				}
 				if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
 					return err

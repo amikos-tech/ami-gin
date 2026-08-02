@@ -640,10 +640,7 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 	case uint64:
 		return b.stageNativeNumeric(canonicalPath, v, state)
 	case []any:
-		for i, item := range v {
-			if err := b.stageMaterializedValue(fmt.Sprintf("%s[%d]", path, i), item, state, true); err != nil {
-				return err
-			}
+		for _, item := range v {
 			if err := b.stageMaterializedValue(path+"[*]", item, state, true); err != nil {
 				return err
 			}
