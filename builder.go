@@ -193,6 +193,23 @@ func (s *documentBuildState) getOrCreatePath(path string) *stagedPathData {
 	return pd
 }
 
+func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalPath string) (*stagedPathData, error) {
+	if pathState, ok := state.paths[canonicalPath]; ok {
+		return pathState, nil
+	}
+	if b.config.MaxStagedPaths > 0 && len(state.paths) >= b.config.MaxStagedPaths {
+		return nil, newIngestErrorString(
+			IngestLayerSchema,
+			canonicalPath,
+			"",
+			errors.Errorf("staged path budget exceeded: limit %d", b.config.MaxStagedPaths),
+		)
+	}
+	pathState := &stagedPathData{stringTerms: make(map[string]struct{})}
+	state.paths[canonicalPath] = pathState
+	return pathState, nil
+}
+
 type BuilderOption func(*GINBuilder) error
 
 func WithCodec(codec DocIDCodec) BuilderOption {
@@ -538,7 +555,10 @@ func prepareTransformerValue(value any) any {
 }
 
 func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *documentBuildState) error {
-	pathState := state.getOrCreatePath(canonicalPath)
+	pathState, err := b.getOrCreateStagedPath(state, canonicalPath)
+	if err != nil {
+		return err
+	}
 	pathState.present = true
 
 	switch v := token.(type) {
@@ -574,7 +594,10 @@ func (b *GINBuilder) stageMaterializedValue(path string, value any, state *docum
 		}
 	}
 
-	pathState := state.getOrCreatePath(canonicalPath)
+	pathState, err := b.getOrCreateStagedPath(state, canonicalPath)
+	if err != nil {
+		return err
+	}
 	pathState.present = true
 
 	switch v := value.(type) {
@@ -788,7 +811,10 @@ func formatStagedNumericValue(value stagedNumericValue) string {
 }
 
 func (b *GINBuilder) stageNumericObservation(path string, observation stagedNumericValue, state *documentBuildState) error {
-	pathState := state.getOrCreatePath(path)
+	pathState, err := b.getOrCreateStagedPath(state, path)
+	if err != nil {
+		return err
+	}
 	pathState.present = true
 	b.seedNumericSimulation(path, pathState)
 

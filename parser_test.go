@@ -189,8 +189,9 @@ func (s *recordingSink) BeginDocument(rgID int) *documentBuildState {
 	return newDocumentBuildState(rgID)
 }
 
-func (s *recordingSink) MarkPresent(_ *documentBuildState, canonicalPath string) {
+func (s *recordingSink) MarkPresent(_ *documentBuildState, canonicalPath string) error {
 	s.events = append(s.events, "present:"+canonicalPath)
+	return nil
 }
 
 func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string, _ any) error {

@@ -3114,6 +3114,55 @@ func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *test
 	}
 }
 
+func TestMaxStagedPaths(t *testing.T) {
+	if _, err := NewConfig(WithMaxStagedPaths(-1)); err == nil {
+		t.Fatal("NewConfig(WithMaxStagedPaths(-1)) succeeded, want validation error")
+	}
+
+	invalidConfig := DefaultConfig()
+	invalidConfig.MaxStagedPaths = -1
+	if _, err := NewBuilder(invalidConfig, 1); err == nil {
+		t.Fatal("NewBuilder with negative MaxStagedPaths succeeded, want validation error")
+	}
+
+	config, err := NewConfig(WithMaxStagedPaths(2))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder := mustNewBuilder(t, config, 1)
+
+	err = builder.AddDocument(0, []byte(`{"items":{"label":"wanted"}}`))
+	if err == nil {
+		t.Fatal("AddDocument succeeded, want staged path budget error")
+	}
+
+	var ingestErr *IngestError
+	if !stderrors.As(err, &ingestErr) {
+		t.Fatalf("AddDocument error = %T %v, want extractable *IngestError", err, err)
+	}
+	if got := ingestErr.Layer(); got != IngestLayerSchema {
+		t.Fatalf("IngestError.Layer() = %q, want %q", got, IngestLayerSchema)
+	}
+	if got := ingestErr.Path(); got != "$.items.label" {
+		t.Fatalf("IngestError.Path() = %q, want %q", got, "$.items.label")
+	}
+	if got := ingestErr.Cause().Error(); got != "staged path budget exceeded: limit 2" {
+		t.Fatalf("IngestError.Cause() = %q, want exact budget error", got)
+	}
+	if builder.numDocs != 0 || len(builder.docIDToPos) != 0 || len(builder.posToDocID) != 0 || len(builder.pathData) != 0 {
+		t.Fatalf("failed document mutated builder: numDocs=%d docIDToPos=%d posToDocID=%d pathData=%d", builder.numDocs, len(builder.docIDToPos), len(builder.posToDocID), len(builder.pathData))
+	}
+
+	unlimitedConfig, err := NewConfig(WithMaxStagedPaths(0))
+	if err != nil {
+		t.Fatalf("NewConfig unlimited: %v", err)
+	}
+	unlimitedBuilder := mustNewBuilder(t, unlimitedConfig, 1)
+	if err := unlimitedBuilder.AddDocument(0, []byte(`{"items":{"label":"wanted"}}`)); err != nil {
+		t.Fatalf("AddDocument with unlimited staged paths: %v", err)
+	}
+}
+
 func TestAddDocumentRejectsUnsupportedNumberWithoutPartialMutation(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 4)
 

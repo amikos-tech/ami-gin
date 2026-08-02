@@ -31,7 +31,7 @@ import (
 // already-materialized Go values and may fold whole float64 values to integers.
 type parserSink interface {
 	BeginDocument(rgID int) *documentBuildState
-	MarkPresent(state *documentBuildState, canonicalPath string)
+	MarkPresent(state *documentBuildState, canonicalPath string) error
 	StageScalar(state *documentBuildState, canonicalPath string, token any) error
 	StageInt64(state *documentBuildState, canonicalPath string, v int64) error
 	StageUint64(state *documentBuildState, canonicalPath string, v uint64) error
@@ -52,8 +52,13 @@ func (b *GINBuilder) BeginDocument(rgID int) *documentBuildState {
 	return s
 }
 
-func (b *GINBuilder) MarkPresent(state *documentBuildState, canonicalPath string) {
-	state.getOrCreatePath(canonicalPath).present = true
+func (b *GINBuilder) MarkPresent(state *documentBuildState, canonicalPath string) error {
+	pathState, err := b.getOrCreateStagedPath(state, canonicalPath)
+	if err != nil {
+		return tagStageError(err)
+	}
+	pathState.present = true
+	return nil
 }
 
 func (b *GINBuilder) StageScalar(state *documentBuildState, canonicalPath string, token any) error {

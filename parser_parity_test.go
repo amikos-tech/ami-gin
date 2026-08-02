@@ -101,7 +101,9 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 
 	switch v := value.(type) {
 	case map[string]any:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		for _, key := range sortedObjectKeys(v) {
 			if err := sink.StageMaterialized(state, path+"."+key, v[key], true); err != nil {
 				return err
@@ -109,7 +111,9 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 		}
 		return nil
 	case []any:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		for i, item := range v {
 			if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
 				return err

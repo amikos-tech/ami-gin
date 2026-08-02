@@ -211,7 +211,9 @@ func (s *simdParser) walkElement(
 		}
 		return sink.StageScalar(state, canonicalPath, value)
 	case purejson.TypeObject:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		object, err := element.AsObject()
 		if err != nil {
 			return errors.Wrapf(err, "read pure-simdjson object at %s", canonicalPath)
@@ -238,7 +240,9 @@ func (s *simdParser) walkElement(
 		}
 		return nil
 	case purejson.TypeArray:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		array, err := element.AsArray()
 		if err != nil {
 			return errors.Wrapf(err, "read pure-simdjson array at %s", canonicalPath)

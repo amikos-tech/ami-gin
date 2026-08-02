@@ -49,7 +49,9 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 
 	switch tok := token.(type) {
 	case json.Delim:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		switch tok {
 		case '{':
 			objectValues := make(map[string]any)
