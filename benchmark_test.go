@@ -1294,7 +1294,7 @@ func TestPhase11DiscoverExternalShardsRejectsEmptyRoot(t *testing.T) {
 	if !strings.Contains(err.Error(), phase11CorpusRootEnvVar) {
 		t.Fatalf("phase11DiscoverExternalShards() error = %q, want mention of %s", err, phase11CorpusRootEnvVar)
 	}
-	if !strings.Contains(err.Error(), filepath.Join("gharchive", "v0", "documents")) {
+	if !strings.Contains(err.Error(), phase11ExternalShardLayout) {
 		t.Fatalf("phase11DiscoverExternalShards() error = %q, want expected shard layout", err)
 	}
 }
@@ -1309,7 +1309,7 @@ func TestPhase11DiscoverExternalShardsRejectsMissingLayout(t *testing.T) {
 	if !strings.Contains(err.Error(), phase11CorpusRootEnvVar) {
 		t.Fatalf("phase11DiscoverExternalShards() error = %q, want mention of %s", err, phase11CorpusRootEnvVar)
 	}
-	if !strings.Contains(err.Error(), filepath.Join("gharchive", "v0", "documents")) {
+	if !strings.Contains(err.Error(), phase11ExternalShardLayout) {
 		t.Fatalf("phase11DiscoverExternalShards() error = %q, want expected shard layout", err)
 	}
 }
@@ -1751,7 +1751,7 @@ func TestPhase20LoadRawJSONLRejectsMalformedLines(t *testing.T) {
 			if err == nil {
 				t.Fatal("phase20LoadRawJSONL() error = nil, want invalid line rejection")
 			}
-			if !strings.Contains(err.Error(), filepath.Clean(path)) || !strings.Contains(err.Error(), fmt.Sprintf("line %d", tt.line)) {
+			if !strings.Contains(err.Error(), fmt.Sprintf("%q", filepath.Clean(path))) || !strings.Contains(err.Error(), fmt.Sprintf("line %d", tt.line)) {
 				t.Fatalf("phase20LoadRawJSONL() error = %q, want cleaned path and line %d", err, tt.line)
 			}
 		})
@@ -2435,7 +2435,7 @@ func TestPhase20ExternalResourceLimitsAndAccounting(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, _, err := phase20LoadExternalDocuments(jsonlPath, phase20MaxExternalBytes)
-		if err == nil || !strings.Contains(err.Error(), filepath.Clean(jsonlPath)) || !strings.Contains(err.Error(), "JSONL record exceeds") {
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", filepath.Clean(jsonlPath))) || !strings.Contains(err.Error(), "JSONL record exceeds") {
 			t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual scanner-too-long rejection", err)
 		}
 	})
@@ -2501,7 +2501,7 @@ func TestPhase20ExternalDepthValidation(t *testing.T) {
 			if err := os.WriteFile(path, test.contents, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), "depth") || !strings.Contains(err.Error(), filepath.Clean(path)) {
+			if _, _, err := phase20LoadExternalDocuments(path, phase20MaxExternalBytes); err == nil || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), "depth") || !strings.Contains(err.Error(), fmt.Sprintf("%q", filepath.Clean(path))) {
 				t.Fatalf("phase20LoadExternalDocuments() error = %v, want contextual depth rejection", err)
 			}
 		})
@@ -2514,7 +2514,7 @@ func TestPhase20ExternalDepthValidation(t *testing.T) {
 	}
 	t.Setenv(phase20ExternalEnableEnvVar, "1")
 	t.Setenv(phase20ExternalDirectoryEnvVar, directory)
-	if _, enabled, err := phase20DiscoverExternalDocuments(); err == nil || !enabled || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), filepath.Clean(discoveryPath)) {
+	if _, enabled, err := phase20DiscoverExternalDocuments(); err == nil || !enabled || !strings.Contains(err.Error(), "corpus validation") || !strings.Contains(err.Error(), fmt.Sprintf("%q", filepath.Clean(discoveryPath))) {
 		t.Fatalf("phase20DiscoverExternalDocuments() = (enabled=%v, error=%v), want contextual depth rejection", enabled, err)
 	}
 }

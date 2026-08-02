@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -649,6 +650,9 @@ func TestArtifactFileMode(t *testing.T) {
 }
 
 func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -691,6 +695,9 @@ func TestBuildSingleFileSidecarUsesSourcePermissions(t *testing.T) {
 }
 
 func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -743,6 +750,9 @@ func TestExtractSingleFileUsesSourcePermissionsForNewOutput(t *testing.T) {
 }
 
 func TestLocalOutputMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tmpDir := t.TempDir()
