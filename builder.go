@@ -182,17 +182,6 @@ func newDocumentBuildState(rgID int) *documentBuildState {
 	}
 }
 
-func (s *documentBuildState) getOrCreatePath(path string) *stagedPathData {
-	if pd, ok := s.paths[path]; ok {
-		return pd
-	}
-	pd := &stagedPathData{
-		stringTerms: make(map[string]struct{}),
-	}
-	s.paths[path] = pd
-	return pd
-}
-
 func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalPath string) (*stagedPathData, error) {
 	if pathState, ok := state.paths[canonicalPath]; ok {
 		return pathState, nil

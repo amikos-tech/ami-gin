@@ -3475,12 +3475,13 @@ func TestValidateStagedPathsRejectsLossyPromotionBeforeMerge(t *testing.T) {
 	}
 
 	state := newDocumentBuildState(1)
-	state.getOrCreatePath("$.score").numericValues = append(
-		state.getOrCreatePath("$.score").numericValues,
-		stagedNumericValue{floatVal: 1.5},
-	)
+	pathState, err := builder.getOrCreateStagedPath(state, "$.score")
+	if err != nil {
+		t.Fatalf("getOrCreateStagedPath: %v", err)
+	}
+	pathState.numericValues = append(pathState.numericValues, stagedNumericValue{floatVal: 1.5})
 
-	err := builder.validateStagedPaths(state)
+	err = builder.validateStagedPaths(state)
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}
@@ -3499,12 +3500,13 @@ func TestValidateStagedPathsRejectsUnsafeIntIntoFloatPath(t *testing.T) {
 	}
 
 	state := newDocumentBuildState(1)
-	state.getOrCreatePath("$.score").numericValues = append(
-		state.getOrCreatePath("$.score").numericValues,
-		stagedNumericValue{isInt: true, intVal: 9007199254740993},
-	)
+	pathState, err := builder.getOrCreateStagedPath(state, "$.score")
+	if err != nil {
+		t.Fatalf("getOrCreateStagedPath: %v", err)
+	}
+	pathState.numericValues = append(pathState.numericValues, stagedNumericValue{isInt: true, intVal: 9007199254740993})
 
-	err := builder.validateStagedPaths(state)
+	err = builder.validateStagedPaths(state)
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}
