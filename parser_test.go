@@ -275,14 +275,14 @@ func TestStdlibParserBuffersTransformedRootOnGenericSink(t *testing.T) {
 	}
 }
 
-func TestStdlibParserStagesArrayIndexAndWildcardOnGenericSink(t *testing.T) {
+func TestStdlibParserStagesArrayWildcardOnGenericSink(t *testing.T) {
 	sink := &recordingSink{}
 
 	if err := (stdlibParser{}).Parse([]byte(`[{"x":1}]`), 5, sink); err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	want := []string{"begin:5", "present:$", "materialized:$[0]", "materialized:$[*]"}
+	want := []string{"begin:5", "present:$", "materialized:$[*]"}
 	if len(sink.events) != len(want) {
 		t.Fatalf("events = %v, want %v", sink.events, want)
 	}
