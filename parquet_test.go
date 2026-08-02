@@ -3,6 +3,7 @@ package gin
 import (
 	stderrors "errors"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,6 +14,8 @@ type testRecord struct {
 	ID         int64  `parquet:"id"`
 	Attributes string `parquet:"attributes"`
 }
+
+const windowsOS = "windows"
 
 func createTestParquetFile(t *testing.T, path string, records []testRecord, rowsPerRG int64) {
 	t.Helper()
@@ -114,6 +117,9 @@ func TestSidecarReadWrite(t *testing.T) {
 }
 
 func TestWriteSidecarPreservesParquetPermissions(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -165,6 +171,9 @@ func TestWriteSidecarPreservesParquetPermissions(t *testing.T) {
 }
 
 func TestWriteSidecarRefreshesExistingSidecarPermissions(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tmpDir := t.TempDir()
@@ -372,6 +381,9 @@ func TestRebuildWithIndex(t *testing.T) {
 }
 
 func TestRebuildWithIndexPreservesParquetPermissions(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -423,6 +435,9 @@ func TestRebuildWithIndexPreservesParquetPermissions(t *testing.T) {
 }
 
 func TestRebuildWithIndexRefreshesModeFromSourceDespiteStaleTempFile(t *testing.T) {
+	if runtime.GOOS == windowsOS {
+		t.Skip("Windows does not preserve POSIX file permissions")
+	}
 	t.Parallel()
 
 	tmpDir := t.TempDir()

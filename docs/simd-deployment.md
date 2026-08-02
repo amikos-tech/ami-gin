@@ -35,32 +35,46 @@ Build the consuming application with the tag:
 go build -tags simdjson ./...
 ```
 
-Then construct the parser and select it explicitly. This complete example
-handles both construction errors and builder errors:
+Then construct the parser, select it explicitly, and retain ownership until
+every builder has stopped parsing. The markers below are synchronized with the
+compile-only public Example in `simd_example_test.go`:
 
 ```go
 package app
 
 import (
-	"errors"
+	"log"
 
 	gin "github.com/amikos-tech/ami-gin"
 )
 
-func newSIMDBuilder(
-	config gin.GINConfig,
-	numRGs int,
-) (*gin.GINBuilder, gin.CloseableParser, error) {
-	p, err := gin.NewSIMDParser()
-	if err != nil {
-		return nil, nil, err
-	}
+func enableSIMD() {
+	// SIMD_EXAMPLE_START
+	config := gin.DefaultConfig()
+	const numRGs = 1
 
-	builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(p))
+	parser, err := gin.NewSIMDParser()
 	if err != nil {
-		return nil, nil, errors.Join(err, p.Close())
+		log.Printf("SIMD parser unavailable: %v", err)
+		return
 	}
-	return builder, p, nil
+	defer func() {
+		if err := parser.Close(); err != nil {
+			log.Printf("close SIMD parser: %v", err)
+		}
+	}()
+
+	builder, err := gin.NewBuilder(config, numRGs, gin.WithParser(parser))
+	if err != nil {
+		log.Printf("create SIMD builder: %v", err)
+		return
+	}
+	if err := builder.AddDocument(0, []byte(`{"status":"ready"}`)); err != nil {
+		log.Printf("add document: %v", err)
+		return
+	}
+	_ = builder.Finalize()
+	// SIMD_EXAMPLE_END
 }
 ```
 
@@ -88,7 +102,7 @@ native resolution during `NewSIMDParser()`:
 
 Cache hits are not hashed again; upstream verifies them when they are first
 installed. See the
-[`pure-simdjson` bootstrap guide](https://github.com/amikos-tech/pure-simdjson/blob/main/docs/bootstrap.md)
+[`pure-simdjson` bootstrap guide](https://github.com/amikos-tech/pure-simdjson/blob/v0.1.7/docs/bootstrap.md)
 for the exact resolution order, supported artifact names, retry behavior, and
 pre-fetch commands.
 
@@ -230,10 +244,29 @@ should not rely on numeric soft-skip policy to admit malformed documents.
 
 ## Validation scope
 
-CI verifies byte-identical stdlib/SIMD output for the authored parity fixtures
-on Linux amd64, including mixed integer/float paths, array siblings, and
-transformer-buffered numeric containers. Tagged tests also pin the 1,023/1,024
-nesting boundary and the malformed trailing-number classification difference
-as explicit exclusions from byte parity. Measured performance, broader
-runtime-platform coverage, and end-to-end operational verification remain
-separate work; no speedup or five-platform certification is claimed here.
+Phase 22 validates identical encoded indexes and query results for documents
+that ingest without a parser-layer error. The evidence covers the authored
+parity fixtures, all four checked-in realistic fixtures, their registered
+queries, and the shared Evaluate matrix. Malformed failure-layer attribution is
+an explicit, tested exclusion: malformed bytes such as `1e400 garbage` may be
+reported at different ingest layers, but neither parser commits an index for
+that input.
+
+The configured Phase 22 support policy covers five platform pairs: two
+required and three advisory. The final remote evidence gate is owned by Plan
+22-08, so this table describes policy and does not claim that this repository's
+five-leg matrix has completed:
+
+| Platform | Policy tier | Merge behavior |
+| --- | --- | --- |
+| `linux/amd64` | Required | Tagged tests with the race detector must pass. |
+| `darwin/arm64` | Required | Tagged tests with the race detector must pass. |
+| `linux/arm64` | Advisory | Tagged tests run without the race detector. |
+| `darwin/amd64` | Advisory (tier 2) | Tagged tests run without the race detector. |
+| `windows/amd64` | Advisory | Tagged tests run without the race detector. |
+
+Controlled, repeated measurements on committed fixtures are the source for a
+release recommendation. Shared-runner benchmark output is trend data only: it
+is useful for spotting large changes, but runner noise makes it unsuitable for
+an authoritative performance claim. No SIMD speedup is claimed here; the
+controlled benchmark report is produced separately.

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"phase20_source_kind\":\"mixed-type-arrays\",\"record_id\":\"array-0000\",\"timestamp\":\"2024-03-01T12:00:00Z\",\"wildcard_values\":[\"tag-00\",0,0.25,true,null,{\"kind\":\"object\",\"id\":\"object-0000\"},[]],\"searchable_text\":\"mixed wildcard array fixture 0000\"}")

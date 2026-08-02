@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: ready_to_plan
-stopped_at: Phase 21 complete (5/5) — ready to discuss Phase 22
-last_updated: 2026-07-31T08:29:53Z
-last_activity: 2026-07-31 - Completed fast task 260731-fast2: Addressed PR #52 review nits — bench now covers all packages, help flags slow runtime, STATE row corrected
+status: executing
+stopped_at: Completed 22-06-PLAN.md
+last_updated: "2026-08-01T10:12:11.503Z"
+last_activity: 2026-08-01
 progress:
   total_phases: 8
   completed_phases: 3
-  total_plans: 8
-  completed_plans: 8
+  total_plans: 16
+  completed_plans: 15
   percent: 38
 ---
 
@@ -25,12 +25,12 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 ## Current Position
 
-Phase: 22 (simd-validation-benchmarks-ci)
-Plan: Not started
-Status: Ready to discuss
-Last activity: 2026-07-31 - Completed fast task 260731-fast2: Addressed PR #52 review nits — bench now covers all packages, help flags slow runtime, STATE row corrected
+Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
+Plan: 8 of 8
+Status: Ready to execute
+Last activity: 2026-08-01
 
-Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Phase 21: 5/5 complete)
+Progress: [█████████░] 94%
 
 ## Performance Metrics
 
@@ -61,6 +61,13 @@ Progress: [████░░░░░░] 38% for v1.3 (3/8 phases complete; Ph
 | 18 | 4 | Complete (4/4 plans complete) |
 | Phase 21 P04 | 8 min | 2 tasks | 5 files |
 | Phase 21 P05 | 7 min | 1 tasks | 2 files |
+| Phase 22 P01 | 2 min | 2 tasks | 1 files |
+| Phase 22 P02 | 10 min | 2 tasks | 5 files |
+| Phase 22 P03 | 8 min | 2 tasks | 6 files |
+| Phase 22 P04 | 9 min | 2 tasks | 5 files |
+| Phase 22 P05 | 8 min | 2 tasks | 2 files |
+| Phase 22 P07 | 9 min | 2 tasks | 3 files |
+| Phase 22 P06 | 12 min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -93,6 +100,25 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - **Phase 19 strategy complete**: locked `pure-simdjson v0.1.4` at tag commit `0f53f3f2e8bb9608d6b79211ffc5fc7b53298617`, MIT/NOTICE posture, `NewSIMDParser() (Parser, error)`, `//go:build simdjson`, explicit `WithParser` opt-in, 5-platform SIMD CI expectation including `windows-amd64-msvc`, and hard/soft stop policy.
 - [Phase 21]: Parser cleanup failures are terminal builder integrity failures, with cleanup and concurrent walk causes preserved as peer unwrap branches — Prevents soft mode from hiding a permanently busy native parser
 - [Phase 21]: Panic-aware SIMD cleanup preserves ordinary panic identity but routes failed close through terminal builder state — Prevents parser soft mode from hiding a busy native parser after caller recovery
+- [Phase 22]: Approved github.com/amikos-tech/pure-simdjson v0.1.7 for Phase 22 evidence — Human reviewed the public source/tag, MIT license, NOTICE posture, and accepted the non-SLOP provenance warning
+- [Phase 22]: Approved golang.org/x/perf@v0.0.0-20260709024250-82a0b07e230d for ephemeral benchstat analysis — Use only the exact pinned go run command; keep x/perf out of go.mod
+- [Phase 22]: Supported SIMD tests use one testing.TB helper: unsupported platforms skip before construction, local load failures skip with remediation, and AMI_GIN_SIMD_REQUIRED=1 makes supported-host failures fatal. — Prevents supported CI from succeeding through a silent skip while preserving local and unsupported-host usability.
+- [Phase 22]: Realistic parity remains a live same-process differential; Phase 20 binary goldens are not added. — Avoids duplicate generated artifacts while directly comparing identical inputs and configuration.
+- [Phase 22]: Qualified SIMD parity covers documents that ingest without a parser-layer error; malformed failure-layer attribution is the tested exclusion. — Keeps the Phase 19 HARD stop scoped to encoded-byte or query-result differences.
+- [Phase 22]: Fuzz parity uses hard parser failures plus soft numeric failures. — The existing malformed trailing-number attribution difference stays observable without treating either arm as committed.
+- [Phase 22]: Committed fuzz state comes from fresh-builder numDocs bookkeeping. — Encoding runs only after exactly one document commits, so empty finalized indexes cannot masquerade as successful ingestion.
+- [Phase 22]: Unexpected one-sided commits remain non-fatal under a stable structured record. — SIMD_FUZZ_OUTCOME class=unexpected_one_sided_commit preserves both arm outcomes as deterministic verbose evidence without widening the known malformed exclusion.
+- [Phase 22]: SIMD documentation contract derives effective module version and directory through go list — Honors versioned replacements and rejects unversioned local replacements before forming pinned links
+- [Phase 22]: Tagged public SIMD Example remains compile-only without an output directive — Compiles constructor ownership and cleanup without loading the native library
+- [Phase 22]: SIMD platform guidance records the configured two-required and three-advisory policy pending remote evidence — Avoids claiming a completed five-leg run and keeps parity qualified to documents without parser-layer errors
+- [Phase 22]: Paired SIMD ingest benchmarks select stdlib and one shared sequential SIMD parser through the same Phase 20 build helper. — Preserves identical configuration and row-group packing while honoring Spike 003's no-bias lifecycle evidence.
+- [Phase 22]: SIMD benchmark throughput counts input JSON document bytes and B/op is Go-heap-only. — Keeps throughput tied to ingest payload and avoids treating invisible native buffers as total-memory evidence.
+- [Phase 22]: The optional benchmark corpus remains a dedicated subtree behind the two Phase 20 SIMD variables. — Disabled external input cannot suppress offline smoke siblings or expand the existing loader boundary.
+- [Phase 22]: Required-host enforcement and leak warnings stay job-wide, while runner-derived cache paths are step-local. — GitHub Actions does not expose the runner context to job-level env.
+- [Phase 22]: workflow_dispatch intentionally runs every CI job; the non-gating SIMD trend job is separately event-guarded. — GitHub dispatch is workflow-scoped, while the trend artifact must run only on dispatch or push-main.
+- [Phase 22]: Explicit-path parity reuses one validated effective-version cache file. — The focused second pass proves local loading without adding a downstream download or bootstrap path.
+- [Phase 22]: Defer the SIMD path as a shippable v1.3 performance option — Controlled parity passed, but all four smoke fixtures favored stdlib for time, throughput, Go-heap bytes, and allocations.
+- [Phase 22]: Treat committed COUNT=10 evidence as authoritative without a performance threshold — Single-run and shared-runner output are noisy trend evidence only.
 
 ### Roadmap Evolution
 
@@ -117,7 +143,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 
 ### Pending Todos
 
-- Discuss and plan Phase 22: SIMD Validation, Benchmarks & CI (`$gsd-discuss-phase 22`).
+- [Bind required SIMD checks in ruleset](todos/pending/2026-08-02-bind-required-simd-checks-in-ruleset.md) — Phase 22 Plan 22-08 is blocked until exactly the two required SIMD contexts bind the default branch.
 
 ### Blockers/Concerns
 
@@ -187,8 +213,8 @@ Items deferred to current or later milestones:
 
 ## Session Continuity
 
-Last session: 2026-07-23T08:28:09Z
-Stopped at: Phase 21 complete and independently verified
+Last session: 2026-08-01T10:11:51.812Z
+Stopped at: Completed 22-06-PLAN.md
 Resume file: None
 
-**Next step:** Discuss Phase 22 — run `$gsd-discuss-phase 22`.
+**Next step:** Execute Phase 22 Plan 08.

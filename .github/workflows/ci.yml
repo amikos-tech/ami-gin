@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [main]
+  # workflow_dispatch runs every CI job; the benchmark job has its own event guard.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -71,6 +73,9 @@ jobs:
       - name: Check NOTICE version alignment
         run: make check-notice-version
 
+      - name: Check SIMD documentation contract
+        run: make check-simd-docs
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
@@ -96,8 +101,59 @@ jobs:
         run: make build
 
   simd:
-    name: SIMD parser
-    runs-on: ubuntu-latest
+    name: SIMD (${{ matrix.goos }}/${{ matrix.goarch }}, ${{ matrix.tier }})
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: ${{ matrix.advisory }}
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            tier: required
+            advisory: false
+            race: true
+            release: linux-amd64
+            library: libpure_simdjson.so
+          - runner: macos-15
+            goos: darwin
+            goarch: arm64
+            tier: required
+            advisory: false
+            race: true
+            release: darwin-arm64
+            library: libpure_simdjson.dylib
+          - runner: ubuntu-24.04-arm
+            goos: linux
+            goarch: arm64
+            tier: advisory
+            advisory: true
+            race: false
+            release: linux-arm64
+            library: libpure_simdjson.so
+          - runner: macos-15-intel
+            goos: darwin
+            goarch: amd64
+            tier: advisory
+            advisory: true
+            race: false
+            release: darwin-amd64
+            library: libpure_simdjson.dylib
+          - runner: windows-latest
+            goos: windows
+            goarch: amd64
+            tier: advisory
+            advisory: true
+            race: false
+            release: windows-amd64-msvc
+            library: pure_simdjson-msvc.dll
+    env:
+      AMI_GIN_SIMD_REQUIRED: "1"
+      PURE_SIMDJSON_WARN_LEAKS: "1"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -108,20 +164,110 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: go.sum
 
+      - name: Resolve effective SIMD version
+        id: simd-version
+        run: |
+          pure_simdjson_version="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"
+          printf 'version=%s\n' "$pure_simdjson_version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native SIMD library
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/pure-simdjson
+          key: pure-simdjson-${{ runner.os }}-${{ runner.arch }}-${{ steps.simd-version.outputs.version }}
+
       - name: Install verified native SIMD library
         env:
           PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
           PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+        run: go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${{ steps.simd-version.outputs.version }}" fetch
+
+      - name: Resolve validated native SIMD library
+        id: simd-library
+        env:
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
         run: |
-          pure_simdjson_version="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"
-          go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${pure_simdjson_version}" fetch
+          simd_library="${PURE_SIMDJSON_CACHE_DIR}/${{ steps.simd-version.outputs.version }}/${{ matrix.goos }}-${{ matrix.goarch }}/${{ matrix.library }}"
+          test -f "$simd_library"
+          printf 'path=%s\n' "$simd_library" >> "$GITHUB_OUTPUT"
 
       - name: Run SIMD-tagged tests
         env:
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+        run: |
+          race_flags=()
+          if [[ "${{ matrix.race }}" == "true" ]]; then
+            race_flags=(-race)
+          fi
+          go test -tags simdjson "${race_flags[@]}" -timeout=30m ./...
+
+      - name: Run explicit-path SIMD parity smoke
+        if: ${{ always() && steps.simd-library.outcome == 'success' }}
+        env:
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+          PURE_SIMDJSON_LIB_PATH: ${{ steps.simd-library.outputs.path }}
+        run: |
+          race_flags=()
+          if [[ "${{ matrix.race }}" == "true" ]]; then
+            race_flags=(-race)
+          fi
+          go test -tags simdjson "${race_flags[@]}" -run '^(TestSIMDParserGoldenAuthoredFixtures|TestSIMDParserPhase20Parity)$' -timeout=30m .
+
+  simd-benchmark-trend:
+    name: SIMD benchmark trend (shared runner, non-gating)
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      AMI_GIN_SIMD_REQUIRED: "1"
+      PURE_SIMDJSON_WARN_LEAKS: "1"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+
+      - name: Resolve effective SIMD version
+        id: simd-version
+        run: |
+          pure_simdjson_version="$(go list -m -f '{{if .Replace}}{{.Replace.Version}}{{else}}{{.Version}}{{end}}' github.com/amikos-tech/pure-simdjson)"
+          printf 'version=%s\n' "$pure_simdjson_version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore native SIMD library
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/pure-simdjson
+          key: pure-simdjson-${{ runner.os }}-${{ runner.arch }}-${{ steps.simd-version.outputs.version }}
+
+      - name: Install verified native SIMD library
+        env:
           PURE_SIMDJSON_BINARY_MIRROR: https://github.com/amikos-tech/pure-simdjson/releases/download
           PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
-          PURE_SIMDJSON_WARN_LEAKS: "1"
-        run: go test -tags simdjson -race -timeout=30m ./...
+        run: go run "github.com/amikos-tech/pure-simdjson/cmd/pure-simdjson-bootstrap@${{ steps.simd-version.outputs.version }}" fetch
+
+      - name: Capture SIMD benchmark trend
+        env:
+          PURE_SIMDJSON_CACHE_DIR: ${{ runner.temp }}/pure-simdjson
+        run: env -u GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL -u GIN_PHASE20_SIMDJSON_DIR make bench-simd COUNT=1 BENCHTIME=1s > simd-benchmark.txt
+
+      - name: Compare parser arms
+        run: go run golang.org/x/perf/cmd/benchstat@v0.0.0-20260709024250-82a0b07e230d -col /parser simd-benchmark.txt > simd-benchstat.txt
+
+      - name: Label shared-runner evidence
+        run: echo 'shared-runner-noisy, trend only; controlled committed Phase 22 evidence is authoritative' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SIMD trend text
+        uses: actions/upload-artifact@v7
+        with:
+          name: simd-benchmark-trend
+          path: |
+            simd-benchmark.txt
+            simd-benchstat.txt
+          if-no-files-found: error
 
   govulncheck:
     runs-on: ubuntu-latest

@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("{\"phase20_source_kind\":\"nested-high-cardinality\",\"event_category\":\"issue-comment\",\"event_id\":\"evt-0000\",\"timestamp\":\"2024-02-01T00:00:00Z\",\"actor\":{\"id\":\"actor-10000\",\"user\":{\"login\":\"user-000\",\"display_name\":\"Fixture User 000\"}},\"repository\":{\"id\":\"repo-20000\",\"name\":\"org-00/service-00\",\"url\":\"https://example.test/org-00/service-00\"},\"url\":\"https://example.test/org-00/service-00/events/1000\",\"searchable_text\":\"issue-comment event 0000 from user-000 reviews searchable indexing behavior\"}")

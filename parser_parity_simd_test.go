@@ -32,15 +32,7 @@ func TestSIMDParserSoftSkipAndMalformedJSONByteParity(t *testing.T) {
 
 	stdlibEncoded := buildAndEncodeWithParser(t, fx, stdlibParser{})
 
-	parser, err := NewSIMDParser()
-	if err != nil {
-		t.Fatalf("NewSIMDParser: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := parser.Close(); err != nil {
-			t.Errorf("Close SIMD parser: %v", err)
-		}
-	})
+	parser := newTestSIMDParser(t)
 	simdEncoded := buildAndEncodeWithParser(t, fx, parser)
 
 	assertByteIdentical(t, fx.Name, simdEncoded, stdlibEncoded)

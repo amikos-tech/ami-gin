@@ -1,0 +1,3 @@
+# Keep checked-out text stable across CI platforms. Several fixtures and
+# contract checks deliberately depend on LF bytes.
+* text=auto eol=lf
