@@ -181,7 +181,7 @@ func runFuzzParserParityInput(
 	case fuzzOutcomeByteDivergence:
 		assertByteIdentical(t, "fuzz-hard-stop", simdOutcome.encoded, stdlibOutcome.encoded)
 	case fuzzOutcomeUnexpectedOneSidedCommit:
-		t.Log(formatUnexpectedOneSidedCommit(stdlibOutcome, simdOutcome))
+		t.Fatal(formatUnexpectedOneSidedCommit(stdlibOutcome, simdOutcome))
 	}
 }
 

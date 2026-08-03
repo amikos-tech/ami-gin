@@ -295,10 +295,10 @@ func evaluateMatrixFixture() parityFixture {
 		Config: DefaultConfig,
 		NumRGs: 4,
 		JSONDocs: [][]byte{
-			[]byte(`{"name":"alice","age":30,"status":"active","bio":"hello world"}`),
-			[]byte(`{"name":"bob","age":25,"status":"inactive","bio":"foo bar baz"}`),
-			[]byte(`{"name":"alice","age":40,"status":null,"bio":"test message qux"}`),
-			[]byte(`{"name":"carol","age":35,"bio":"hello again"}`),
+			[]byte(`{"name":"alice","age":30,"status":"active","bio":"hello world","matrix":[[1,2],["x"]],"mixed":[1,"one"],"batches":[{"values":[{"score":7}]}]}`),
+			[]byte(`{"name":"bob","age":25,"status":"inactive","bio":"foo bar baz","matrix":[[3]],"mixed":[2,"two"],"batches":[{"values":[{"score":8},{"score":9}]}]}`),
+			[]byte(`{"name":"alice","age":40,"status":null,"bio":"test message qux","matrix":[],"mixed":[],"batches":[]}`),
+			[]byte(`{"name":"carol","age":35,"bio":"hello again","matrix":[[],[1]],"mixed":[false],"batches":[{"values":[]}]}`),
 		},
 	}
 }
@@ -363,6 +363,12 @@ func evaluateMatrixCases() []evaluateMatrixCase {
 		{"Contains-prune", Contains("$.bio", "zzzzzz"), []int{}},
 		{"Regex-match", Regex("$.bio", "^hello"), []int{0, 3}},
 		{"Regex-prune", Regex("$.bio", "zzzzzz"), []int{}},
+		{"Nested-array-EQ-match", EQ("$.matrix[*][*]", int64(1)), []int{0, 3}},
+		{"Nested-array-EQ-prune", EQ("$.matrix[*][*]", int64(99)), []int{}},
+		{"Mixed-array-string-EQ-match", EQ("$.mixed[*]", "two"), []int{1}},
+		{"Mixed-array-numeric-EQ-match", EQ("$.mixed[*]", int64(2)), []int{1}},
+		{"Empty-array-IsNotNull-match", IsNotNull("$.matrix"), []int{0, 1, 2, 3}},
+		{"Arrays-in-objects-in-arrays-EQ-match", EQ("$.batches[*].values[*].score", int64(8)), []int{1}},
 	}
 }
 

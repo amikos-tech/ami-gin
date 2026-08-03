@@ -171,8 +171,9 @@ type stagedPathData struct {
 }
 
 type documentBuildState struct {
-	rgID  int
-	paths map[string]*stagedPathData
+	rgID             int
+	paths            map[string]*stagedPathData
+	visiblePathCount int
 }
 
 func newDocumentBuildState(rgID int) *documentBuildState {
@@ -182,20 +183,35 @@ func newDocumentBuildState(rgID int) *documentBuildState {
 	}
 }
 
+// +hard-ingest
+//
+// getOrCreateStagedPath returns the staged state for canonicalPath, creating
+// it only when the configured caller-visible path budget permits it.
 func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalPath string) (*stagedPathData, error) {
 	if pathState, ok := state.paths[canonicalPath]; ok {
 		return pathState, nil
 	}
-	if b.config.MaxStagedPaths > 0 && len(state.paths) >= b.config.MaxStagedPaths {
-		return nil, newIngestErrorString(
-			IngestLayerSchema,
-			canonicalPath,
-			"",
-			errors.Errorf("staged path budget exceeded: limit %d", b.config.MaxStagedPaths),
-		)
+	internalPath := isInternalRepresentationPath(canonicalPath)
+	if !internalPath && b.config.MaxStagedPaths > 0 {
+		if state.visiblePathCount >= b.config.MaxStagedPaths {
+			requiredPathCount := state.visiblePathCount + 1
+			return nil, newIngestErrorString(
+				IngestLayerResource,
+				canonicalPath,
+				strconv.Itoa(requiredPathCount),
+				errors.Errorf(
+					"staged path budget exceeded: limit %d; document requires at least %d caller-visible paths",
+					b.config.MaxStagedPaths,
+					requiredPathCount,
+				),
+			)
+		}
 	}
 	pathState := &stagedPathData{stringTerms: make(map[string]struct{})}
 	state.paths[canonicalPath] = pathState
+	if !internalPath {
+		state.visiblePathCount++
+	}
 	return pathState, nil
 }
 

@@ -607,9 +607,9 @@ func experimentIngestFailureGroups(groups map[gin.IngestLayer]*experimentFailure
 }
 
 func experimentIngestLayerRank(layer gin.IngestLayer) (int, bool) {
-	// Keep report order pinned as parser, transformer, numeric, schema, then
-	// unknown. Any future IngestLayer string not in this list sorts lexically
-	// after the pinned buckets in experimentIngestFailureGroups.
+	// Keep report order pinned as parser, transformer, numeric, schema,
+	// resource, then unknown. Any future IngestLayer string not in this list
+	// sorts lexically after the pinned buckets in experimentIngestFailureGroups.
 	switch layer {
 	case gin.IngestLayerParser:
 		return 0, true
@@ -619,8 +619,10 @@ func experimentIngestLayerRank(layer gin.IngestLayer) (int, bool) {
 		return 2, true
 	case gin.IngestLayerSchema:
 		return 3, true
-	case experimentUnknownFailureLayer:
+	case gin.IngestLayerResource:
 		return 4, true
+	case experimentUnknownFailureLayer:
+		return 5, true
 	default:
 		return 0, false
 	}

@@ -1,23 +1,26 @@
 # Parser Parity Goldens
 
-Byte-level goldens pinning `Encode()` output for the `stdlibParser` path.
-They are the Phase 13 merge gate: if `parser_parity_test.go` fails with a
-byte-mismatch, the refactor drifted from v1.0 behavior.
+Byte-level goldens pinning the current `Encode()` output for the
+`stdlibParser` path. They are a merge gate: an unexpected byte mismatch means
+the current parser or serialization contract drifted.
 
-Regenerated only when the serialization format bumps (v10+) or a
-legitimate behavior change is approved and audited.
+They are not an unconditional v1.0 compatibility assertion. In particular,
+the array canonicalization change records array elements only at wildcard
+paths, so array-bearing fixtures intentionally differ from the old v1.0
+encoding.
+
+Regenerate only when the serialization format bumps (v10+) or an approved
+behavior change requires it, and record the review in the audit trail below.
 
 ## How these were initially captured
 
-The goldens in this directory were generated during Phase 13 Plan 02,
-AFTER `AddDocument` was wired through the new parser seam and the Plan 02
-benchmark gate confirmed no representative performance drift against the
-focused v1.0 baseline (`GOMAXPROCS=1`, three-run probes, equal allocs/op,
-and flat wall-clock medians on the seam-path benchmarks). Because
-`stdlibParser.Parse` is a code-move of the pre-refactor
-`parseAndStageDocument` + `stageStreamValue` + `decodeTransformedValue`
-logic, the encoded bytes captured from this branch are the authoritative
-pins for the seam path without needing a brittle v1.0 cherry-pick.
+The goldens in this directory were initially generated during Phase 13 Plan
+02, after `AddDocument` was wired through the parser seam and its benchmark
+gate found no representative performance drift. At that point,
+`stdlibParser.Parse` was a code move of the direct staging path, so the blobs
+were a useful baseline without a brittle historical cherry-pick. They now pin
+the audited current behavior instead; later approved behavior changes must be
+recorded in the audit trail.
 
 ## Regenerate (future format bumps)
 
@@ -27,6 +30,23 @@ go test -tags regenerate_goldens -run TestRegenerateParityGoldens -count=1 .
 git add testdata/parity-golden/*.bin
 git commit -m "chore(parity): refresh goldens to v<N>"
 ```
+
+For a behavior change, the owning commit must include the regenerated blobs
+and an audit note that names the expected fixture changes and the test used to
+verify them. Do not put the golden refresh in a later test-only commit: that
+separates the behavior change from the evidence required to review it.
+
+## Audit trail
+
+- 2026-08-02 — Array elements changed from private numeric paths to canonical
+  wildcard paths in `0a9d371`. The four affected fixtures are
+  `deep-nested`, `empty-arrays`, `single-rg-array-siblings`, and
+  `transformer-buffered-container-numerics`; each becomes smaller because
+  private numeric paths are removed. Their refresh landed separately in
+  `b44ac8e`, which is a historical exception to the same-commit rule above.
+  The intervening staging change only adds an array index to malformed-input
+  error text, so it does not affect these valid fixtures. The current
+  `TestStdlibParserGolden_AuthoredFixtures` check verifies the audited blobs.
 
 ## Format
 

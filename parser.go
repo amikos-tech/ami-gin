@@ -101,9 +101,9 @@ type CloseableParser interface {
 }
 
 // WithParser installs a custom JSON parser. The default is stdlibParser
-// (encoding/json.Decoder with UseNumber), which preserves v1.0 behavior
-// byte-identically. Supplying nil returns an error. If supplied multiple
-// times, the last WithParser wins (BuilderOption convention).
+// (encoding/json.Decoder with UseNumber). Supplying nil returns an error. If
+// supplied multiple times, the last WithParser wins (BuilderOption
+// convention).
 //
 // NOTE: external (out-of-package) implementations of Parser are not
 // currently possible because parserSink is package-private. WithParser

@@ -3166,7 +3166,10 @@ func TestMaxStagedPaths(t *testing.T) {
 		t.Fatal("NewBuilder with negative MaxStagedPaths succeeded, want validation error")
 	}
 
-	config, err := NewConfig(WithMaxStagedPaths(2))
+	config, err := NewConfig(
+		WithMaxStagedPaths(2),
+		WithParserFailureMode(IngestFailureSoft),
+	)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
@@ -3181,14 +3184,20 @@ func TestMaxStagedPaths(t *testing.T) {
 	if !stderrors.As(err, &ingestErr) {
 		t.Fatalf("AddDocument error = %T %v, want extractable *IngestError", err, err)
 	}
-	if got := ingestErr.Layer(); got != IngestLayerSchema {
-		t.Fatalf("IngestError.Layer() = %q, want %q", got, IngestLayerSchema)
+	if got := ingestErr.Layer(); got != IngestLayerResource {
+		t.Fatalf("IngestError.Layer() = %q, want %q", got, IngestLayerResource)
 	}
 	if got := ingestErr.Path(); got != "$.items.label" {
 		t.Fatalf("IngestError.Path() = %q, want %q", got, "$.items.label")
 	}
-	if got := ingestErr.Cause().Error(); got != "staged path budget exceeded: limit 2" {
+	if got := ingestErr.Value(); got != "3" {
+		t.Fatalf("IngestError.Value() = %q, want minimum required path count 3", got)
+	}
+	if got := ingestErr.Cause().Error(); got != "staged path budget exceeded: limit 2; document requires at least 3 caller-visible paths" {
 		t.Fatalf("IngestError.Cause() = %q, want exact budget error", got)
+	}
+	if got := builder.NumSoftSkippedDocuments(); got != 0 {
+		t.Fatalf("NumSoftSkippedDocuments() = %d, want 0; ParserFailureMode must not soften resource failures", got)
 	}
 	if builder.numDocs != 0 || len(builder.docIDToPos) != 0 || len(builder.posToDocID) != 0 || len(builder.pathData) != 0 {
 		t.Fatalf("failed document mutated builder: numDocs=%d docIDToPos=%d posToDocID=%d pathData=%d", builder.numDocs, len(builder.docIDToPos), len(builder.posToDocID), len(builder.pathData))
@@ -3201,6 +3210,18 @@ func TestMaxStagedPaths(t *testing.T) {
 	unlimitedBuilder := mustNewBuilder(t, unlimitedConfig, 1)
 	if err := unlimitedBuilder.AddDocument(0, []byte(`{"items":{"label":"wanted"}}`)); err != nil {
 		t.Fatalf("AddDocument with unlimited staged paths: %v", err)
+	}
+
+	transformConfig, err := NewConfig(
+		WithMaxStagedPaths(2), // $ and $.email
+		WithToLowerTransformer("$.email", "lower"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig with transformer: %v", err)
+	}
+	transformBuilder := mustNewBuilder(t, transformConfig, 1)
+	if err := transformBuilder.AddDocument(0, []byte(`{"email":"A@B.com"}`)); err != nil {
+		t.Fatalf("AddDocument must not charge internal companion paths to MaxStagedPaths: %v", err)
 	}
 }
 

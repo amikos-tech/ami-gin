@@ -64,6 +64,21 @@ func TestHardIngestFunctionsDoNotReturnPlainErrors(t *testing.T) {
 	}
 }
 
+func TestHardIngestGuardIncludesStagedPathBudget(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "builder.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse builder.go: %v", err)
+	}
+
+	for _, fn := range hardIngestFunctions(file) {
+		if fn.Name.Name == "getOrCreateStagedPath" {
+			return
+		}
+	}
+	t.Fatal("hard-ingest guard does not include getOrCreateStagedPath")
+}
+
 func containsIngestErrorWrapper(expr ast.Expr) bool {
 	found := false
 	ast.Inspect(expr, func(node ast.Node) bool {

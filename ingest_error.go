@@ -19,6 +19,11 @@ const (
 
 	// IngestLayerSchema identifies unsupported value-shape failures for a document.
 	IngestLayerSchema IngestLayer = "schema"
+
+	// IngestLayerResource identifies a builder resource limit that rejected an
+	// otherwise valid document. Callers can adjust the relevant builder limit
+	// and retry the document.
+	IngestLayerResource IngestLayer = "resource"
 )
 
 // IngestError reports a hard per-document ingest failure.
@@ -28,11 +33,13 @@ const (
 //
 // Layer() identifies the ingest stage that rejected the document. Callers must
 // tolerate future layer strings in addition to the built-in parser,
-// transformer, numeric, and schema values.
+// transformer, numeric, schema, and resource values.
 //
 // Value() returns a verbatim string representation of the offending input or
-// value. The library does not redact or truncate it; callers that log
-// untrusted documents own their redaction and output-size policy.
+// value for document-data failures. Resource failures instead return the
+// relevant limit diagnostic. The library does not redact or truncate either;
+// callers that log untrusted documents own their redaction and output-size
+// policy.
 type IngestError struct {
 	path  string
 	layer IngestLayer
@@ -56,7 +63,8 @@ func (e *IngestError) Layer() IngestLayer {
 	return e.layer
 }
 
-// Value returns the verbatim offending input or transformed value.
+// Value returns the verbatim offending input or transformed value. Resource
+// failures return the relevant limit diagnostic instead.
 func (e *IngestError) Value() string {
 	if e == nil {
 		return ""

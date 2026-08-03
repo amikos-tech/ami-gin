@@ -408,8 +408,10 @@ type GINConfig struct {
 	// SerializedConfig and writeConfig/readConfig for persisted config state.
 	ParserFailureMode  IngestFailureMode
 	NumericFailureMode IngestFailureMode
-	// MaxStagedPaths limits distinct paths staged for one document. Zero is
-	// unlimited. It is a builder-time guard and is not serialized.
+	// MaxStagedPaths limits distinct caller-visible canonical JSON paths staged
+	// for one document. The root and container paths count; internal companion
+	// representation paths do not. Zero is unlimited. It is a builder-time
+	// guard and is not serialized.
 	MaxStagedPaths             int
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
@@ -463,8 +465,16 @@ func WithNumericFailureMode(mode IngestFailureMode) ConfigOption {
 	}
 }
 
-// WithMaxStagedPaths limits distinct paths staged for one document. Zero
-// leaves staging unlimited.
+// WithMaxStagedPaths limits distinct caller-visible canonical JSON paths
+// staged for one document. The root and object/array container paths count;
+// internal companion representation paths created by transformers do not.
+// Zero leaves staging unlimited.
+//
+// If the limit is exceeded, AddDocument returns a hard *IngestError with
+// Layer() == IngestLayerResource and Path() set to the first path that would
+// exceed the budget. Value() is the minimum number of caller-visible paths
+// required to reach that path. This builder resource failure is never softened
+// by ParserFailureMode and is reported by AddDocument, not Finalize.
 func WithMaxStagedPaths(limit int) ConfigOption {
 	return func(c *GINConfig) error {
 		if limit < 0 {
