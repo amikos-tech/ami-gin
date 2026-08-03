@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 )
 
 const simdDeploymentGuidePath = "docs/simd-deployment.md"
+const requireSIMDDocumentationUpstreamEnv = "AMI_GIN_REQUIRE_SIMD_DOCS_UPSTREAM"
 
 var completeSIMDModuleVersion = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?$`)
 
@@ -191,10 +193,11 @@ func loadSIMDDocumentationInputs(t *testing.T) simdDocumentationInputs {
 
 	root := repositoryRoot(t)
 	listing := resolveSIMDModuleListing(t, root)
-	version, moduleDir, err := effectiveSIMDModule(listing)
+	version, moduleDir, err := resolvedSIMDModule(listing)
 	if err != nil {
 		t.Fatalf("resolve effective pure-simdjson module: %v", err)
 	}
+	libraryLoading, bootstrap, cache := loadSIMDLoadingSources(t, moduleDir)
 
 	return simdDocumentationInputs{
 		effectiveVersion: version,
@@ -204,20 +207,34 @@ func loadSIMDDocumentationInputs(t *testing.T) simdDocumentationInputs {
 		readme:           string(readTestFile(t, filepath.Join(root, "README.md"))),
 		changelog:        string(readTestFile(t, filepath.Join(root, "CHANGELOG.md"))),
 		parser:           string(readTestFile(t, filepath.Join(root, "parser_simd.go"))),
-		libraryLoading:   string(readTestFile(t, filepath.Join(moduleDir, "library_loading.go"))),
-		bootstrap:        string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "bootstrap.go"))),
-		cache:            string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "cache.go"))),
+		libraryLoading:   libraryLoading,
+		bootstrap:        bootstrap,
+		cache:            cache,
 	}
+}
+
+func loadSIMDLoadingSources(t *testing.T, moduleDir string) (string, string, string) {
+	t.Helper()
+	if moduleDir == "" {
+		if os.Getenv(requireSIMDDocumentationUpstreamEnv) == "1" {
+			t.Fatalf("effective pure-simdjson module is not downloaded; run go mod download %s first", pureSIMDJSONModule)
+		}
+		return knownSIMDLoadingSource("libraryEnvPath", "PURE_SIMDJSON_LIB_PATH"),
+			knownSIMDLoadingSource("mirrorEnvVar", "PURE_SIMDJSON_BINARY_MIRROR") + "\n" + knownSIMDLoadingSource("disableGHEnvVar", "PURE_SIMDJSON_DISABLE_GH_FALLBACK"),
+			knownSIMDLoadingSource("cacheDirEnvVar", "PURE_SIMDJSON_CACHE_DIR")
+	}
+
+	return string(readTestFile(t, filepath.Join(moduleDir, "library_loading.go"))),
+		string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "bootstrap.go"))),
+		string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "cache.go")))
+}
+
+func knownSIMDLoadingSource(constName, value string) string {
+	return "const " + constName + " = \"" + value + "\""
 }
 
 func resolveSIMDModuleListing(t *testing.T, root string) simdModuleListing {
 	t.Helper()
-
-	download := exec.Command("go", "mod", "download", pureSIMDJSONModule)
-	download.Dir = root
-	if output, err := download.CombinedOutput(); err != nil {
-		t.Fatalf("%s failed: %v: %s", strings.Join(download.Args, " "), err, strings.TrimSpace(string(output)))
-	}
 
 	command := exec.Command("go", "list", "-m", "-json", pureSIMDJSONModule)
 	command.Dir = root
@@ -234,6 +251,17 @@ func resolveSIMDModuleListing(t *testing.T, root string) simdModuleListing {
 }
 
 func effectiveSIMDModule(listing simdModuleListing) (string, string, error) {
+	version, dir, err := resolvedSIMDModule(listing)
+	if err != nil {
+		return "", "", err
+	}
+	if dir == "" {
+		return "", "", errors.New("effective module directory is empty")
+	}
+	return version, dir, nil
+}
+
+func resolvedSIMDModule(listing simdModuleListing) (string, string, error) {
 	version := listing.Version
 	dir := listing.Dir
 	if listing.Replace != nil {
@@ -245,9 +273,6 @@ func effectiveSIMDModule(listing simdModuleListing) (string, string, error) {
 	}
 	if !completeSIMDModuleVersion.MatchString(version) {
 		return "", "", errors.Errorf("effective module version %q is not a complete Go semantic-version token", version)
-	}
-	if dir == "" {
-		return "", "", errors.New("effective module directory is empty")
 	}
 	return version, dir, nil
 }

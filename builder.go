@@ -171,9 +171,10 @@ type stagedPathData struct {
 }
 
 type documentBuildState struct {
-	rgID             int
-	paths            map[string]*stagedPathData
-	visiblePathCount int
+	rgID                    int
+	paths                   map[string]*stagedPathData
+	visiblePathCount        int
+	softRepresentationSkips uint64
 }
 
 func newDocumentBuildState(rgID int) *documentBuildState {
@@ -186,26 +187,27 @@ func newDocumentBuildState(rgID int) *documentBuildState {
 // +hard-ingest
 //
 // getOrCreateStagedPath returns the staged state for canonicalPath, creating
-// it only when the configured caller-visible path budget permits it.
+// it only when the configured total staged-path budget permits it.
 func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalPath string) (*stagedPathData, error) {
 	if pathState, ok := state.paths[canonicalPath]; ok {
 		return pathState, nil
 	}
 	internalPath := isInternalRepresentationPath(canonicalPath)
-	if !internalPath && b.config.MaxStagedPaths > 0 {
-		if state.visiblePathCount >= b.config.MaxStagedPaths {
-			requiredPathCount := state.visiblePathCount + 1
-			return nil, newIngestErrorString(
-				IngestLayerResource,
-				canonicalPath,
-				strconv.Itoa(requiredPathCount),
-				errors.Errorf(
-					"staged path budget exceeded: limit %d; document requires at least %d caller-visible paths",
-					b.config.MaxStagedPaths,
-					requiredPathCount,
-				),
-			)
+	if b.config.MaxStagedPaths > 0 && len(state.paths) >= b.config.MaxStagedPaths {
+		requiredVisiblePathCount := state.visiblePathCount
+		if !internalPath {
+			requiredVisiblePathCount++
 		}
+		return nil, newIngestErrorString(
+			IngestLayerResource,
+			canonicalPath,
+			"",
+			errors.Errorf(
+				"staged path budget exceeded: limit %d total paths; document requires at least %d caller-visible paths",
+				b.config.MaxStagedPaths,
+				requiredVisiblePathCount,
+			),
+		)
 	}
 	pathState := &stagedPathData{stringTerms: make(map[string]struct{})}
 	state.paths[canonicalPath] = pathState
@@ -593,17 +595,16 @@ func (b *GINBuilder) stageScalarToken(canonicalPath string, token any, state *do
 
 func (b *GINBuilder) stageMaterializedValue(path string, value any, state *documentBuildState, allowTransform bool) error {
 	canonicalPath := normalizeWalkPath(path)
-	if allowTransform {
-		if err := b.stageCompanionRepresentations(canonicalPath, value, state); err != nil {
-			return err
-		}
-	}
-
 	pathState, err := b.getOrCreateStagedPath(state, canonicalPath)
 	if err != nil {
 		return err
 	}
 	pathState.present = true
+	if allowTransform {
+		if err := b.stageCompanionRepresentations(canonicalPath, value, state); err != nil {
+			return err
+		}
+	}
 
 	switch v := value.(type) {
 	case nil:
@@ -679,7 +680,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 		transformed, ok := registration.FieldTransformer(prepared)
 		if !ok {
 			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == IngestFailureSoft {
-				b.numSoftRepresentationSkips++
+				state.softRepresentationSkips++
 				logging.Info(
 					b.config.Logger,
 					"builder skipped companion representation after soft transformer failure",
@@ -961,6 +962,7 @@ func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
 		b.tragicErr = err
 		return err
 	}
+	b.numSoftRepresentationSkips += state.softRepresentationSkips
 	return nil
 }
 

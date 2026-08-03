@@ -234,13 +234,14 @@ over-depth JSON does not enter it.
 
 ### Malformed trailing-number edge case
 
-Failure-layer parity is intentionally not claimed for malformed input such as
-`1e400 garbage`. With `NumericFailureMode` set to soft and
-`ParserFailureMode` set to hard, stdlib encounters the out-of-range number
-before its trailing-input check and soft-skips the document. SIMD validates
-the full input before entering its numeric compatibility path, so the same
-bytes return a hard parser-layer error. Well-formed JSON is unaffected; callers
-should not rely on numeric soft-skip policy to admit malformed documents.
+Failure-layer parity is intentionally not claimed for malformed input that
+starts with an out-of-range number, such as `1e400 garbage`. With
+`NumericFailureMode` set to soft and `ParserFailureMode` set to hard, stdlib
+encounters the out-of-range number before its trailing-input check and
+soft-skips the document. SIMD validates the full input before entering its
+numeric compatibility path, so the same bytes return a hard parser-layer
+error. Well-formed JSON is unaffected; callers should not rely on numeric
+soft-skip policy to admit malformed documents.
 
 ## Validation scope
 
@@ -252,10 +253,9 @@ an explicit, tested exclusion: malformed bytes such as `1e400 garbage` may be
 reported at different ingest layers, but neither parser commits an index for
 that input.
 
-The configured Phase 22 support policy covers five platform pairs: two
-required and three advisory. The final remote evidence gate is owned by Plan
-22-08, so this table describes policy and does not claim that this repository's
-five-leg matrix has completed:
+The configured support policy covers five platform pairs: two required and
+three advisory. This table describes policy rather than claiming that this
+repository's five-leg matrix has completed:
 
 | Platform | Policy tier | Merge behavior |
 | --- | --- | --- |

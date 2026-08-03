@@ -60,32 +60,44 @@ func TestSIMDParserNestedArraysStageOnlyWildcardPaths(t *testing.T) {
 		t.Fatalf("PathDirectory count = %d, want %d", got, want)
 	}
 	for _, entry := range idx.PathDirectory {
-		if strings.Contains(entry.PathName, "[0]") {
+		if hasNumericArrayIndex(entry.PathName) {
 			t.Fatalf("PathDirectory contains private numeric path %q", entry.PathName)
 		}
 	}
 }
 
 func TestSIMDParserPropagatesMarkPresentBudgetFailure(t *testing.T) {
-	config, err := NewConfig(WithMaxStagedPaths(2))
-	if err != nil {
-		t.Fatalf("NewConfig: %v", err)
-	}
-	parser := newTestSIMDParser(t)
-	builder, err := NewBuilder(config, 1, WithParser(parser))
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
+	tests := []struct {
+		name string
+		doc  []byte
+	}{
+		{name: "object", doc: []byte(`{"a":{},"b":{},"c":{}}`)},
+		{name: "array", doc: []byte(`{"a":[],"b":[],"c":[]}`)},
 	}
 
-	err = builder.AddDocument(0, []byte(`{"a":{},"b":{},"c":{}}`))
-	var ingestErr *IngestError
-	if !stderrors.As(err, &ingestErr) {
-		t.Fatalf("AddDocument error = %T %v, want *IngestError", err, err)
-	}
-	if got := ingestErr.Path(); got != "$.b" {
-		t.Fatalf("IngestError.Path() = %q, want $.b", got)
-	}
-	if builder.numDocs != 0 {
-		t.Fatalf("rejected document was committed: numDocs=%d", builder.numDocs)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := NewConfig(WithMaxStagedPaths(2))
+			if err != nil {
+				t.Fatalf("NewConfig: %v", err)
+			}
+			parser := newTestSIMDParser(t)
+			builder, err := NewBuilder(config, 1, WithParser(parser))
+			if err != nil {
+				t.Fatalf("NewBuilder: %v", err)
+			}
+
+			err = builder.AddDocument(0, tc.doc)
+			var ingestErr *IngestError
+			if !stderrors.As(err, &ingestErr) {
+				t.Fatalf("AddDocument error = %T %v, want *IngestError", err, err)
+			}
+			if got := ingestErr.Path(); got != "$.b" {
+				t.Fatalf("IngestError.Path() = %q, want $.b", got)
+			}
+			if builder.numDocs != 0 {
+				t.Fatalf("rejected document was committed: numDocs=%d", builder.numDocs)
+			}
+		})
 	}
 }

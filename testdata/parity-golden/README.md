@@ -14,9 +14,9 @@ behavior change requires it, and record the review in the audit trail below.
 
 ## How these were initially captured
 
-The goldens in this directory were initially generated during Phase 13 Plan
-02, after `AddDocument` was wired through the parser seam and its benchmark
-gate found no representative performance drift. At that point,
+The goldens in this directory were initially generated after `AddDocument` was
+wired through the parser seam and its benchmark gate found no representative
+performance drift. At that point,
 `stdlibParser.Parse` was a code move of the direct staging path, so the blobs
 were a useful baseline without a brittle historical cherry-pick. They now pin
 the audited current behavior instead; later approved behavior changes must be
@@ -44,8 +44,8 @@ separates the behavior change from the evidence required to review it.
   `transformer-buffered-container-numerics`; each becomes smaller because
   private numeric paths are removed. Their refresh landed separately in
   `b44ac8e`, which is a historical exception to the same-commit rule above.
-  The intervening staging change only adds an array index to malformed-input
-  error text, so it does not affect these valid fixtures. The current
+  That same commit restored an array index in malformed-input error text, so
+  it does not affect these valid fixtures. The current
   `TestStdlibParserGolden_AuthoredFixtures` check verifies the audited blobs.
 
 ## Format

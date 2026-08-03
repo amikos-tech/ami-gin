@@ -51,6 +51,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	outputPath := fs.String("o", "", "Write readable sidecar output to path")
 	logLevel := fs.String("log-level", experimentLogLevelOff, "Log level: off|info|debug")
 	sampleLimit := fs.Int("sample", 0, "Cap successful ingests at N documents")
+	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
 	onError := fs.String("on-error", experimentOnErrorAbort, "Malformed-line handling: abort|continue")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -58,11 +59,15 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	if *rgSize <= 0 {
 		fmt.Fprintln(stderr, "Error: --rg-size must be greater than 0")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 	if *sampleLimit < 0 {
 		fmt.Fprintln(stderr, "Error: --sample must be greater than or equal to 0")
+		return 1
+	}
+	if *maxStagedPaths < 0 {
+		fmt.Fprintln(stderr, "Error: --max-staged-paths must be greater than or equal to 0")
 		return 1
 	}
 	if *onError != experimentOnErrorAbort && *onError != experimentOnErrorContinue {
@@ -72,13 +77,17 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "Error: exactly one input path is required")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 
 	inputArg := fs.Arg(0)
 	config, err := experimentConfigForLogLevel(*logLevel, stderr)
 	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&config); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
@@ -561,8 +570,10 @@ func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int
 	if len(group.Samples) >= experimentFailureSampleLimit && !forceSample {
 		return
 	}
-	// Values are captured verbatim per the library contract; report growth is
-	// bounded by sample count rather than by truncating individual values.
+	// Document-data values are captured verbatim per the library contract;
+	// resource failures have no value and retain their diagnostic in Message.
+	// Report growth is bounded by sample count rather than by truncating
+	// individual values.
 	// Tragic builder-closing failures bypass the cap so the triggering sample is
 	// always retained in the emitted report.
 	group.Samples = append(group.Samples, sample)

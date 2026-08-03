@@ -17,7 +17,7 @@ func loadGolden(t *testing.T, name string) []byte {
 	path := filepath.Join("testdata", "parity-golden", name+".bin")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("load golden %s: %v (goldens are committed by Plan 02 Task 4; if missing, regenerate via `go test -tags regenerate_goldens -run TestRegenerateParityGoldens .`)", name, err)
+		t.Fatalf("load golden %s: %v (if missing, regenerate via `go test -tags regenerate_goldens -run TestRegenerateParityGoldens .`)", name, err)
 	}
 	return b
 }
@@ -68,6 +68,23 @@ func TestStdlibParserGolden_AuthoredFixtures(t *testing.T) {
 			encoded := buildAndEncode(t, fx)
 			golden := loadGolden(t, fx.Name)
 			assertByteIdentical(t, fx.Name, encoded, golden)
+		})
+	}
+}
+
+func TestAuthoredGoldenPathDirectoriesUseWildcardArrayPaths(t *testing.T) {
+	for _, fx := range authoredParityFixtures() {
+		fx := fx
+		t.Run(fx.Name, func(t *testing.T) {
+			idx, err := Decode(loadGolden(t, fx.Name))
+			if err != nil {
+				t.Fatalf("Decode golden: %v", err)
+			}
+			for _, entry := range idx.PathDirectory {
+				if hasNumericArrayIndex(entry.PathName) {
+					t.Fatalf("golden path directory contains private numeric path %q", entry.PathName)
+				}
+			}
 		})
 	}
 }

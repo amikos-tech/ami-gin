@@ -408,9 +408,9 @@ type GINConfig struct {
 	// SerializedConfig and writeConfig/readConfig for persisted config state.
 	ParserFailureMode  IngestFailureMode
 	NumericFailureMode IngestFailureMode
-	// MaxStagedPaths limits distinct caller-visible canonical JSON paths staged
-	// for one document. The root and container paths count; internal companion
-	// representation paths do not. Zero is unlimited. It is a builder-time
+	// MaxStagedPaths limits all distinct canonical JSON paths staged for one
+	// document, including internal companion representation paths. The root and
+	// object or array containers count. Zero is unlimited. It is a builder-time
 	// guard and is not serialized.
 	MaxStagedPaths             int
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
@@ -465,16 +465,17 @@ func WithNumericFailureMode(mode IngestFailureMode) ConfigOption {
 	}
 }
 
-// WithMaxStagedPaths limits distinct caller-visible canonical JSON paths
-// staged for one document. The root and object/array container paths count;
-// internal companion representation paths created by transformers do not.
-// Zero leaves staging unlimited.
+// WithMaxStagedPaths limits all distinct canonical JSON paths staged for one
+// document, including internal companion representation paths. The root and
+// object or array container paths count. Zero leaves staging unlimited.
 //
 // If the limit is exceeded, AddDocument returns a hard *IngestError with
 // Layer() == IngestLayerResource and Path() set to the first path that would
-// exceed the budget. Value() is the minimum number of caller-visible paths
-// required to reach that path. This builder resource failure is never softened
-// by ParserFailureMode and is reported by AddDocument, not Finalize.
+// exceed the budget. Object keys are visited in lexical order, so this path is
+// deterministic but need not be the first key in the input document. Value()
+// is empty; Cause() contains the limit and visible-path diagnostic. This
+// builder resource failure is never softened by ParserFailureMode and is
+// reported by AddDocument, not Finalize.
 func WithMaxStagedPaths(limit int) ConfigOption {
 	return func(c *GINConfig) error {
 		if limit < 0 {

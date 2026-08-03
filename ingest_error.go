@@ -36,8 +36,9 @@ const (
 // transformer, numeric, schema, and resource values.
 //
 // Value() returns a verbatim string representation of the offending input or
-// value for document-data failures. Resource failures instead return the
-// relevant limit diagnostic. The library does not redact or truncate either;
+// value for document-data failures. It is empty for resource failures, which
+// have no offending document value; their diagnostics are available from
+// Cause(). The library does not redact or truncate document-data values, so
 // callers that log untrusted documents own their redaction and output-size
 // policy.
 type IngestError struct {
@@ -63,8 +64,8 @@ func (e *IngestError) Layer() IngestLayer {
 	return e.layer
 }
 
-// Value returns the verbatim offending input or transformed value. Resource
-// failures return the relevant limit diagnostic instead.
+// Value returns the verbatim offending input or transformed value. It is empty
+// for resource failures, which do not have an offending document value.
 func (e *IngestError) Value() string {
 	if e == nil {
 		return ""

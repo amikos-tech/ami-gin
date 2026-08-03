@@ -154,7 +154,8 @@ check-notice-version:
 
 .PHONY: check-simd-docs
 check-simd-docs:
-	go test -run '^TestSIMDDocumentationContract$$' .
+	go mod download github.com/amikos-tech/pure-simdjson
+	AMI_GIN_REQUIRE_SIMD_DOCS_UPSTREAM=1 go test -run '^TestSIMDDocumentationContract$$' .
 
 .PHONY: lint
 lint: check-validator-markers check-notice-version check-simd-docs

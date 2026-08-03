@@ -339,13 +339,14 @@ func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
 	recordExperimentIngestFailure(&result, 2, newParserIngestFailure(t), false)
 	recordExperimentIngestFailure(&result, 6, newTransformerIngestFailure(t), false)
 	recordExperimentIngestFailure(&result, 10, newSchemaIngestFailure(t), false)
+	recordExperimentIngestFailure(&result, 11, newResourceIngestFailure(t), false)
 	recordExperimentIngestFailure(&result, 12, errors.New("blank JSONL line"), false)
 
 	failures := experimentIngestFailureGroups(result.ingestFailures)
-	if len(failures) != 5 {
-		t.Fatalf("len(failures) = %d, want 5", len(failures))
+	if len(failures) != 6 {
+		t.Fatalf("len(failures) = %d, want 6", len(failures))
 	}
-	wantLayers := []string{"parser", "transformer", "numeric", "schema", string(experimentUnknownFailureLayer)}
+	wantLayers := []string{"parser", "transformer", "numeric", "schema", "resource", string(experimentUnknownFailureLayer)}
 	for i, want := range wantLayers {
 		if failures[i].Layer != want {
 			t.Fatalf("failures[%d].Layer = %q, want %q", i, failures[i].Layer, want)
@@ -365,12 +366,85 @@ func TestExperimentIngestFailureGroupsDeterministic(t *testing.T) {
 		t.Fatalf("parser sample = %+v, want structured parser sample", sample)
 	}
 
-	unknown := failures[4]
+	resource := failures[4]
+	if resource.Count != 1 || len(resource.Samples) != 1 {
+		t.Fatalf("resource group = %+v, want one resource sample", resource)
+	}
+	if resource.Samples[0].Path != "$.value" || resource.Samples[0].Value != "" {
+		t.Fatalf("resource sample = %+v, want budget path and empty value", resource.Samples[0])
+	}
+	if !strings.Contains(resource.Samples[0].Message, "staged path budget exceeded") {
+		t.Fatalf("resource sample message = %q, want budget diagnostic", resource.Samples[0].Message)
+	}
+
+	unknown := failures[5]
 	if unknown.Count != 1 {
 		t.Fatalf("unknown.Count = %d, want 1", unknown.Count)
 	}
 	if got := unknown.Samples[0].Message; got != "blank JSONL line" {
 		t.Fatalf("unknown sample message = %q, want blank JSONL line", got)
+	}
+}
+
+func newResourceIngestFailure(t *testing.T) error {
+	t.Helper()
+	config, err := gin.NewConfig(gin.WithMaxStagedPaths(1))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder, err := gin.NewBuilder(config, 1)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	err = builder.AddDocument(0, []byte(`{"value":"over budget"}`))
+	if err == nil {
+		t.Fatal("AddDocument succeeded, want resource error")
+	}
+	return err
+}
+
+func TestRunExperimentMaxStagedPathsReportsResourceFailureWithoutValue(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "budget.jsonl", []string{`{"value":"over budget"}`}, true)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment(
+		[]string{"--json", "--on-error", experimentOnErrorContinue, "--max-staged-paths", "1", inputPath},
+		bytes.NewReader(nil),
+		&stdout,
+		&stderr,
+	)
+	if code != 0 {
+		t.Fatalf("runExperiment() code = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	var report struct {
+		Summary struct {
+			Failures []struct {
+				Layer   string                       `json:"layer"`
+				Samples []map[string]json.RawMessage `json:"samples"`
+			} `json:"failures"`
+		} `json:"summary"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("json.Unmarshal(report): %v\n%s", err, stdout.String())
+	}
+	if len(report.Summary.Failures) != 1 || report.Summary.Failures[0].Layer != "resource" {
+		t.Fatalf("resource failures = %#v, want one resource group", report.Summary.Failures)
+	}
+	samples := report.Summary.Failures[0].Samples
+	if len(samples) != 1 {
+		t.Fatalf("resource samples = %#v, want one", samples)
+	}
+	if _, ok := samples[0]["value"]; ok {
+		t.Fatalf("resource sample = %s, want omitted value", stdout.String())
+	}
+	if got := string(samples[0]["path"]); got != `"$.value"` {
+		t.Fatalf("resource sample path = %s, want $.value", got)
+	}
+	if got := string(samples[0]["message"]); !strings.Contains(got, "staged path budget exceeded") {
+		t.Fatalf("resource sample message = %s, want budget diagnostic", got)
 	}
 }
 
