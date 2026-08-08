@@ -12,7 +12,9 @@
   transformer paths. The root and object or array containers count. A limit
   failure is a hard `*IngestError` from `AddDocument`, with
   `Layer() == IngestLayerResource`; it is not affected by
-  `WithParserFailureMode` and never appears at `Finalize`.
+  `WithParserFailureMode` and never appears at `Finalize`. Both
+  `gin-index build` and `gin-index experiment` expose this bound via
+  `--max-staged-paths`.
 - Added the opt-in same-package `pure-simdjson` parser adapter. Builds compiled with `-tags simdjson` can call `NewSIMDParser() (CloseableParser, error)`, handle native construction errors, select the parser explicitly with `WithParser(p)`, and deterministically release its native handle with `Close`; its parser name is `pure-simdjson`. Ordinary builds and the default `NewBuilder` remain stdlib-only. Valid out-of-range numeric literals now follow the same path-aware `NumericFailureMode` behavior under both parsers, while malformed JSON remains governed by `ParserFailureMode`. See [`docs/simd-deployment.md`](docs/simd-deployment.md) for activation, ownership, loading, integrity, fallback, and numeric-limit details.
 - The root package now exports `IngestError` for hard per-document ingest failures. Callers inspect it via `Path()`, `Layer()`, `Value()`, `Unwrap()`, and `Cause()`; `Layer()` uses `parser`, `transformer`, `numeric`, `schema`, and `resource` values. `Value()` is verbatim for document-data failures and empty for resource failures; resource diagnostics remain in `Cause()`. Document-data values are neither redacted nor truncated by the library, so callers own redaction and output-size policy. `gin-index experiment --on-error continue` text and JSON summaries now group structured failures by layer with at most 3 samples per layer, use an `unknown` bucket for non-`IngestError` failures, and emit `aborted:tragic` when continue mode aborts on a closed builder.
 - `IngestFailureMode` / `IngestFailureHard` / `IngestFailureSoft` are the preferred failure-mode names. Deprecated source-compatible aliases `TransformerFailureMode` / `TransformerFailureStrict` / `TransformerFailureSoft` remain available for pre-phase-17 callers.

@@ -107,6 +107,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	output := fs.String("o", "", "Output path (for single file only)")
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
+	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -121,9 +122,17 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		fs.Usage()
 		return 1
 	}
+	if *maxStagedPaths < 0 {
+		fmt.Fprintln(stderr, "Error: --max-staged-paths must be greater than or equal to 0")
+		return 1
+	}
 
 	input := fs.Arg(0)
 	ginCfg := gin.DefaultConfig()
+	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&ginCfg); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
 	pqCfg := gin.ParquetConfig{MetadataKey: *key}
 
 	files, err := resolveParquetFiles(input)

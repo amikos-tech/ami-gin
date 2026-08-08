@@ -213,7 +213,10 @@ this adapter.
 A SIMD depth rejection is a parser-layer document failure governed by
 `ParserFailureMode`. The adapter does not retry an over-depth document through
 stdlib staging. Use the default parser when inputs can legitimately exceed the
-native limit, or enforce a 1,023-container maximum before ingest.
+native limit, or enforce a 1,023-container maximum before ingest. Independent
+of parser choice, `WithMaxStagedPaths` bounds the number of distinct paths
+staged per document and is the parser-independent resource guard for this
+class of input.
 
 ## Numeric limits
 
@@ -245,7 +248,7 @@ soft-skip policy to admit malformed documents.
 
 ## Validation scope
 
-Phase 22 validates identical encoded indexes and query results for documents
+This repository validates identical encoded indexes and query results for documents
 that ingest without a parser-layer error. The evidence covers the authored
 parity fixtures, all four checked-in realistic fixtures, their registered
 queries, and the shared Evaluate matrix. Malformed failure-layer attribution is
