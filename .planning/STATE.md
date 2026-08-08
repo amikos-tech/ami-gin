@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
 Plan: 8 of 8
 Status: Ready to execute
-Last activity: 2026-08-02 - Completed quick task 260802-hkk: verify and address issue #54 (work in a PR branch)
+Last activity: 2026-08-08 - Completed quick task 260808-n99: address round-3 PR review findings on fix/issue-54
 
 Progress: [█████████░] 94%
 
@@ -196,6 +196,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260731-fast | Address benchmark timeout review: add an overridable 30-minute `BENCH_TIMEOUT` to benchmark targets | 2026-07-31 | 3e765ce | Verified | _(fast task — no plan dir)_ |
 | 260731-fast2 | PR #52 review nits: scope `make bench` to all packages (`./...`), flag the slow runtime in `make help`, and correct the 260731-f4d commit/verified columns | 2026-07-31 | 6724822 | Verified | _(fast task — no plan dir)_ |
 | 260802-hkk | verify and address issue #54 (work in a PR branch) | 2026-08-02 | 404ad73 | Verified | [260802-hkk-verify-and-address-issue-54-work-in-a-pr](./quick/260802-hkk-verify-and-address-issue-54-work-in-a-pr/) |
+| 260808-n99 | Address round-3 PR review findings on fix/issue-54: budget diagnostic unit, SIMD doc-guard cold-cache skip, lexical-order pin, --max-staged-paths on build, docs/SECURITY wording | 2026-08-08 | d475969 |  | [260808-n99-round3-review-fixes](./quick/260808-n99-round3-review-fixes/) |
 
 ## Deferred Items
 
