@@ -219,18 +219,12 @@ func loadSIMDLoadingSources(t *testing.T, moduleDir string) (string, string, str
 		if os.Getenv(requireSIMDDocumentationUpstreamEnv) == "1" {
 			t.Fatalf("effective pure-simdjson module is not downloaded; run go mod download %s first", pureSIMDJSONModule)
 		}
-		return knownSIMDLoadingSource("libraryEnvPath", "PURE_SIMDJSON_LIB_PATH"),
-			knownSIMDLoadingSource("mirrorEnvVar", "PURE_SIMDJSON_BINARY_MIRROR") + "\n" + knownSIMDLoadingSource("disableGHEnvVar", "PURE_SIMDJSON_DISABLE_GH_FALLBACK"),
-			knownSIMDLoadingSource("cacheDirEnvVar", "PURE_SIMDJSON_CACHE_DIR")
+		t.Skipf("effective pure-simdjson module is not downloaded; run go mod download %s first (set %s=1 to require it, e.g. in CI)", pureSIMDJSONModule, requireSIMDDocumentationUpstreamEnv)
 	}
 
 	return string(readTestFile(t, filepath.Join(moduleDir, "library_loading.go"))),
 		string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "bootstrap.go"))),
 		string(readTestFile(t, filepath.Join(moduleDir, "internal", "bootstrap", "cache.go")))
-}
-
-func knownSIMDLoadingSource(constName, value string) string {
-	return "const " + constName + " = \"" + value + "\""
 }
 
 func resolveSIMDModuleListing(t *testing.T, root string) simdModuleListing {

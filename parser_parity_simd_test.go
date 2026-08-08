@@ -66,6 +66,34 @@ func TestSIMDParserNestedArraysStageOnlyWildcardPaths(t *testing.T) {
 	}
 }
 
+// TestSIMDParserBudgetRejectsLexicalOrderPath pins that object keys are
+// staged in lexical order, not document order. Under document order (z, a,
+// m) the budget would instead reject $.m; the rejection landing on $.z
+// proves the walker sorts keys before staging.
+func TestSIMDParserBudgetRejectsLexicalOrderPath(t *testing.T) {
+	config, err := NewConfig(WithMaxStagedPaths(3))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	parser := newTestSIMDParser(t)
+	builder, err := NewBuilder(config, 1, WithParser(parser))
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+
+	err = builder.AddDocument(0, []byte(`{"z":{},"a":{},"m":{}}`))
+	var ingestErr *IngestError
+	if !stderrors.As(err, &ingestErr) {
+		t.Fatalf("AddDocument error = %T %v, want *IngestError", err, err)
+	}
+	if got := ingestErr.Path(); got != "$.z" {
+		t.Fatalf("IngestError.Path() = %q, want $.z", got)
+	}
+	if builder.numDocs != 0 {
+		t.Fatalf("rejected document was committed: numDocs=%d", builder.numDocs)
+	}
+}
+
 func TestSIMDParserPropagatesMarkPresentBudgetFailure(t *testing.T) {
 	tests := []struct {
 		name string
