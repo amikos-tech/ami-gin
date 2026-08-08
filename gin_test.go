@@ -3190,7 +3190,7 @@ func TestMaxStagedPaths(t *testing.T) {
 			t,
 			err,
 			"$.items.label",
-			"staged path budget exceeded: limit 2 total paths; document requires at least 3 caller-visible paths",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
 		)
 		if got := builder.NumSoftSkippedDocuments(); got != 0 {
 			t.Fatalf("NumSoftSkippedDocuments() = %d, want 0; ParserFailureMode must not soften resource failures", got)
@@ -3255,7 +3255,7 @@ func TestMaxStagedPaths(t *testing.T) {
 					t,
 					err,
 					"$.email",
-					"staged path budget exceeded: limit 3 total paths; document requires at least 2 caller-visible paths",
+					"staged path budget exceeded: limit 3 total paths; document requires at least 4",
 				)
 				if calls != 1 {
 					t.Fatalf("container transformer calls = %d, want 1", calls)
@@ -3282,7 +3282,7 @@ func TestMaxStagedPaths(t *testing.T) {
 			t,
 			builder.AddDocument(0, []byte(`{"email":"A@B.com"}`)),
 			"$.email",
-			"staged path budget exceeded: limit 1 total paths; document requires at least 2 caller-visible paths",
+			"staged path budget exceeded: limit 1 total paths; document requires at least 2",
 		)
 		if calls != 0 {
 			t.Fatalf("transformer calls = %d, want 0 for a source path rejected by the budget", calls)
@@ -3301,7 +3301,7 @@ func TestMaxStagedPaths(t *testing.T) {
 			t,
 			builder.AddDocument(0, document),
 			"$[*][*]",
-			"staged path budget exceeded: limit 2 total paths; document requires at least 3 caller-visible paths",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
 		)
 		requireUncommittedStagedPathBudgetDocument(t, builder)
 	})
@@ -3316,7 +3316,7 @@ func TestMaxStagedPaths(t *testing.T) {
 			t,
 			builder.AddDocument(0, []byte(`{"z":1,"a":2,"m":3,"b":4}`)),
 			"$.z",
-			"staged path budget exceeded: limit 4 total paths; document requires at least 5 caller-visible paths",
+			"staged path budget exceeded: limit 4 total paths; document requires at least 5",
 		)
 	})
 
@@ -3335,7 +3335,7 @@ func TestMaxStagedPaths(t *testing.T) {
 			t,
 			builder.AddDocument(0, []byte(`{"a":"kept","b":"rejected"}`)),
 			"$.b",
-			"staged path budget exceeded: limit 2 total paths; document requires at least 3 caller-visible paths",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
 		)
 		if got := builder.NumSoftSkippedRepresentations(); got != 0 {
 			t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0 for an uncommitted document", got)
@@ -3379,7 +3379,7 @@ func TestStagedPathBudgetPropagatesAllStagingCallSiteErrors(t *testing.T) {
 				t,
 				builder.AddDocument(0, []byte(`null`)),
 				"$.value",
-				"staged path budget exceeded: limit 1 total paths; document requires at least 2 caller-visible paths",
+				"staged path budget exceeded: limit 1 total paths; document requires at least 2",
 			)
 			requireUncommittedStagedPathBudgetDocument(t, builder)
 		})

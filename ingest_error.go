@@ -2,6 +2,8 @@ package gin
 
 import (
 	"fmt"
+
+	"github.com/pkg/errors"
 )
 
 // IngestLayer identifies the ingest layer that rejected a document.
@@ -111,6 +113,9 @@ func newIngestError(layer IngestLayer, path string, value any, err error) error 
 func newIngestErrorString(layer IngestLayer, path string, value string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if layer == IngestLayerResource && value != "" {
+		panic(errors.Errorf("newIngestErrorString: resource IngestError must carry no value, got %q", value))
 	}
 	return &IngestError{
 		path:  path,

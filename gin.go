@@ -470,12 +470,15 @@ func WithNumericFailureMode(mode IngestFailureMode) ConfigOption {
 // object or array container paths count. Zero leaves staging unlimited.
 //
 // If the limit is exceeded, AddDocument returns a hard *IngestError with
-// Layer() == IngestLayerResource and Path() set to the first path that would
-// exceed the budget. Object keys are visited in lexical order, so this path is
-// deterministic but need not be the first key in the input document. Value()
-// is empty; Cause() contains the limit and visible-path diagnostic. This
-// builder resource failure is never softened by ParserFailureMode and is
-// reported by AddDocument, not Finalize.
+// Layer() == IngestLayerResource. Path() is the path whose staging was
+// rejected; when the rejection occurs inside a transformer's companion
+// representation, Path() reports the source path that owns the companion,
+// never the internal derived path. Object keys are visited in lexical order,
+// so the rejected path is deterministic but need not be the first key in the
+// input document. Value() is empty; Cause() reports the configured limit and a
+// lower-bound count of the total paths the document requires. This builder
+// resource failure is never softened by ParserFailureMode and is reported by
+// AddDocument, not Finalize.
 func WithMaxStagedPaths(limit int) ConfigOption {
 	return func(c *GINConfig) error {
 		if limit < 0 {

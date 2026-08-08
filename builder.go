@@ -173,7 +173,6 @@ type stagedPathData struct {
 type documentBuildState struct {
 	rgID                    int
 	paths                   map[string]*stagedPathData
-	visiblePathCount        int
 	softRepresentationSkips uint64
 }
 
@@ -192,28 +191,20 @@ func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalP
 	if pathState, ok := state.paths[canonicalPath]; ok {
 		return pathState, nil
 	}
-	internalPath := isInternalRepresentationPath(canonicalPath)
 	if b.config.MaxStagedPaths > 0 && len(state.paths) >= b.config.MaxStagedPaths {
-		requiredVisiblePathCount := state.visiblePathCount
-		if !internalPath {
-			requiredVisiblePathCount++
-		}
 		return nil, newIngestErrorString(
 			IngestLayerResource,
 			canonicalPath,
 			"",
 			errors.Errorf(
-				"staged path budget exceeded: limit %d total paths; document requires at least %d caller-visible paths",
+				"staged path budget exceeded: limit %d total paths; document requires at least %d",
 				b.config.MaxStagedPaths,
-				requiredVisiblePathCount,
+				len(state.paths)+1,
 			),
 		)
 	}
 	pathState := &stagedPathData{stringTerms: make(map[string]struct{})}
 	state.paths[canonicalPath] = pathState
-	if !internalPath {
-		state.visiblePathCount++
-	}
 	return pathState, nil
 }
 
@@ -681,13 +672,6 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 		if !ok {
 			if normalizeTransformerFailureMode(registration.Transformer.FailureMode) == IngestFailureSoft {
 				state.softRepresentationSkips++
-				logging.Info(
-					b.config.Logger,
-					"builder skipped companion representation after soft transformer failure",
-					logging.AttrOperation("builder.transform"),
-					logging.AttrStatus("skipped"),
-					logging.AttrErrorType(telemetry.ErrorTypeOther),
-				)
 				continue
 			}
 			return newIngestError(
@@ -709,10 +693,12 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 // remapCompanionIngestErrorPath hides internal derived-path names from
 // user-facing ingest errors by rewriting any leaked companion target path back
 // to the source path in place via the caller's error pointer discovered through
-// errors.As. The offending Value is left untouched because it still reflects
-// the transformed representation that actually failed. Returns without effect
-// when err does not unwrap to *IngestError, when the path is empty, or when the
-// path does not match the companion target/internal-prefix shape.
+// errors.As. The offending Value is left untouched: for transformer, schema, or
+// numeric failures it still reflects the transformed representation that
+// actually failed, while resource failures never carry a Value in the first
+// place, so there is nothing to remap there. Returns without effect when err
+// does not unwrap to *IngestError, when the path is empty, or when the path
+// does not match the companion target/internal-prefix shape.
 func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
 	var ingestErr *IngestError
 	if !errors.As(err, &ingestErr) || ingestErr == nil {
@@ -961,6 +947,17 @@ func (b *GINBuilder) commitStagedPaths(state *documentBuildState) error {
 	if err := runMergeWithRecover(b.config.Logger, func() { b.mergeStagedPaths(state) }); err != nil {
 		b.tragicErr = err
 		return err
+	}
+	// Soft-skip logging happens only here, after a successful merge, so a
+	// document that is later rejected or never committed never logs a skip.
+	for i := uint64(0); i < state.softRepresentationSkips; i++ {
+		logging.Info(
+			b.config.Logger,
+			"builder skipped companion representation after soft transformer failure",
+			logging.AttrOperation("builder.transform"),
+			logging.AttrStatus("skipped"),
+			logging.AttrErrorType(telemetry.ErrorTypeOther),
+		)
 	}
 	b.numSoftRepresentationSkips += state.softRepresentationSkips
 	return nil
