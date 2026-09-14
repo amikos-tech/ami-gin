@@ -3089,14 +3089,20 @@ func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *test
 
 	for _, path := range []string{
 		"$.items[*].label",
-		"$.items[0].label",
-		"$.items[1].label",
 		"$.items[*].score",
-		"$.items[0].score",
-		"$.items[1].score",
 	} {
 		if _, ok := idx.pathLookup[path]; !ok {
 			t.Fatalf("pathLookup[%q] missing", path)
+		}
+	}
+	for _, path := range []string{
+		"$.items[0].label",
+		"$.items[1].label",
+		"$.items[0].score",
+		"$.items[1].score",
+	} {
+		if _, ok := idx.pathLookup[path]; ok {
+			t.Fatalf("pathLookup[%q] present, want private numeric path absent", path)
 		}
 	}
 
@@ -3111,6 +3117,388 @@ func TestSingleDocumentSingleRowGroupIndexesArraySiblingAndWildcardPaths(t *test
 	}
 	if got := idx.Evaluate([]Predicate{EQ("$.status", "only")}).ToSlice(); len(got) != 1 || got[0] != 0 {
 		t.Fatalf(`EQ("$.status", "only") = %v, want [0]`, got)
+	}
+}
+
+func TestNestedArraysStageOnlyWildcardPaths(t *testing.T) {
+	const depth = 8
+	document := []byte(strings.Repeat("[", depth) + "1" + strings.Repeat("]", depth))
+
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
+	if err := builder.AddDocument(0, document); err != nil {
+		t.Fatalf("AddDocument: %v", err)
+	}
+	idx := builder.Finalize()
+
+	if got, want := len(idx.PathDirectory), depth+1; got != want {
+		t.Fatalf("PathDirectory count = %d, want %d", got, want)
+	}
+	for _, entry := range idx.PathDirectory {
+		if hasNumericArrayIndex(entry.PathName) {
+			t.Fatalf("PathDirectory contains private numeric path %q", entry.PathName)
+		}
+	}
+}
+
+func hasNumericArrayIndex(path string) bool {
+	for i := 0; i+1 < len(path); i++ {
+		if path[i] == '[' && path[i+1] >= '0' && path[i+1] <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWildcardArrayQueryReturnsOnlyMatchingRowGroup(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	if err := builder.AddDocument(0, []byte(`{"orders":[{"id":"wanted"}]}`)); err != nil {
+		t.Fatalf("AddDocument matching row group: %v", err)
+	}
+	if err := builder.AddDocument(1, []byte(`{"orders":[{"id":"other"}]}`)); err != nil {
+		t.Fatalf("AddDocument non-matching row group: %v", err)
+	}
+
+	idx := builder.Finalize()
+	got := idx.Evaluate([]Predicate{EQ("$.orders[*].id", "wanted")}).ToSlice()
+	if len(got) != 1 || got[0] != 0 {
+		t.Fatalf(`EQ("$.orders[*].id", "wanted") = %v, want [0]`, got)
+	}
+
+	// Only the wildcard path $.orders[*].id was ever staged, so a concrete-index
+	// query is an unknown path to the index: the safe fallback is AllRGs (no
+	// pruning), not an empty or single-row-group result.
+	if got := idx.Evaluate([]Predicate{EQ("$.orders[0].id", "wanted")}).ToSlice(); len(got) != 2 {
+		t.Fatalf(`EQ("$.orders[0].id", "wanted") = %v, want AllRGs (len 2)`, got)
+	}
+}
+
+func TestMaxStagedPaths(t *testing.T) {
+	if _, err := NewConfig(WithMaxStagedPaths(-1)); err == nil {
+		t.Fatal("NewConfig(WithMaxStagedPaths(-1)) succeeded, want validation error")
+	}
+
+	invalidConfig := DefaultConfig()
+	invalidConfig.MaxStagedPaths = -1
+	if _, err := NewBuilder(invalidConfig, 1); err == nil {
+		t.Fatal("NewBuilder with negative MaxStagedPaths succeeded, want validation error")
+	}
+
+	t.Run("visible path diagnostic", func(t *testing.T) {
+		config, err := NewConfig(
+			WithMaxStagedPaths(2),
+			WithParserFailureMode(IngestFailureSoft),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+
+		err = builder.AddDocument(0, []byte(`{"items":{"label":"wanted"}}`))
+		requireStagedPathBudgetError(
+			t,
+			err,
+			"$.items.label",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
+		)
+		if got := builder.NumSoftSkippedDocuments(); got != 0 {
+			t.Fatalf("NumSoftSkippedDocuments() = %d, want 0; ParserFailureMode must not soften resource failures", got)
+		}
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+	})
+
+	t.Run("exactly at limit", func(t *testing.T) {
+		config, err := NewConfig(WithMaxStagedPaths(3)) // $, $.items, $.items.label
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		if err := mustNewBuilder(t, config, 1).AddDocument(0, []byte(`{"items":{"label":"wanted"}}`)); err != nil {
+			t.Fatalf("AddDocument at exact staged-path limit: %v", err)
+		}
+	})
+
+	t.Run("scalar companion at exact total limit", func(t *testing.T) {
+		config, err := NewConfig(
+			WithMaxStagedPaths(3), // $, $.email, and its scalar companion
+			WithToLowerTransformer("$.email", "lower"),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		if err := mustNewBuilder(t, config, 1).AddDocument(0, []byte(`{"email":"A@B.com"}`)); err != nil {
+			t.Fatalf("AddDocument at exact total limit with scalar companion: %v", err)
+		}
+	})
+
+	t.Run("unlimited", func(t *testing.T) {
+		config, err := NewConfig(WithMaxStagedPaths(0))
+		if err != nil {
+			t.Fatalf("NewConfig unlimited: %v", err)
+		}
+		if err := mustNewBuilder(t, config, 1).AddDocument(0, []byte(`{"items":{"label":"wanted"}}`)); err != nil {
+			t.Fatalf("AddDocument with unlimited staged paths: %v", err)
+		}
+	})
+
+	t.Run("companion paths count toward total cap", func(t *testing.T) {
+		for _, width := range []int{5, 100, 5000} {
+			t.Run(fmt.Sprintf("container width %d", width), func(t *testing.T) {
+				calls := 0
+				config, err := NewConfig(
+					WithMaxStagedPaths(3), // $, $.email, and the companion container
+					WithCustomTransformer("$.email", "parts", func(any) (any, bool) {
+						calls++
+						parts := make(map[string]any, width)
+						for i := 0; i < width; i++ {
+							parts[fmt.Sprintf("part-%04d", i)] = i
+						}
+						return parts, true
+					}),
+				)
+				if err != nil {
+					t.Fatalf("NewConfig with container transformer: %v", err)
+				}
+				builder := mustNewBuilder(t, config, 1)
+				err = builder.AddDocument(0, []byte(`{"email":"A@B.com"}`))
+				requireStagedPathBudgetError(
+					t,
+					err,
+					"$.email",
+					"staged path budget exceeded: limit 3 total paths; document requires at least 4",
+				)
+				if calls != 1 {
+					t.Fatalf("container transformer calls = %d, want 1", calls)
+				}
+				requireUncommittedStagedPathBudgetDocument(t, builder)
+			})
+		}
+	})
+
+	t.Run("source budget check precedes transformer", func(t *testing.T) {
+		calls := 0
+		config, err := NewConfig(
+			WithMaxStagedPaths(1), // $ only
+			WithCustomTransformer("$.email", "lower", func(any) (any, bool) {
+				calls++
+				return "a@b.com", true
+			}),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig with transformer: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"email":"A@B.com"}`)),
+			"$.email",
+			"staged path budget exceeded: limit 1 total paths; document requires at least 2",
+		)
+		if calls != 0 {
+			t.Fatalf("transformer calls = %d, want 0 for a source path rejected by the budget", calls)
+		}
+	})
+
+	t.Run("deep arrays stop at the cap", func(t *testing.T) {
+		const depth = 64
+		config, err := NewConfig(WithMaxStagedPaths(2))
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		document := []byte(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth))
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, document),
+			"$[*][*]",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
+		)
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+	})
+
+	t.Run("budget path follows lexical object traversal", func(t *testing.T) {
+		config, err := NewConfig(WithMaxStagedPaths(4))
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"z":1,"a":2,"m":3,"b":4}`)),
+			"$.z",
+			"staged path budget exceeded: limit 4 total paths; document requires at least 5",
+		)
+	})
+
+	t.Run("soft representation skip commits atomically", func(t *testing.T) {
+		config, err := NewConfig(
+			WithMaxStagedPaths(2),
+			WithCustomTransformer("$.a", "optional", func(any) (any, bool) {
+				return nil, false
+			}, WithTransformerFailureMode(IngestFailureSoft)),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"a":"kept","b":"rejected"}`)),
+			"$.b",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
+		)
+		if got := builder.NumSoftSkippedRepresentations(); got != 0 {
+			t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0 for an uncommitted document", got)
+		}
+	})
+
+	t.Run("builder recovers after a rejected document", func(t *testing.T) {
+		config, err := NewConfig(WithMaxStagedPaths(2)) // $, $.a
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 2)
+
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"a":"x","b":"y"}`)),
+			"$.b",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
+		)
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+
+		if err := builder.AddDocument(0, []byte(`{"a":"x"}`)); err != nil {
+			t.Fatalf("retry AddDocument at DocID 0: %v", err)
+		}
+		if err := builder.AddDocument(1, []byte(`{"a":"y"}`)); err != nil {
+			t.Fatalf("AddDocument at DocID 1: %v", err)
+		}
+
+		idx := builder.Finalize()
+		if got := idx.Evaluate([]Predicate{EQ("$.a", "x")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+			t.Fatalf(`Evaluate(EQ("$.a", "x")) = %v, want [0]`, got)
+		}
+		if got := idx.Evaluate([]Predicate{EQ("$.a", "y")}).ToSlice(); len(got) != 1 || got[0] != 1 {
+			t.Fatalf(`Evaluate(EQ("$.a", "y")) = %v, want [1]`, got)
+		}
+		if len(idx.PathDirectory) != 2 {
+			t.Fatalf("len(PathDirectory) = %d, want 2", len(idx.PathDirectory))
+		}
+	})
+
+	t.Run("flat array wildcard path counted once", func(t *testing.T) {
+		document := []byte("[" + strings.Repeat("1,", 499) + "1]")
+
+		config, err := NewConfig(WithMaxStagedPaths(2)) // $, $[*]
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		if err := mustNewBuilder(t, config, 1).AddDocument(0, document); err != nil {
+			t.Fatalf("AddDocument with 500-element flat array: %v", err)
+		}
+
+		limitedConfig, err := NewConfig(WithMaxStagedPaths(1))
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, limitedConfig, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, document),
+			"$[*]",
+			"staged path budget exceeded: limit 1 total paths; document requires at least 2",
+		)
+	})
+
+	t.Run("companion child path exceeds limit on second key", func(t *testing.T) {
+		config, err := NewConfig(
+			WithMaxStagedPaths(4), // $, $.email, companion container, first child key
+			WithCustomTransformer("$.email", "twokeys", func(any) (any, bool) {
+				return map[string]any{"a": 1, "b": 2}, true
+			}),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"email":"a@b.com"}`)),
+			"$.email",
+			"staged path budget exceeded: limit 4 total paths; document requires at least 5",
+		)
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+	})
+}
+
+func TestStagedPathBudgetPropagatesAllStagingCallSiteErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		stage func(parserSink, *documentBuildState) error
+	}{
+		{
+			name: "scalar",
+			stage: func(sink parserSink, state *documentBuildState) error {
+				if err := sink.MarkPresent(state, "$"); err != nil {
+					return err
+				}
+				return sink.StageScalar(state, "$.value", "text")
+			},
+		},
+		{
+			name: "numeric",
+			stage: func(sink parserSink, state *documentBuildState) error {
+				if err := sink.MarkPresent(state, "$"); err != nil {
+					return err
+				}
+				return sink.StageInt64(state, "$.value", 1)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			config, err := NewConfig(WithMaxStagedPaths(1))
+			if err != nil {
+				t.Fatalf("NewConfig: %v", err)
+			}
+			builder := newTypedSinkTestBuilder(t, config, tc.stage)
+			requireStagedPathBudgetError(
+				t,
+				builder.AddDocument(0, []byte(`null`)),
+				"$.value",
+				"staged path budget exceeded: limit 1 total paths; document requires at least 2",
+			)
+			requireUncommittedStagedPathBudgetDocument(t, builder)
+		})
+	}
+}
+
+func requireStagedPathBudgetError(t *testing.T, err error, wantPath, wantCause string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("AddDocument succeeded, want staged path budget error")
+	}
+	var ingestErr *IngestError
+	if !stderrors.As(err, &ingestErr) {
+		t.Fatalf("AddDocument error = %T %v, want extractable *IngestError", err, err)
+	}
+	if got := ingestErr.Layer(); got != IngestLayerResource {
+		t.Fatalf("IngestError.Layer() = %q, want %q", got, IngestLayerResource)
+	}
+	if got := ingestErr.Path(); got != wantPath {
+		t.Fatalf("IngestError.Path() = %q, want %q", got, wantPath)
+	}
+	if got := ingestErr.Value(); got != "" {
+		t.Fatalf("IngestError.Value() = %q, want empty for resource failure", got)
+	}
+	if got := ingestErr.Cause().Error(); !strings.HasPrefix(got, wantCause) {
+		t.Fatalf("IngestError.Cause() = %q, want prefix %q", got, wantCause)
+	}
+}
+
+func requireUncommittedStagedPathBudgetDocument(t *testing.T, builder *GINBuilder) {
+	t.Helper()
+	if builder.numDocs != 0 || len(builder.docIDToPos) != 0 || len(builder.posToDocID) != 0 || len(builder.pathData) != 0 {
+		t.Fatalf("failed document mutated builder: numDocs=%d docIDToPos=%d posToDocID=%d pathData=%d", builder.numDocs, len(builder.docIDToPos), len(builder.posToDocID), len(builder.pathData))
 	}
 }
 
@@ -3385,12 +3773,13 @@ func TestValidateStagedPathsRejectsLossyPromotionBeforeMerge(t *testing.T) {
 	}
 
 	state := newDocumentBuildState(1)
-	state.getOrCreatePath("$.score").numericValues = append(
-		state.getOrCreatePath("$.score").numericValues,
-		stagedNumericValue{floatVal: 1.5},
-	)
+	pathState, err := builder.getOrCreateStagedPath(state, "$.score")
+	if err != nil {
+		t.Fatalf("getOrCreateStagedPath: %v", err)
+	}
+	pathState.numericValues = append(pathState.numericValues, stagedNumericValue{floatVal: 1.5})
 
-	err := builder.validateStagedPaths(state)
+	err = builder.validateStagedPaths(state)
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}
@@ -3409,12 +3798,13 @@ func TestValidateStagedPathsRejectsUnsafeIntIntoFloatPath(t *testing.T) {
 	}
 
 	state := newDocumentBuildState(1)
-	state.getOrCreatePath("$.score").numericValues = append(
-		state.getOrCreatePath("$.score").numericValues,
-		stagedNumericValue{isInt: true, intVal: 9007199254740993},
-	)
+	pathState, err := builder.getOrCreateStagedPath(state, "$.score")
+	if err != nil {
+		t.Fatalf("getOrCreateStagedPath: %v", err)
+	}
+	pathState.numericValues = append(pathState.numericValues, stagedNumericValue{isInt: true, intVal: 9007199254740993})
 
-	err := builder.validateStagedPaths(state)
+	err = builder.validateStagedPaths(state)
 	if err == nil {
 		t.Fatal("validateStagedPaths() = nil, want mixed numeric promotion error")
 	}

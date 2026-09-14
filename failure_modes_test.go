@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	stderrors "errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
@@ -70,6 +71,20 @@ func TestIngestErrorWrappingContract(t *testing.T) {
 	if got := formatStagedNumericValue(stagedFloat); got != "1.5" {
 		t.Fatalf("formatStagedNumericValue(float) = %q, want 1.5", got)
 	}
+}
+
+func TestNewIngestErrorStringPanicsOnResourceValue(t *testing.T) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			t.Fatal("newIngestErrorString did not panic on a resource IngestError with a non-empty value")
+		}
+		message := fmt.Sprint(recovered)
+		if !strings.Contains(message, "must carry no value") {
+			t.Fatalf("panic value = %v, want message containing %q", recovered, "must carry no value")
+		}
+	}()
+	_ = newIngestErrorString(IngestLayerResource, "$.value", "unexpected", errors.New("boom"))
 }
 
 func requireIngestError(t *testing.T, err error, wantLayer IngestLayer, wantPath string) *IngestError {
@@ -913,6 +928,34 @@ func TestTransformerFailureModeSoftKeepsRawDocumentAndSkipsCompanion(t *testing.
 	}
 	requireRows(t, idx, EQ("$.email", int64(42)), []int{0})
 	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), []int{1})
+}
+
+func TestTransformerFailureModeSoftSkipNotLoggedForUncommittedDocument(t *testing.T) {
+	logger := &softSkipInfoLogger{}
+	config := softFailureConfig(
+		t,
+		WithMaxStagedPaths(2),
+		WithCustomTransformer("$.a", "optional", func(any) (any, bool) {
+			return nil, false
+		}, WithTransformerFailureMode(IngestFailureSoft)),
+		WithLogger(logger),
+	)
+	builder := mustNewBuilder(t, config, 1)
+
+	err := builder.AddDocument(DocID(0), []byte(`{"a":"kept","b":"rejected"}`))
+	var ingestErr *IngestError
+	if !stderrors.As(err, &ingestErr) {
+		t.Fatalf("AddDocument error = %T %v, want extractable *IngestError", err, err)
+	}
+	if got := ingestErr.Layer(); got != IngestLayerResource {
+		t.Fatalf("IngestError.Layer() = %q, want %q", got, IngestLayerResource)
+	}
+	if got := builder.NumSoftSkippedRepresentations(); got != 0 {
+		t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0 for an uncommitted document", got)
+	}
+	if len(logger.entries) != 0 {
+		t.Fatalf("captured info log entries = %d, want 0 for an uncommitted document", len(logger.entries))
+	}
 }
 
 func TestTransformerFailureModeSoftKeepsPartiallyStagedDocumentWithoutCompanion(t *testing.T) {

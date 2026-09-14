@@ -735,7 +735,7 @@ func TestSIMDParserNumericRoutingRecursesIntoArraysAndObjects(t *testing.T) {
 		{
 			name:     "nested-in-array",
 			jsonDoc:  []byte(`{"items":[1,1e400]}`),
-			wantPath: "$.items[1]",
+			wantPath: "$.items[*]",
 		},
 		{
 			name:     "nested-in-object",
@@ -790,7 +790,7 @@ func TestSIMDParserNumericRoutingPicksDeterministicFirstOffender(t *testing.T) {
 		{
 			name:     "array-ascending-index-order",
 			jsonDoc:  []byte(`{"nums":[1e400,2e400]}`),
-			wantPath: "$.nums[0]",
+			wantPath: "$.nums[*]",
 		},
 	}
 

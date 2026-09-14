@@ -594,6 +594,40 @@ func TestRunBuildReportsPartialFailures(t *testing.T) {
 	}
 }
 
+func TestRunBuildRejectsNegativeMaxStagedPaths(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-c", "attributes", "--max-staged-paths", "-1", "does-not-matter.parquet"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild() code = 0, want non-zero for negative --max-staged-paths")
+	}
+	if !strings.Contains(stderr.String(), "--max-staged-paths must be greater than or equal to 0") {
+		t.Fatalf("stderr = %q, want negative max-staged-paths error", stderr.String())
+	}
+}
+
+func TestRunBuildSurfacesStagedPathBudgetFailure(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetPath := filepath.Join(tmpDir, "data.parquet")
+	createCLIParquetFile(t, parquetPath, []cliTestRecord{
+		{ID: 1, Attributes: `{"brand":"Toyota"}`},
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-c", "attributes", "--max-staged-paths", "1", parquetPath}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild() code = 0, want non-zero for staged path budget failure")
+	}
+	if !strings.Contains(stderr.String(), "staged path budget exceeded") {
+		t.Fatalf("stderr = %q, want staged path budget error", stderr.String())
+	}
+}
+
 func TestRunExtractReportsPartialFailures(t *testing.T) {
 	t.Parallel()
 

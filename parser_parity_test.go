@@ -3,7 +3,6 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,7 +17,7 @@ func loadGolden(t *testing.T, name string) []byte {
 	path := filepath.Join("testdata", "parity-golden", name+".bin")
 	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("load golden %s: %v (goldens are committed by Plan 02 Task 4; if missing, regenerate via `go test -tags regenerate_goldens -run TestRegenerateParityGoldens .`)", name, err)
+		t.Fatalf("load golden %s: %v (if missing, regenerate via `go test -tags regenerate_goldens -run TestRegenerateParityGoldens .`)", name, err)
 	}
 	return b
 }
@@ -73,6 +72,23 @@ func TestStdlibParserGolden_AuthoredFixtures(t *testing.T) {
 	}
 }
 
+func TestAuthoredGoldenPathDirectoriesUseWildcardArrayPaths(t *testing.T) {
+	for _, fx := range authoredParityFixtures() {
+		fx := fx
+		t.Run(fx.Name, func(t *testing.T) {
+			idx, err := Decode(loadGolden(t, fx.Name))
+			if err != nil {
+				t.Fatalf("Decode golden: %v", err)
+			}
+			for _, entry := range idx.PathDirectory {
+				if hasNumericArrayIndex(entry.PathName) {
+					t.Fatalf("golden path directory contains private numeric path %q", entry.PathName)
+				}
+			}
+		})
+	}
+}
+
 type materializingParser struct{}
 
 func (materializingParser) Name() string { return "materializing" }
@@ -101,7 +117,9 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 
 	switch v := value.(type) {
 	case map[string]any:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		for _, key := range sortedObjectKeys(v) {
 			if err := sink.StageMaterialized(state, path+"."+key, v[key], true); err != nil {
 				return err
@@ -109,11 +127,10 @@ func stageMaterializedDocument(sink parserSink, state *documentBuildState, path 
 		}
 		return nil
 	case []any:
-		sink.MarkPresent(state, canonicalPath)
-		for i, item := range v {
-			if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
-				return err
-			}
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
+		for _, item := range v {
 			if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
 				return err
 			}
@@ -295,10 +312,10 @@ func evaluateMatrixFixture() parityFixture {
 		Config: DefaultConfig,
 		NumRGs: 4,
 		JSONDocs: [][]byte{
-			[]byte(`{"name":"alice","age":30,"status":"active","bio":"hello world"}`),
-			[]byte(`{"name":"bob","age":25,"status":"inactive","bio":"foo bar baz"}`),
-			[]byte(`{"name":"alice","age":40,"status":null,"bio":"test message qux"}`),
-			[]byte(`{"name":"carol","age":35,"bio":"hello again"}`),
+			[]byte(`{"name":"alice","age":30,"status":"active","bio":"hello world","matrix":[[1,2],["x"]],"mixed":[1,"one"],"batches":[{"values":[{"score":7}]}]}`),
+			[]byte(`{"name":"bob","age":25,"status":"inactive","bio":"foo bar baz","matrix":[[3]],"mixed":[2,"two"],"batches":[{"values":[{"score":8},{"score":9}]}]}`),
+			[]byte(`{"name":"alice","age":40,"status":null,"bio":"test message qux","matrix":[],"mixed":[],"batches":[]}`),
+			[]byte(`{"name":"carol","age":35,"bio":"hello again","matrix":[[],[1]],"mixed":[false],"batches":[{"values":[]}]}`),
 		},
 	}
 }
@@ -363,6 +380,12 @@ func evaluateMatrixCases() []evaluateMatrixCase {
 		{"Contains-prune", Contains("$.bio", "zzzzzz"), []int{}},
 		{"Regex-match", Regex("$.bio", "^hello"), []int{0, 3}},
 		{"Regex-prune", Regex("$.bio", "zzzzzz"), []int{}},
+		{"Nested-array-EQ-match", EQ("$.matrix[*][*]", int64(1)), []int{0, 3}},
+		{"Nested-array-EQ-prune", EQ("$.matrix[*][*]", int64(99)), []int{}},
+		{"Mixed-array-string-EQ-match", EQ("$.mixed[*]", "two"), []int{1}},
+		{"Mixed-array-numeric-EQ-match", EQ("$.mixed[*]", int64(2)), []int{1}},
+		{"Empty-array-IsNotNull-match", IsNotNull("$.matrix"), []int{0, 1, 2, 3}},
+		{"Arrays-in-objects-in-arrays-EQ-match", EQ("$.batches[*].values[*].score", int64(8)), []int{1}},
 	}
 }
 

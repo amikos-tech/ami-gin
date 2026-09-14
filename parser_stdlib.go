@@ -3,17 +3,15 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	"github.com/pkg/errors"
 )
 
 const stdlibParserName = "stdlib"
 
-// stdlibParser is the default Parser: wraps json.Decoder.UseNumber() and
-// produces byte-identical staging calls to the pre-Phase-13 direct path.
-// Zero-field struct + value receivers avoid heap allocation when boxed
-// into the Parser interface.
+// stdlibParser is the default Parser: it wraps json.Decoder.UseNumber().
+// Zero-field struct + value receivers avoid heap allocation when boxed into
+// the Parser interface.
 type stdlibParser struct{}
 
 func (stdlibParser) Name() string { return stdlibParserName }
@@ -49,7 +47,9 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 
 	switch tok := token.(type) {
 	case json.Delim:
-		sink.MarkPresent(state, canonicalPath)
+		if err := sink.MarkPresent(state, canonicalPath); err != nil {
+			return err
+		}
 		switch tok {
 		case '{':
 			objectValues := make(map[string]any)
@@ -91,9 +91,6 @@ func (s stdlibParser) streamValue(decoder *json.Decoder, path string, state *doc
 				item, err := decodeAny(decoder)
 				if err != nil {
 					return errors.Wrapf(err, "parse array element at %s[%d]", canonicalPath, i)
-				}
-				if err := sink.StageMaterialized(state, fmt.Sprintf("%s[%d]", path, i), item, true); err != nil {
-					return err
 				}
 				if err := sink.StageMaterialized(state, path+"[*]", item, true); err != nil {
 					return err

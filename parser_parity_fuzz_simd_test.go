@@ -4,6 +4,7 @@ package gin
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	goparser "go/parser"
@@ -135,7 +136,7 @@ func classifyFuzzParserOutcomes(doc []byte, stdlib, simd fuzzBuildOutcome) fuzzO
 }
 
 func isKnownMalformedLayerAsymmetry(doc []byte, stdlib, simd fuzzBuildOutcome) bool {
-	if !bytes.Equal(doc, []byte(`1e400 garbage`)) || stdlib.err != nil || stdlib.softSkipped != 1 || simd.softSkipped != 0 {
+	if json.Valid(doc) || stdlib.err != nil || stdlib.softSkipped != 1 || simd.softSkipped != 0 {
 		return false
 	}
 	var ingestErr *IngestError
@@ -145,6 +146,35 @@ func isKnownMalformedLayerAsymmetry(doc []byte, stdlib, simd fuzzBuildOutcome) b
 func formatUnexpectedOneSidedCommit(stdlib, simd fuzzBuildOutcome) string {
 	return fmt.Sprintf(
 		"SIMD_FUZZ_OUTCOME class=unexpected_one_sided_commit stdlib=%s simd=%s",
+		formatFuzzBuildOutcome(stdlib),
+		formatFuzzBuildOutcome(simd),
+	)
+}
+
+func fuzzRejectionsAgree(stdlib, simd fuzzBuildOutcome) bool {
+	if (stdlib.err == nil && stdlib.softSkipped == 0) || (simd.err == nil && simd.softSkipped == 0) {
+		return false
+	}
+	if stdlib.softSkipped != simd.softSkipped {
+		return false
+	}
+	return fuzzRejectionSignature(stdlib.err) == fuzzRejectionSignature(simd.err)
+}
+
+func fuzzRejectionSignature(err error) string {
+	if err == nil {
+		return ""
+	}
+	var ingestErr *IngestError
+	if errors.As(err, &ingestErr) && ingestErr != nil {
+		return fmt.Sprintf("ingest:%s:%s", ingestErr.Layer(), ingestErr.Path())
+	}
+	return "other"
+}
+
+func formatFuzzRejectionDisagreement(stdlib, simd fuzzBuildOutcome) string {
+	return fmt.Sprintf(
+		"SIMD_FUZZ_OUTCOME class=rejection_disagreement stdlib=%s simd=%s",
 		formatFuzzBuildOutcome(stdlib),
 		formatFuzzBuildOutcome(simd),
 	)
@@ -181,7 +211,11 @@ func runFuzzParserParityInput(
 	case fuzzOutcomeByteDivergence:
 		assertByteIdentical(t, "fuzz-hard-stop", simdOutcome.encoded, stdlibOutcome.encoded)
 	case fuzzOutcomeUnexpectedOneSidedCommit:
-		t.Log(formatUnexpectedOneSidedCommit(stdlibOutcome, simdOutcome))
+		t.Fatal(formatUnexpectedOneSidedCommit(stdlibOutcome, simdOutcome))
+	case fuzzOutcomeRejectionAgreement:
+		if !fuzzRejectionsAgree(stdlibOutcome, simdOutcome) {
+			t.Fatal(formatFuzzRejectionDisagreement(stdlibOutcome, simdOutcome))
+		}
 	}
 }
 
@@ -387,6 +421,13 @@ func TestClassifyFuzzParserOutcomes(t *testing.T) {
 			simd:   fuzzBuildOutcome{err: parserErr},
 			want:   fuzzOutcomeKnownMalformedLayerAsymmetry,
 		},
+		{
+			name:   "known malformed numeric prefix variant",
+			doc:    []byte(`1e700A`),
+			stdlib: fuzzBuildOutcome{softSkipped: 1},
+			simd:   fuzzBuildOutcome{err: parserErr},
+			want:   fuzzOutcomeKnownMalformedLayerAsymmetry,
+		},
 	}
 
 	for _, tc := range tests {
@@ -408,6 +449,56 @@ func TestClassifyFuzzParserOutcomes(t *testing.T) {
 					t.Fatalf("one-sided record = %q, must not claim the known malformed exclusion", record)
 				}
 				t.Log(record)
+			}
+		})
+	}
+}
+
+func TestFuzzRejectionsAgree(t *testing.T) {
+	parserErr := newIngestErrorString(IngestLayerParser, "", "bad", errors.New("parser rejection"))
+	numericErr := newIngestErrorString(IngestLayerNumeric, "$.score", "1e400", errors.New("numeric rejection"))
+	tests := []struct {
+		name   string
+		stdlib fuzzBuildOutcome
+		simd   fuzzBuildOutcome
+		want   bool
+	}{
+		{
+			name:   "matching hard parser rejection",
+			stdlib: fuzzBuildOutcome{err: parserErr},
+			simd:   fuzzBuildOutcome{err: parserErr},
+			want:   true,
+		},
+		{
+			name:   "matching soft skip",
+			stdlib: fuzzBuildOutcome{softSkipped: 1},
+			simd:   fuzzBuildOutcome{softSkipped: 1},
+			want:   true,
+		},
+		{
+			name:   "soft skip versus hard parser rejection",
+			stdlib: fuzzBuildOutcome{softSkipped: 1},
+			simd:   fuzzBuildOutcome{err: parserErr},
+			want:   false,
+		},
+		{
+			name:   "different ingest layer",
+			stdlib: fuzzBuildOutcome{err: parserErr},
+			simd:   fuzzBuildOutcome{err: numericErr},
+			want:   false,
+		},
+		{
+			name:   "silent drop is not a rejection",
+			stdlib: fuzzBuildOutcome{},
+			simd:   fuzzBuildOutcome{},
+			want:   false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := fuzzRejectionsAgree(tc.stdlib, tc.simd); got != tc.want {
+				t.Fatalf("fuzzRejectionsAgree() = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -406,8 +406,10 @@ type GINConfig struct {
 	// ParserFailureMode and NumericFailureMode are builder-time ingest routing
 	// knobs. They are never serialized into finalized indexes; see
 	// SerializedConfig and writeConfig/readConfig for persisted config state.
-	ParserFailureMode          IngestFailureMode
-	NumericFailureMode         IngestFailureMode
+	ParserFailureMode  IngestFailureMode
+	NumericFailureMode IngestFailureMode
+	// MaxStagedPaths caps staged JSON paths per document; see WithMaxStagedPaths for the full contract.
+	MaxStagedPaths             int
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
 	representationTransformers map[string][]registeredRepresentation // canonical source path -> runtime companion transformers
@@ -456,6 +458,30 @@ func WithNumericFailureMode(mode IngestFailureMode) ConfigOption {
 			return err
 		}
 		c.NumericFailureMode = normalizeIngestFailureMode(mode)
+		return nil
+	}
+}
+
+// WithMaxStagedPaths limits all distinct canonical JSON paths staged for one
+// document, including internal companion representation paths. The root and
+// object or array container paths count. Zero leaves staging unlimited.
+//
+// If the limit is exceeded, AddDocument returns a hard *IngestError with
+// Layer() == IngestLayerResource. Path() is the path whose staging was
+// rejected; when the rejection occurs inside a transformer's companion
+// representation, Path() reports the source path that owns the companion,
+// never the internal derived path. Object keys are visited in lexical order,
+// so the rejected path is deterministic but need not be the first key in the
+// input document. Value() is empty; Cause() reports the configured limit and a
+// lower-bound count of the total paths the document requires. This builder
+// resource failure is never softened by ParserFailureMode and is reported by
+// AddDocument, not Finalize.
+func WithMaxStagedPaths(limit int) ConfigOption {
+	return func(c *GINConfig) error {
+		if limit < 0 {
+			return errors.New("max staged paths must be non-negative")
+		}
+		c.MaxStagedPaths = limit
 		return nil
 	}
 }
@@ -817,6 +843,10 @@ func NewGINIndex() *GINIndex {
 }
 
 func (c GINConfig) validate() error {
+	if c.MaxStagedPaths < 0 {
+		return errors.New("max staged paths must be non-negative")
+	}
+
 	// Zero is the disable sentinel for AdaptivePromotedTermCap and
 	// AdaptiveBucketCount; AdaptiveEnabled() reports false when either is 0.
 	// The functional options reject 0 to keep the builder path explicit, but

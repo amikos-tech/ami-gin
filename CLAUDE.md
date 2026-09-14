@@ -107,7 +107,7 @@ Transform values into derived companion indexes via config options like `WithISO
 - `gin.go` - `FieldTransformer`, `RepresentationValue`, `As()`, config options, and derived representation metadata
 - `transformers.go` - All built-in transformers
 - `transformers_test.go` - Unit and integration tests
-- `builder.go` - Derived companion staging in `stageCompanionRepresentations()` before `stageMaterializedValue()`
+- `builder.go` - Source path staged and budget-checked in `stageMaterializedValue()` before its derived companions run in `stageCompanionRepresentations()`
 
 ## Go Conventions
 

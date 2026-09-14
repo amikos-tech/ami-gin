@@ -189,8 +189,9 @@ func (s *recordingSink) BeginDocument(rgID int) *documentBuildState {
 	return newDocumentBuildState(rgID)
 }
 
-func (s *recordingSink) MarkPresent(_ *documentBuildState, canonicalPath string) {
+func (s *recordingSink) MarkPresent(_ *documentBuildState, canonicalPath string) error {
 	s.events = append(s.events, "present:"+canonicalPath)
+	return nil
 }
 
 func (s *recordingSink) StageScalar(_ *documentBuildState, canonicalPath string, _ any) error {
@@ -281,7 +282,7 @@ func TestStdlibParserStagesArrayIndexAndWildcardOnGenericSink(t *testing.T) {
 		t.Fatalf("Parse: %v", err)
 	}
 
-	want := []string{"begin:5", "present:$", "materialized:$[0]", "materialized:$[*]"}
+	want := []string{"begin:5", "present:$", "materialized:$[*]"}
 	if len(sink.events) != len(want) {
 		t.Fatalf("events = %v, want %v", sink.events, want)
 	}

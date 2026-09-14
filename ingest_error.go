@@ -2,6 +2,8 @@ package gin
 
 import (
 	"fmt"
+
+	"github.com/pkg/errors"
 )
 
 // IngestLayer identifies the ingest layer that rejected a document.
@@ -19,6 +21,10 @@ const (
 
 	// IngestLayerSchema identifies unsupported value-shape failures for a document.
 	IngestLayerSchema IngestLayer = "schema"
+
+	// IngestLayerResource identifies a builder resource limit that rejected an
+	// otherwise valid document. Callers can rebuild with a higher limit.
+	IngestLayerResource IngestLayer = "resource"
 )
 
 // IngestError reports a hard per-document ingest failure.
@@ -28,11 +34,14 @@ const (
 //
 // Layer() identifies the ingest stage that rejected the document. Callers must
 // tolerate future layer strings in addition to the built-in parser,
-// transformer, numeric, and schema values.
+// transformer, numeric, schema, and resource values.
 //
 // Value() returns a verbatim string representation of the offending input or
-// value. The library does not redact or truncate it; callers that log
-// untrusted documents own their redaction and output-size policy.
+// value for document-data failures. It is empty for resource failures, which
+// have no offending document value; their diagnostics are available from
+// Cause(). The library does not redact or truncate document-data values, so
+// callers that log untrusted documents own their redaction and output-size
+// policy.
 type IngestError struct {
 	path  string
 	layer IngestLayer
@@ -56,7 +65,8 @@ func (e *IngestError) Layer() IngestLayer {
 	return e.layer
 }
 
-// Value returns the verbatim offending input or transformed value.
+// Value returns the verbatim offending input or transformed value. It is empty
+// for resource failures, which do not have an offending document value.
 func (e *IngestError) Value() string {
 	if e == nil {
 		return ""
@@ -102,6 +112,9 @@ func newIngestError(layer IngestLayer, path string, value any, err error) error 
 func newIngestErrorString(layer IngestLayer, path string, value string, err error) error {
 	if err == nil {
 		return nil
+	}
+	if layer == IngestLayerResource && value != "" {
+		panic(errors.Errorf("newIngestErrorString: resource IngestError must carry no value, got %q", value))
 	}
 	return &IngestError{
 		path:  path,
