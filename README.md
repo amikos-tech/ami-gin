@@ -160,7 +160,7 @@ GIN Index v0.2.0 expands the original predicate surface with adaptive high-cardi
 - Index merge across multiple index files is intentionally deferred beyond v0.2.0.
 - Query-time transformers are not supported in v0.2.0; transformations must happen at index-build time.
 
-Serialized index compatibility remains strict: `Decode()` rejects older payload versions. Indexes built with `v0.1.0` (wire format `v3`) must be rebuilt with `v0.2.0` (wire format `v9`).
+Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v10`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`) must be rebuilt.
 
 ## Query Types
 
@@ -172,6 +172,8 @@ gin.NE("$.status", "deleted")
 gin.IN("$.status", "active", "pending", "review")
 gin.NIN("$.status", "deleted", "archived")  // NOT IN
 ```
+
+`NE` and `NIN` select a row group when the path is present in it and some document holds a value other than the given ones. When several documents share one `DocID` (see [DocID Codec](#docid-codec-optional)), the index records which row groups hold more than one distinct value, so a row group containing both `deleted` and `active` is kept for `NE("$.status", "deleted")`. In modes without an exact term index (bloom-only paths, unpromoted adaptive terms) the negation cannot be proven and falls back to every row group where the path is present.
 
 ### Numeric Range
 
@@ -338,6 +340,8 @@ The Regex operator extracts literal strings from regex patterns and uses the tri
 gin.IsNull("$.optional_field")
 gin.IsNotNull("$.required_field")
 ```
+
+`IsNull` selects row groups holding an explicit JSON `null` for the path. When several documents share one `DocID`, it also selects row groups where at least one of those documents does not carry the path at all. A row group holding a single document keeps the historical reading: an absent key is not null.
 
 ### Nested Fields and Arrays
 
@@ -1032,16 +1036,24 @@ This architecture is ideal for:
 │  │ └──────────┴────────┘ │  │ │ "hel"   │ {0,2}  │ │                      │
 │  └───────────────────────┘  │ │ "ell"   │ {0,2}  │ │                      │
 │                             │ │ "llo"   │ {0,2,5}│ │                      │
-│  ┌────────────────────────┐ │ │ "wor"   │ {1,3}  │ │                      │
-│  │ DocID Mapping          │ │ └─────────┴────────┘ │                      │
-│  │ (optional)             │ └───────────────────────┘                      │
-│  │                        │                                                 │
-│  │ pos → DocID            │  ┌───────────────────────┐                     │
-│  │  0  → 1000             │  │ PathCardinality (HLL) │                     │
-│  │  1  → 1001             │  │ (per pathID)          │                     │
-│  │  2  → 1020             │  │                       │                     │
-│  │  3  → 1021             │  │ Estimates unique vals │                     │
-│  └────────────────────────┘  └───────────────────────┘                     │
+│  ┌───────────────────────┐  │ │ "wor"   │ {1,3}  │ │                      │
+│  │ AggregateIndex        │  │ └─────────┴────────┘ │                      │
+│  │ (per pathID, only     │  └───────────────────────┘                      │
+│  │  when DocIDs share    │                                                 │
+│  │  several documents)   │  ┌───────────────────────┐                     │
+│  │ ┌────────────┬──────┐ │  │ PathCardinality (HLL) │                     │
+│  │ │ MultiValue │ {2}  │ │  │ (per pathID)          │                     │
+│  │ │ Absent     │ {5}  │ │  │                       │                     │
+│  │ └────────────┴──────┘ │  │ Estimates unique vals │                     │
+│  └───────────────────────┘  └───────────────────────┘                     │
+│                                                                             │
+│  ┌────────────────────────┐                                                 │
+│  │ DocID Mapping          │                                                 │
+│  │ (optional)             │                                                 │
+│  │ pos → DocID            │                                                 │
+│  │  0  → 1000             │                                                 │
+│  │  1  → 1001             │                                                 │
+│  └────────────────────────┘                                                 │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 
@@ -1163,6 +1175,10 @@ if err != nil {
 
 docID := codec.Encode(fileIndex, rgIndex)  // e.g., file=3, rg=15 → DocID=75
 builder.AddDocument(docID, jsonDoc)
+// Adding several documents under one DocID is supported. The builder then
+// records per-path aggregate evidence (AggregateIndex) so NE, NIN and IsNull
+// stay sound: a row group holding several values, or a document without the
+// path, is never pruned by those operators.
 
 // Query and decode results
 result := idx.Evaluate(predicates)
