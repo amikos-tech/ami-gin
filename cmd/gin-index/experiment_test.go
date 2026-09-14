@@ -448,6 +448,20 @@ func TestRunExperimentMaxStagedPathsReportsResourceFailureWithoutValue(t *testin
 	}
 }
 
+func TestRunExperimentRejectsNegativeMaxStagedPaths(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runExperiment([]string{"--max-staged-paths", "-1", "does-not-matter.jsonl"}, bytes.NewReader(nil), &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runExperiment() code = 0, want non-zero for negative --max-staged-paths")
+	}
+	if !strings.Contains(stderr.String(), "--max-staged-paths must be greater than or equal to 0") {
+		t.Fatalf("stderr = %q, want negative max-staged-paths error", stderr.String())
+	}
+}
+
 func TestRecordExperimentIngestFailureCapsSamplesInArrivalOrder(t *testing.T) {
 	t.Parallel()
 
