@@ -690,7 +690,7 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 }
 
 // remapCompanionIngestErrorPath rewrites a leaked companion target path back
-// to the source path (found via errors.As) on hard schema or numeric ingest
+// to the source path (found via errors.As) on hard schema, numeric, or resource ingest
 // errors. It is a no-op when err is not an *IngestError, the path is empty,
 // or the path does not match the companion target/internal-prefix shape.
 func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
