@@ -197,6 +197,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260731-fast2 | PR #52 review nits: scope `make bench` to all packages (`./...`), flag the slow runtime in `make help`, and correct the 260731-f4d commit/verified columns | 2026-07-31 | 6724822 | Verified | _(fast task — no plan dir)_ |
 | 260802-hkk | verify and address issue #54 (work in a PR branch) | 2026-08-02 | 404ad73 | Verified | [260802-hkk-verify-and-address-issue-54-work-in-a-pr](./quick/260802-hkk-verify-and-address-issue-54-work-in-a-pr/) |
 | 260808-n99 | Address round-3 PR review findings on fix/issue-54: budget diagnostic unit, SIMD doc-guard cold-cache skip, lexical-order pin, --max-staged-paths on build, docs/SECURITY wording | 2026-08-08 | d475969 |  | [260808-n99-round3-review-fixes](./quick/260808-n99-round3-review-fixes/) |
+| 260914-n4a | Address review findings on fix/issue-54: comment trims, SECURITY.md citations, budget error hint, recovery/flat-array/companion/AllRGs tests, experiment negative-flag test | 2026-09-14 | 18371ed |  | [260914-n4a-address-pr-review-findings-for-issue-54](./quick/260914-n4a-address-pr-review-findings-for-issue-54/) |
 
 ## Deferred Items
 
