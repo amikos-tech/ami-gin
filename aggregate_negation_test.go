@@ -267,6 +267,38 @@ func TestNegationSingleDocumentSemanticsUnchanged(t *testing.T) {
 	}
 }
 
+// TestNegationArrayValuesUnderAggregation covers array elements, which are
+// staged only under their wildcard path (#64). A row group holding several
+// documents keeps NE/NIN when any document holds another element value and
+// keeps IsNull when any document lacks the array.
+func TestNegationArrayValuesUnderAggregation(t *testing.T) {
+	idx := buildAggregated(t, 3, []aggregatedDoc{
+		// rg 0: two docs, second holds b only -> NE(a) and NIN(a) must keep
+		{0, map[string]any{"tags": []any{"a", "b"}}},
+		{0, map[string]any{"tags": []any{"b"}}},
+		// rg 1: two docs, both hold only a -> NE(a) must drop
+		{1, map[string]any{"tags": []any{"a", "a"}}},
+		{1, map[string]any{"tags": []any{"a"}}},
+		// rg 2: two docs, one without tags -> IsNull must keep
+		{2, map[string]any{"tags": []any{"a"}}},
+		{2, map[string]any{"other": "x"}},
+	})
+	if got := indexDocIDs(idx, NE("$.tags[*]", "a")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+		t.Errorf("NE($.tags[*], a) = %v, want [0]", got)
+	}
+	if got := indexDocIDs(idx, NIN("$.tags[*]", "a")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+		t.Errorf("NIN($.tags[*], a) = %v, want [0]", got)
+	}
+	if got := indexDocIDs(idx, IsNull("$.tags[*]")).sorted(); !reflect.DeepEqual(got, []int{2}) {
+		t.Errorf("IsNull($.tags[*]) = %v, want [2]", got)
+	}
+	for _, path := range idx.PathDirectory {
+		if strings.Contains(path.PathName, "[0]") || strings.Contains(path.PathName, "[1]") {
+			t.Errorf("private numeric array path %q staged; expected wildcard only", path.PathName)
+		}
+	}
+}
+
 func TestAggregateIndexSerializationRoundTrip(t *testing.T) {
 	numRGs, docs := aggregatedCorpus()
 	idx := buildAggregated(t, numRGs, docs)

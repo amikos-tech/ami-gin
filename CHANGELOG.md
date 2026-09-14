@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `NE`, `NIN` and `IsNull` are now sound when several documents share one
+  `DocID` (`RowGroupCodec`, repeated `AddDocument`). The builder records a
+  per-path `AggregateIndex` (`MultiValueRGs`, `AbsentRGs`) for row groups
+  holding more than one document; `NE`/`NIN` keep multi-value row groups and
+  `IsNull` keeps row groups where a document lacks the path. One-document
+  row groups keep their previous answers. Wire format `v9` -> `v10`; rebuild
+  serialized indexes (#60, #61).
 - Array elements are indexed only under their canonical wildcard paths (for
   example, `$.items[*].id`), rather than private numeric paths such as
   `$.items[0].id`. Rebuild indexes containing arrays after upgrading: the
