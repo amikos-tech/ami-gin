@@ -23,8 +23,7 @@ const (
 	IngestLayerSchema IngestLayer = "schema"
 
 	// IngestLayerResource identifies a builder resource limit that rejected an
-	// otherwise valid document. Callers can adjust the relevant builder limit
-	// and retry the document.
+	// otherwise valid document. Callers can rebuild with a higher limit.
 	IngestLayerResource IngestLayer = "resource"
 )
 

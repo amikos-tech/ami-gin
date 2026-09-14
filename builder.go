@@ -185,8 +185,7 @@ func newDocumentBuildState(rgID int) *documentBuildState {
 
 // +hard-ingest
 //
-// getOrCreateStagedPath returns the staged state for canonicalPath, creating
-// it only when the configured total staged-path budget permits it.
+// getOrCreateStagedPath returns the staged state for canonicalPath, creating it only within the staged-path budget.
 func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalPath string) (*stagedPathData, error) {
 	if pathState, ok := state.paths[canonicalPath]; ok {
 		return pathState, nil
@@ -690,15 +689,10 @@ func (b *GINBuilder) stageCompanionRepresentations(canonicalPath string, value a
 	return nil
 }
 
-// remapCompanionIngestErrorPath hides internal derived-path names from
-// user-facing ingest errors by rewriting any leaked companion target path back
-// to the source path in place via the caller's error pointer discovered through
-// errors.As. The offending Value is left untouched: for transformer, schema, or
-// numeric failures it still reflects the transformed representation that
-// actually failed, while resource failures never carry a Value in the first
-// place, so there is nothing to remap there. Returns without effect when err
-// does not unwrap to *IngestError, when the path is empty, or when the path
-// does not match the companion target/internal-prefix shape.
+// remapCompanionIngestErrorPath rewrites a leaked companion target path back
+// to the source path (found via errors.As) on hard schema or numeric ingest
+// errors. It is a no-op when err is not an *IngestError, the path is empty,
+// or the path does not match the companion target/internal-prefix shape.
 func remapCompanionIngestErrorPath(err error, sourcePath, targetPath string) {
 	var ingestErr *IngestError
 	if !errors.As(err, &ingestErr) || ingestErr == nil {

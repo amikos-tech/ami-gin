@@ -570,12 +570,7 @@ func recordExperimentIngestFailure(result *experimentBuildResult, lineNumber int
 	if len(group.Samples) >= experimentFailureSampleLimit && !forceSample {
 		return
 	}
-	// Document-data values are captured verbatim per the library contract;
-	// resource failures have no value and retain their diagnostic in Message.
-	// Report growth is bounded by sample count rather than by truncating
-	// individual values.
-	// Tragic builder-closing failures bypass the cap so the triggering sample is
-	// always retained in the emitted report.
+	// Values are captured verbatim; resource failures carry none; growth is capped by sample count, not truncation; tragic builder-closing failures bypass the cap.
 	group.Samples = append(group.Samples, sample)
 }
 

@@ -408,10 +408,7 @@ type GINConfig struct {
 	// SerializedConfig and writeConfig/readConfig for persisted config state.
 	ParserFailureMode  IngestFailureMode
 	NumericFailureMode IngestFailureMode
-	// MaxStagedPaths limits all distinct canonical JSON paths staged for one
-	// document, including internal companion representation paths. The root and
-	// object or array containers count. Zero is unlimited. It is a builder-time
-	// guard and is not serialized.
+	// MaxStagedPaths caps staged JSON paths per document; see WithMaxStagedPaths for the full contract.
 	MaxStagedPaths             int
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
