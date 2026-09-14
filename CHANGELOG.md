@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 (2026-09-14)
 
 - Array elements are indexed only under their canonical wildcard paths (for
   example, `$.items[*].id`), rather than private numeric paths such as
