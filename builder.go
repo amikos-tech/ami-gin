@@ -100,12 +100,15 @@ type GINBuilder struct {
 	numSoftSkips               uint64
 	numSoftRepresentationSkips uint64
 	maxRGID                    int
-	pathData                   map[string]*pathBuildData
-	bloom                      *BloomFilter
-	codec                      DocIDCodec
-	docIDToPos                 map[DocID]int
-	posToDocID                 []DocID
-	nextPos                    int
+	// docCounts[rg] is the number of documents merged into row group rg. It
+	// feeds the AggregateIndex, which only exists when a value exceeds 1.
+	docCounts  []uint32
+	pathData   map[string]*pathBuildData
+	bloom      *BloomFilter
+	codec      DocIDCodec
+	docIDToPos map[DocID]int
+	posToDocID []DocID
+	nextPos    int
 	// tragicErr closes the builder after an internal invariant violation or a
 	// recovered parser/merge panic.
 	// Finalize then returns nil because prior partial merges may have left an undefined subset of paths.
@@ -136,8 +139,10 @@ type pathBuildData struct {
 	stringLengthStats map[int]*RGStringLengthStat
 	nullRGs           *RGSet
 	presentRGs        *RGSet
-	hll               *HyperLogLog
-	trigrams          *TrigramIndex
+	// presentDocs[rg] is the number of documents in rg that carry the path.
+	presentDocs []uint32
+	hll         *HyperLogLog
+	trigrams    *TrigramIndex
 
 	hasNumericValues bool
 	numericValueType NumericValueType
@@ -235,6 +240,7 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	b := &GINBuilder{
 		config:     config,
 		numRGs:     numRGs,
+		docCounts:  make([]uint32, numRGs),
 		pathData:   make(map[string]*pathBuildData),
 		bloom:      bloom,
 		codec:      NewIdentityCodec(),
@@ -392,6 +398,7 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 		stringLengthStats: make(map[int]*RGStringLengthStat),
 		nullRGs:           MustNewRGSet(b.numRGs),
 		presentRGs:        MustNewRGSet(b.numRGs),
+		presentDocs:       make([]uint32, b.numRGs),
 		hll:               MustNewHyperLogLog(b.config.HLLPrecision),
 	}
 	if b.shouldEnableTrigrams(path) {
@@ -931,6 +938,7 @@ func (b *GINBuilder) mergeDocumentState(docID DocID, pos int, exists bool, state
 		b.maxRGID = pos
 	}
 	b.numDocs++
+	b.docCounts[pos]++
 	return nil
 }
 
@@ -1081,6 +1089,7 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 		pd.observedTypes |= staged.observedTypes
 		if staged.present {
 			pd.presentRGs.Set(state.rgID)
+			pd.presentDocs[state.rgID]++
 		}
 		if staged.isNull {
 			pd.nullRGs.Set(state.rgID)
@@ -1285,6 +1294,7 @@ func (b *GINBuilder) Finalize() *GINIndex {
 	idx.Header.CardinalityThresh = b.config.CardinalityThreshold
 	idx.DocIDMapping = b.posToDocID
 	idx.Config = &b.config
+	aggregatedRGs := b.aggregatedRowGroups()
 
 	paths := make([]string, 0, len(b.pathData))
 	for p := range b.pathData {
@@ -1394,6 +1404,9 @@ func (b *GINBuilder) Finalize() *GINIndex {
 				PresentRGBitmap: pd.presentRGs,
 			}
 		}
+		if agg := b.buildAggregateIndex(pd, aggregatedRGs); agg != nil {
+			idx.AggregateIndexes[pd.pathID] = agg
+		}
 
 		if pd.trigrams != nil && pd.trigrams.TrigramCount() > 0 {
 			idx.TrigramIndexes[pd.pathID] = pd.trigrams
@@ -1409,4 +1422,66 @@ func (b *GINBuilder) Finalize() *GINIndex {
 		panic(err)
 	}
 	return idx
+}
+
+// aggregatedRowGroups lists the row groups that received more than one
+// document. It is empty for one-document-per-DocID indexes, which then carry
+// no AggregateIndex at all.
+func (b *GINBuilder) aggregatedRowGroups() []int {
+	var rgs []int
+	for rg, n := range b.docCounts {
+		if n >= 2 {
+			rgs = append(rgs, rg)
+		}
+	}
+	return rgs
+}
+
+func (b *GINBuilder) buildAggregateIndex(pd *pathBuildData, aggregatedRGs []int) *AggregateIndex {
+	if len(aggregatedRGs) == 0 {
+		return nil
+	}
+	multiDoc := MustNewRGSet(b.numRGs)
+	absent := MustNewRGSet(b.numRGs)
+	for _, rg := range aggregatedRGs {
+		n := pd.presentDocs[rg]
+		if n >= 2 {
+			multiDoc.Set(rg)
+		}
+		if n < b.docCounts[rg] {
+			absent.Set(rg)
+		}
+	}
+	multiValue := NoRGs(b.numRGs)
+	if !multiDoc.IsEmpty() {
+		multiValue = b.multiValueRowGroups(pd).Intersect(multiDoc)
+	}
+	if multiValue.IsEmpty() && absent.IsEmpty() {
+		return nil
+	}
+	return &AggregateIndex{MultiValueRGs: multiValue, AbsentRGs: absent}
+}
+
+// multiValueRowGroups marks the row groups holding at least two distinct
+// values of the path. String and boolean terms are counted exactly, an
+// explicit null counts as one value, and a numeric row-group stat counts as
+// one value when min equals max and as two otherwise.
+func (b *GINBuilder) multiValueRowGroups(pd *pathBuildData) *RGSet {
+	seen := pd.nullRGs.Clone()
+	multi := MustNewRGSet(b.numRGs)
+	for _, bitmap := range pd.stringTerms {
+		multi.UnionWith(seen.Intersect(bitmap))
+		seen.UnionWith(bitmap)
+	}
+	for rg, stat := range pd.numericStats {
+		if !stat.HasValue {
+			continue
+		}
+		if stat.IntMin != stat.IntMax || stat.Min != stat.Max || seen.IsSet(rg) {
+			multi.Set(rg)
+			continue
+		}
+		seen.Set(rg)
+	}
+	return multi
 }

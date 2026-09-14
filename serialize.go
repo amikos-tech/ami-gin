@@ -373,6 +373,10 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 		return nil, errors.Wrap(err, "write null indexes")
 	}
 
+	if err := writeAggregateIndexes(&buf, idx); err != nil {
+		return nil, errors.Wrap(err, "write aggregate indexes")
+	}
+
 	if err := writeTrigramIndexes(&buf, idx); err != nil {
 		return nil, errors.Wrap(err, "write trigram indexes")
 	}
@@ -510,6 +514,10 @@ func decodeCore(data []byte) (*GINIndex, error) {
 
 	if err := readNullIndexes(buf, idx); err != nil {
 		return nil, errors.Wrap(err, "read null indexes")
+	}
+
+	if err := readAggregateIndexes(buf, idx); err != nil {
+		return nil, errors.Wrap(err, "read aggregate indexes")
 	}
 
 	if err := readTrigramIndexes(buf, idx); err != nil {
@@ -1439,6 +1447,57 @@ func readNullIndexes(r io.Reader, idx *GINIndex) error {
 		idx.NullIndexes[pathID] = &NullIndex{
 			NullRGBitmap:    nullBitmap,
 			PresentRGBitmap: presentBitmap,
+		}
+	}
+	return nil
+}
+
+func writeAggregateIndexes(w io.Writer, idx *GINIndex) error {
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(idx.AggregateIndexes))); err != nil {
+		return err
+	}
+	for _, pathID := range sortedPathIDs(idx.AggregateIndexes) {
+		ai := idx.AggregateIndexes[pathID]
+		if err := binary.Write(w, binary.LittleEndian, pathID); err != nil {
+			return err
+		}
+		if err := writeRGSet(w, ai.MultiValueRGs); err != nil {
+			return err
+		}
+		if err := writeRGSet(w, ai.AbsentRGs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func readAggregateIndexes(r io.Reader, idx *GINIndex) error {
+	var numPaths uint32
+	if err := binary.Read(r, binary.LittleEndian, &numPaths); err != nil {
+		return errors.Wrapf(ErrInvalidFormat, "read aggregate index path count: %v", err)
+	}
+	if numPaths > maxNumPaths {
+		return errors.Wrapf(ErrInvalidFormat, "aggregate index path count %d exceeds max %d", numPaths, maxNumPaths)
+	}
+	for i := uint32(0); i < numPaths; i++ {
+		var pathID uint16
+		if err := binary.Read(r, binary.LittleEndian, &pathID); err != nil {
+			return errors.Wrapf(ErrInvalidFormat, "read aggregate index path id: %v", err)
+		}
+		if err := rejectDuplicateSectionPath("aggregate index", idx.AggregateIndexes, pathID); err != nil {
+			return err
+		}
+		multiValue, err := readRGSet(r, idx.Header.NumRowGroups)
+		if err != nil {
+			return err
+		}
+		absent, err := readRGSet(r, idx.Header.NumRowGroups)
+		if err != nil {
+			return err
+		}
+		idx.AggregateIndexes[pathID] = &AggregateIndex{
+			MultiValueRGs: multiValue,
+			AbsentRGs:     absent,
 		}
 	}
 	return nil

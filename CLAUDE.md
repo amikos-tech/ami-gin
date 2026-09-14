@@ -36,6 +36,7 @@ go run ./examples/basic/main.go
 - **StringIndex** - Sorted terms with parallel RG bitmaps for exact match
 - **NumericIndex** - Per-RG min/max stats for range query pruning
 - **NullIndex** - Two bitmaps per path: null RGs and present RGs
+- **AggregateIndex** - Two bitmaps per path, present only when several documents share one DocID: RGs with more than one distinct value, RGs with a document lacking the path. Consulted by NE/NIN/IsNull only
 - **TrigramIndex** - N-gram to RG bitmap mapping for CONTAINS queries
 - **GlobalBloom** - Bloom filter for fast path=value rejection
 - **PathCardinality** - HyperLogLog per path for cardinality estimation

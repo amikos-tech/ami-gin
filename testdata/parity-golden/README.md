@@ -9,8 +9,8 @@ the array canonicalization change records array elements only at wildcard
 paths, so array-bearing fixtures intentionally differ from the old v1.0
 encoding.
 
-Regenerate only when the serialization format bumps (v10+) or an approved
-behavior change requires it, and record the review in the audit trail below.
+Regenerate only when the serialization format bumps (last: v10, aggregate
+index section) or an approved behavior change requires it, and record the review in the audit trail below.
 
 ## How these were initially captured
 
@@ -50,10 +50,10 @@ separates the behavior change from the evidence required to review it.
 
 ## Format
 
-Each `.bin` is a full v9-encoded index blob as emitted by `Encode()`. The
+Each `.bin` is a full v10-encoded index blob as emitted by `Encode()`. The
 files in this directory are compressed payloads, so they start with the
 transport wrapper magic `GINc` (`serialize.go:101`); the wrapped inner index
-header still carries `MagicBytes = "GIN\x01"` and `Version = 9`. One file per
+header still carries `MagicBytes = "GIN\x01"` and `Version = 10`. One file per
 authored fixture; names match `authoredParityFixtures()` in
 `parser_parity_fixtures_test.go`.
 
@@ -72,4 +72,4 @@ authored fixture; names match `authoredParityFixtures()` in
 | `large-strings.bin` | Trigram-index stress |
 | `transformer-buffered-container-numerics.bin` | Buffered object/array materialization with integers, whole floats, fractions, and nested numbers |
 | `transformers-iso-date-and-lower.bin` | WithISODateTransformer + WithToLowerTransformer (D-05 dim #4 / Pitfall #2) |
-| `transformers-soft-fail-wire.bin` | Full v9 payload pin for companion transformer `soft_fail` wire tokens |
+| `transformers-soft-fail-wire.bin` | Full v10 payload pin for companion transformer `soft_fail` wire tokens |

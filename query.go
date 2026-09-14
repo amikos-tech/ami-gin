@@ -334,9 +334,9 @@ func (idx *GINIndex) evaluateEQ(pathID int, entry *PathEntry, value any) *RGSet 
 }
 
 func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet {
+	presentRGs := idx.evaluateIsNotNull(pathID)
 	if entry.Mode == PathModeAdaptiveHybrid {
 		if term, ok := stringPredicateTerm(value); ok {
-			presentRGs := idx.evaluateIsNotNull(pathID)
 			eqResult, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
 				return idx.adaptiveInvariantAllRGs("NE")
@@ -344,13 +344,58 @@ func (idx *GINIndex) evaluateNE(pathID int, entry *PathEntry, value any) *RGSet 
 			if !exact {
 				return presentRGs
 			}
-			return presentRGs.Intersect(eqResult.Invert())
+			return idx.negate(pathID, presentRGs, eqResult)
 		}
 	}
 
 	eqResult := idx.evaluateEQ(pathID, entry, value)
-	presentRGs := idx.evaluateIsNotNull(pathID)
-	return presentRGs.Intersect(eqResult.Invert())
+	if !idx.eqIsExact(pathID, entry, value, eqResult) {
+		return presentRGs
+	}
+	return idx.negate(pathID, presentRGs, eqResult)
+}
+
+// negate turns an exact positive match into its negation over row groups. A
+// row group qualifies when the path is present and either no document holds
+// a matching value or, when documents aggregate onto one DocID, the row
+// group holds at least two distinct values, so some document differs.
+func (idx *GINIndex) negate(pathID int, presentRGs, positive *RGSet) *RGSet {
+	return presentRGs.Intersect(positive.Invert().Union(idx.aggregateMultiValueRGs(pathID)))
+}
+
+// eqIsExact reports whether evaluateEQ answered with an exact row-group set
+// rather than a superset. Negation needs an exact positive match; anything
+// approximate must fall back to the present set. An empty result is always
+// exact because every EQ shortcut is free of false negatives.
+func (idx *GINIndex) eqIsExact(pathID int, entry *PathEntry, value any, result *RGSet) bool {
+	if result.IsEmpty() {
+		return true
+	}
+	switch value.(type) {
+	case string, bool:
+		_, hasStringIndex := idx.StringIndexes[uint16(pathID)]
+		return entry.Mode == PathModeClassic && hasStringIndex
+	case float64, int, int64:
+		// A single-value row group has min == max, so range containment is
+		// exact there; multi-value row groups are covered by negate.
+		_, hasNumericIndex := idx.NumericIndexes[uint16(pathID)]
+		return hasNumericIndex
+	}
+	return false
+}
+
+func (idx *GINIndex) aggregateMultiValueRGs(pathID int) *RGSet {
+	if ai, ok := idx.AggregateIndexes[uint16(pathID)]; ok && ai.MultiValueRGs != nil {
+		return ai.MultiValueRGs
+	}
+	return NoRGs(int(idx.Header.NumRowGroups))
+}
+
+func (idx *GINIndex) aggregateAbsentRGs(pathID int) *RGSet {
+	if ai, ok := idx.AggregateIndexes[uint16(pathID)]; ok && ai.AbsentRGs != nil {
+		return ai.AbsentRGs
+	}
+	return NoRGs(int(idx.Header.NumRowGroups))
 }
 
 func (idx *GINIndex) evaluateGT(pathID int, value any) *RGSet {
@@ -574,9 +619,9 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 		for _, v := range values {
 			term, ok := stringPredicateTerm(v)
 			if !ok {
-				// Non-string element forces the non-adaptive path; pass the
-				// already-extracted slice to skip a redundant adaptive walk.
-				return presentRGs.Intersect(idx.evaluateINNonAdaptive(pathID, entry, values).Invert())
+				// Adaptive paths hold no exact index for non-string
+				// elements, so the negation cannot be proven.
+				return presentRGs
 			}
 			rgSet, exact, handled := idx.evaluateAdaptiveStringTerm(pathID, entry, term)
 			if !handled {
@@ -590,18 +635,30 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 		if !allExact {
 			return presentRGs
 		}
-		return presentRGs.Intersect(inResult.Invert())
+		return idx.negate(pathID, presentRGs, inResult)
 	}
 
-	inResult := idx.evaluateIN(pathID, entry, value)
 	presentRGs := idx.evaluateIsNotNull(pathID)
-	return presentRGs.Intersect(inResult.Invert())
+	values, ok := value.([]any)
+	if !ok {
+		return presentRGs
+	}
+	numRGs := int(idx.Header.NumRowGroups)
+	inResult := NoRGs(numRGs)
+	for _, v := range values {
+		eqResult := idx.evaluateEQ(pathID, entry, v)
+		if !idx.eqIsExact(pathID, entry, v, eqResult) {
+			return presentRGs
+		}
+		inResult = inResult.Union(eqResult)
+	}
+	return idx.negate(pathID, presentRGs, inResult)
 }
 
 func (idx *GINIndex) evaluateIsNull(pathID int) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
 	if ni, ok := idx.NullIndexes[uint16(pathID)]; ok {
-		return ni.NullRGBitmap.Clone()
+		return ni.NullRGBitmap.Union(idx.aggregateAbsentRGs(pathID))
 	}
 	return NoRGs(numRGs)
 }
