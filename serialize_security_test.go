@@ -114,6 +114,9 @@ func encodedConfigAndRepresentationJSON(t *testing.T, data []byte) ([]byte, []by
 	if err := readNullIndexes(buf, idx); err != nil {
 		t.Fatalf("readNullIndexes() error = %v", err)
 	}
+	if err := readAggregateIndexes(buf, idx); err != nil {
+		t.Fatalf("readAggregateIndexes() error = %v", err)
+	}
 	if err := readTrigramIndexes(buf, idx); err != nil {
 		t.Fatalf("readTrigramIndexes() error = %v", err)
 	}
@@ -844,7 +847,7 @@ func TestReadConfigRejectsValidateFailureAsInvalidFormat(t *testing.T) {
 	}
 }
 
-func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
+func TestTransformerFailureModeWireTokensStayV10(t *testing.T) {
 	config, err := NewConfig(
 		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
 	)
@@ -862,8 +865,8 @@ func TestTransformerFailureModeWireTokensStayV9(t *testing.T) {
 		t.Fatalf("EncodeWithLevel() error = %v", err)
 	}
 
-	if Version != 9 {
-		t.Fatalf("Version = %d, want 9", Version)
+	if Version != 10 {
+		t.Fatalf("Version = %d, want 10", Version)
 	}
 
 	configJSON, representationJSON, _ := encodedConfigAndRepresentationJSON(t, data)
@@ -2049,6 +2052,22 @@ func TestDecodeRejectsDuplicatePathSectionsAcrossReaders(t *testing.T) {
 			},
 		},
 		{
+			name: "aggregate indexes",
+			run: func(t *testing.T) error {
+				t.Helper()
+				var buf bytes.Buffer
+				idx := NewGINIndex()
+				idx.Header.NumRowGroups = 1
+				binary.Write(&buf, binary.LittleEndian, uint32(2))
+				for i := 0; i < 2; i++ {
+					binary.Write(&buf, binary.LittleEndian, uint16(0))
+					writeRGSet(&buf, MustNewRGSet(1))
+					writeRGSet(&buf, MustNewRGSet(1))
+				}
+				return readAggregateIndexes(&buf, idx)
+			},
+		},
+		{
 			name: "trigram indexes",
 			run: func(t *testing.T) error {
 				t.Helper()
@@ -2808,6 +2827,13 @@ func TestSerializeReadersWrapTruncationAsInvalidFormat(t *testing.T) {
 			invoke: func(t *testing.T) error {
 				idx := NewGINIndex()
 				return readNullIndexes(bytes.NewReader(nil), idx)
+			},
+		},
+		{
+			name: "readAggregateIndexes",
+			invoke: func(t *testing.T) error {
+				idx := NewGINIndex()
+				return readAggregateIndexes(bytes.NewReader(nil), idx)
 			},
 		},
 		{

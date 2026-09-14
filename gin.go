@@ -17,6 +17,8 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v10: per-path AggregateIndex section so NE, NIN and IsNull stay
+	//        sound when several documents share one DocID (#60)
 	//   v9: compaction for ordered-string sections, including path
 	//       directory names and string/adaptive term payloads
 	//   v8: explicit companion transformer failure modes in serialized config
@@ -28,7 +30,7 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = 9
+	Version = 10
 )
 
 const (
@@ -81,6 +83,7 @@ type GINIndex struct {
 	AdaptiveStringIndexes map[uint16]*AdaptiveStringIndex
 	NumericIndexes        map[uint16]*NumericIndex
 	NullIndexes           map[uint16]*NullIndex
+	AggregateIndexes      map[uint16]*AggregateIndex
 	TrigramIndexes        map[uint16]*TrigramIndex
 	StringLengthIndexes   map[uint16]*StringLengthIndex
 	PathCardinality       map[uint16]*HyperLogLog
@@ -224,6 +227,23 @@ type RGNumericStat struct {
 type NullIndex struct {
 	NullRGBitmap    *RGSet
 	PresentRGBitmap *RGSet
+}
+
+// AggregateIndex records, per path, evidence that only exists when several
+// documents share one DocID (for example through RowGroupCodec). The negation
+// operators NE, NIN and IsNull consult it; every other operator ignores it.
+// A path without an entry has no such row group, so the operators keep the
+// one-document-per-DocID semantics for it.
+type AggregateIndex struct {
+	// MultiValueRGs marks row groups where at least two documents carry the
+	// path and the path holds at least two distinct values. Such a row group
+	// always satisfies NE and NIN for any single value, because some
+	// document holds a different one.
+	MultiValueRGs *RGSet
+	// AbsentRGs marks row groups holding at least two documents where at
+	// least one document does not carry the path. Such a row group always
+	// satisfies IsNull.
+	AbsentRGs *RGSet
 }
 
 type StringLengthIndex struct {
@@ -833,6 +853,7 @@ func NewGINIndex() *GINIndex {
 		AdaptiveStringIndexes: make(map[uint16]*AdaptiveStringIndex),
 		NumericIndexes:        make(map[uint16]*NumericIndex),
 		NullIndexes:           make(map[uint16]*NullIndex),
+		AggregateIndexes:      make(map[uint16]*AggregateIndex),
 		TrigramIndexes:        make(map[uint16]*TrigramIndex),
 		StringLengthIndexes:   make(map[uint16]*StringLengthIndex),
 		PathCardinality:       make(map[uint16]*HyperLogLog),
@@ -1081,6 +1102,11 @@ func (idx *GINIndex) validatePathReferences() error {
 	}
 	for _, pathID := range sortedPathIDs(idx.NullIndexes) {
 		if err := idx.validatePathReference("null index", pathID); err != nil {
+			return err
+		}
+	}
+	for _, pathID := range sortedPathIDs(idx.AggregateIndexes) {
+		if err := idx.validatePathReference("aggregate index", pathID); err != nil {
 			return err
 		}
 	}

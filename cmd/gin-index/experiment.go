@@ -768,6 +768,11 @@ func trimExperimentIndexRowGroups(idx *gin.GINIndex, rowGroups int) {
 		trimExperimentRGSet(ni.PresentRGBitmap, rowGroups)
 	}
 
+	for _, ai := range idx.AggregateIndexes {
+		trimExperimentRGSet(ai.MultiValueRGs, rowGroups)
+		trimExperimentRGSet(ai.AbsentRGs, rowGroups)
+	}
+
 	for _, ti := range idx.TrigramIndexes {
 		ti.NumRGs = rowGroups
 		for _, rgSet := range ti.Trigrams {
