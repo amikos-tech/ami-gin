@@ -3158,9 +3158,17 @@ func TestWildcardArrayQueryReturnsOnlyMatchingRowGroup(t *testing.T) {
 		t.Fatalf("AddDocument non-matching row group: %v", err)
 	}
 
-	got := builder.Finalize().Evaluate([]Predicate{EQ("$.orders[*].id", "wanted")}).ToSlice()
+	idx := builder.Finalize()
+	got := idx.Evaluate([]Predicate{EQ("$.orders[*].id", "wanted")}).ToSlice()
 	if len(got) != 1 || got[0] != 0 {
 		t.Fatalf(`EQ("$.orders[*].id", "wanted") = %v, want [0]`, got)
+	}
+
+	// Only the wildcard path $.orders[*].id was ever staged, so a concrete-index
+	// query is an unknown path to the index: the safe fallback is AllRGs (no
+	// pruning), not an empty or single-row-group result.
+	if got := idx.Evaluate([]Predicate{EQ("$.orders[0].id", "wanted")}).ToSlice(); len(got) != 2 {
+		t.Fatalf(`EQ("$.orders[0].id", "wanted") = %v, want AllRGs (len 2)`, got)
 	}
 }
 
@@ -3341,6 +3349,84 @@ func TestMaxStagedPaths(t *testing.T) {
 			t.Fatalf("NumSoftSkippedRepresentations() = %d, want 0 for an uncommitted document", got)
 		}
 	})
+
+	t.Run("builder recovers after a rejected document", func(t *testing.T) {
+		config, err := NewConfig(WithMaxStagedPaths(2)) // $, $.a
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 2)
+
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"a":"x","b":"y"}`)),
+			"$.b",
+			"staged path budget exceeded: limit 2 total paths; document requires at least 3",
+		)
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+
+		if err := builder.AddDocument(0, []byte(`{"a":"x"}`)); err != nil {
+			t.Fatalf("retry AddDocument at DocID 0: %v", err)
+		}
+		if err := builder.AddDocument(1, []byte(`{"a":"y"}`)); err != nil {
+			t.Fatalf("AddDocument at DocID 1: %v", err)
+		}
+
+		idx := builder.Finalize()
+		if got := idx.Evaluate([]Predicate{EQ("$.a", "x")}).ToSlice(); len(got) != 1 || got[0] != 0 {
+			t.Fatalf(`Evaluate(EQ("$.a", "x")) = %v, want [0]`, got)
+		}
+		if got := idx.Evaluate([]Predicate{EQ("$.a", "y")}).ToSlice(); len(got) != 1 || got[0] != 1 {
+			t.Fatalf(`Evaluate(EQ("$.a", "y")) = %v, want [1]`, got)
+		}
+		if len(idx.PathDirectory) != 2 {
+			t.Fatalf("len(PathDirectory) = %d, want 2", len(idx.PathDirectory))
+		}
+	})
+
+	t.Run("flat array wildcard path counted once", func(t *testing.T) {
+		document := []byte("[" + strings.Repeat("1,", 499) + "1]")
+
+		config, err := NewConfig(WithMaxStagedPaths(2)) // $, $[*]
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		if err := mustNewBuilder(t, config, 1).AddDocument(0, document); err != nil {
+			t.Fatalf("AddDocument with 500-element flat array: %v", err)
+		}
+
+		limitedConfig, err := NewConfig(WithMaxStagedPaths(1))
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, limitedConfig, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, document),
+			"$[*]",
+			"staged path budget exceeded: limit 1 total paths; document requires at least 2",
+		)
+	})
+
+	t.Run("companion child path exceeds limit on second key", func(t *testing.T) {
+		config, err := NewConfig(
+			WithMaxStagedPaths(4), // $, $.email, companion container, first child key
+			WithCustomTransformer("$.email", "twokeys", func(any) (any, bool) {
+				return map[string]any{"a": 1, "b": 2}, true
+			}),
+		)
+		if err != nil {
+			t.Fatalf("NewConfig: %v", err)
+		}
+		builder := mustNewBuilder(t, config, 1)
+		requireStagedPathBudgetError(
+			t,
+			builder.AddDocument(0, []byte(`{"email":"a@b.com"}`)),
+			"$.email",
+			"staged path budget exceeded: limit 4 total paths; document requires at least 5",
+		)
+		requireUncommittedStagedPathBudgetDocument(t, builder)
+	})
 }
 
 func TestStagedPathBudgetPropagatesAllStagingCallSiteErrors(t *testing.T) {
@@ -3404,8 +3490,8 @@ func requireStagedPathBudgetError(t *testing.T, err error, wantPath, wantCause s
 	if got := ingestErr.Value(); got != "" {
 		t.Fatalf("IngestError.Value() = %q, want empty for resource failure", got)
 	}
-	if got := ingestErr.Cause().Error(); got != wantCause {
-		t.Fatalf("IngestError.Cause() = %q, want %q", got, wantCause)
+	if got := ingestErr.Cause().Error(); !strings.HasPrefix(got, wantCause) {
+		t.Fatalf("IngestError.Cause() = %q, want prefix %q", got, wantCause)
 	}
 }
 

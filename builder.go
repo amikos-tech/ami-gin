@@ -196,7 +196,7 @@ func (b *GINBuilder) getOrCreateStagedPath(state *documentBuildState, canonicalP
 			canonicalPath,
 			"",
 			errors.Errorf(
-				"staged path budget exceeded: limit %d total paths; document requires at least %d",
+				"staged path budget exceeded: limit %d total paths; document requires at least %d (count includes the root, containers, and derived companion paths)",
 				b.config.MaxStagedPaths,
 				len(state.paths)+1,
 			),
