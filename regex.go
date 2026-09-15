@@ -6,17 +6,16 @@ import (
 
 const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 
-// ExtractLiterals extracts literal strings from a regex pattern that can be used
-// for trigram-based candidate selection. Returns a slice of literal alternatives:
-// every match of the pattern contains at least one of them as a substring.
-// For patterns like "foo|bar", returns ["foo", "bar"].
-// For patterns like "(error|warn)_msg", returns ["error_msg", "warn_msg"] (combined).
-// For patterns like "foo.*bar", returns ["foo", "bar"] (fragments, each required).
-// The list does not say which entries are alternatives and which are all
-// required, so callers must treat it as OR. Case-folded literals ((?i)) come
-// back in one case; compare case-insensitively. Returns nil when no literal is
-// guaranteed or when the expansion exceeds maxLiteralExpansion, so the caller
-// cannot prune.
+// ExtractLiterals extracts literal strings from a regex pattern for
+// trigram-based candidate selection. Every match of the pattern contains at
+// least one returned literal as a substring, so callers must treat the list
+// as OR. Case-folded literals ((?i)) come back in one case; compare
+// case-insensitively. Returns nil when no literal is guaranteed or the
+// expansion exceeds maxLiteralExpansion.
+//
+//	"foo|bar"          -> ["foo", "bar"]
+//	"(error|warn)_msg" -> ["error_msg", "warn_msg"]
+//	"foo.*bar"         -> ["foo", "bar"]
 func ExtractLiterals(pattern string) ([]string, error) {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
@@ -26,15 +25,11 @@ func ExtractLiterals(pattern string) ([]string, error) {
 	return extractLiterals(re).literals, nil
 }
 
-// literalSet is the literal evidence one regex node contributes.
-//
-// literals: every match of the node contains at least one entry as a substring.
-// An empty slice means the node proves nothing.
-//
-// whole: the node matches exactly the entries, so a concatenation may glue them
-// to its neighbours. A fragmentary set (whole == false) breaks the product:
-// gluing a fragment to a neighbour would demand a substring that a real match
-// need not contain, and the trigram search would then prune a matching row group.
+// literalSet is the literal evidence one regex node contributes: every match
+// of the node contains at least one entry as a substring (empty = no evidence).
+// whole means the node matches exactly the entries, so a concatenation may glue
+// them to its neighbours; gluing a fragment would demand a substring a real
+// match need not hold.
 type literalSet struct {
 	literals []string
 	whole    bool
@@ -49,8 +44,7 @@ func extractLiterals(re *syntax.Regexp) literalSet {
 		return extractConcatLiterals(re.Sub)
 
 	case syntax.OpAlternate:
-		// A branch without evidence admits matches the other branches do not
-		// describe, so the whole alternation proves nothing.
+		// A branch without evidence admits matches the others do not describe.
 		out := literalSet{whole: true}
 		for _, sub := range re.Sub {
 			branch := extractLiterals(sub)
@@ -66,69 +60,57 @@ func extractLiterals(re *syntax.Regexp) literalSet {
 		return out
 
 	case syntax.OpCapture:
-		if len(re.Sub) > 0 {
-			return extractLiterals(re.Sub[0])
-		}
-		return literalSet{}
+		return extractLiterals(re.Sub[0])
 
 	case syntax.OpPlus:
-		// At least one occurrence is required, so its literals are contained,
-		// but the product must not glue through a repetition ("ab+c" matches
-		// "abbc", which holds no "abc"). Simplify expands OpRepeat before this.
-		if len(re.Sub) == 0 {
-			return literalSet{}
-		}
+		// One occurrence is required, but never glue through a repetition:
+		// "ab+c" matches "abbc", which holds no "abc". Simplify expands OpRepeat.
 		return literalSet{literals: extractLiterals(re.Sub[0]).literals}
 
 	default:
-		// OpStar, OpQuest: optional, cannot prune on it.
+		// OpStar, OpQuest, classes, anchors: nothing is guaranteed.
 		return literalSet{}
 	}
 }
 
-// extractConcatLiterals multiplies consecutive whole nodes into combined
-// literals ("(error|warn)_msg" -> "error_msg", "warn_msg"). A node that is
-// fragmentary or proves nothing ends the run; the runs and the fragments become
-// separate required groups, returned as one flat list. The list is whole only
-// when every node was whole.
+// extractConcatLiterals cross-joins consecutive whole nodes into one run
+// ("(error|warn)_msg" -> "error_msg", "warn_msg"). A fragmentary or empty node
+// ends the run; finished runs and fragments are returned as one flat list.
 func extractConcatLiterals(subs []*syntax.Regexp) literalSet {
-	var groups []string
-	product := []string{""}
+	var groups, run []string
 	whole := true
-
-	flush := func() {
-		for _, p := range product {
-			if p != "" {
-				groups = append(groups, p)
-			}
-		}
-		product = []string{""}
-	}
 
 	for _, sub := range subs {
 		part := extractLiterals(sub)
 		if part.whole {
-			next := make([]string, 0, len(product)*len(part.literals))
-			for _, prefix := range product {
-				for _, lit := range part.literals {
-					next = append(next, prefix+lit)
-				}
-			}
-			if len(next) > maxLiteralExpansion {
+			run = crossJoin(run, part.literals)
+			if len(run) > maxLiteralExpansion {
 				return literalSet{}
 			}
-			product = next
 			continue
 		}
 		whole = false
-		flush()
+		groups = append(groups, run...)
 		groups = append(groups, part.literals...)
+		run = nil
 		if len(groups) > maxLiteralExpansion {
 			return literalSet{}
 		}
 	}
-	flush()
-	return literalSet{literals: groups, whole: whole}
+	return literalSet{literals: append(groups, run...), whole: whole}
+}
+
+func crossJoin(prefixes, suffixes []string) []string {
+	if len(prefixes) == 0 {
+		return suffixes
+	}
+	out := make([]string, 0, len(prefixes)*len(suffixes))
+	for _, prefix := range prefixes {
+		for _, suffix := range suffixes {
+			out = append(out, prefix+suffix)
+		}
+	}
+	return out
 }
 
 type RegexLiteralInfo struct {
