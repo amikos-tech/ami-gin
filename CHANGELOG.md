@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `Regex` no longer prunes a row group that holds a match (#68). Literal
+  extraction now tracks whether a node's literals are whole (the node matches
+  exactly those strings) or fragments (every match contains one of them
+  somewhere). Only whole sets are multiplied across a concatenation; an
+  alternation with a branch that proves nothing yields nothing; an unbounded
+  repetition (`+`, `{n,}`) contributes its literals as fragments; exceeding the
+  expansion cap (100) yields nothing instead of a cut list, so such patterns
+  fall back to a full scan. `ExtractLiterals("ab+c")` is now `a`, `b`, `c`
+  (too short to prune) rather than `abc`; patterns such as `(error|warn)_msg`
+  and `foo.*bar` are unchanged. Property tests against `regexp` over a small
+  pattern grammar pin the superset.
+
 ## v1.1.0 (2026-09-14)
 
 - Array elements are indexed only under their canonical wildcard paths (for
