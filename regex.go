@@ -12,7 +12,11 @@ const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 // For patterns like "foo|bar", returns ["foo", "bar"].
 // For patterns like "(error|warn)_msg", returns ["error_msg", "warn_msg"] (combined).
 // For patterns like "foo.*bar", returns ["foo", "bar"] (fragments, each required).
-// Returns nil when no literal is guaranteed, so the caller cannot prune.
+// The list does not say which entries are alternatives and which are all
+// required, so callers must treat it as OR. Case-folded literals ((?i)) come
+// back in one case; compare case-insensitively. Returns nil when no literal is
+// guaranteed or when the expansion exceeds maxLiteralExpansion, so the caller
+// cannot prune.
 func ExtractLiterals(pattern string) ([]string, error) {
 	re, err := syntax.Parse(pattern, syntax.Perl)
 	if err != nil {
@@ -67,18 +71,17 @@ func extractLiterals(re *syntax.Regexp) literalSet {
 		}
 		return literalSet{}
 
-	case syntax.OpPlus, syntax.OpRepeat:
+	case syntax.OpPlus:
 		// At least one occurrence is required, so its literals are contained,
-		// but repetition is never contiguous with the neighbours ("ab+c" matches
-		// "abbc", which does not contain "abc").
-		if len(re.Sub) == 0 || (re.Op == syntax.OpRepeat && re.Min == 0) {
+		// but the product must not glue through a repetition ("ab+c" matches
+		// "abbc", which holds no "abc"). Simplify expands OpRepeat before this.
+		if len(re.Sub) == 0 {
 			return literalSet{}
 		}
 		return literalSet{literals: extractLiterals(re.Sub[0]).literals}
 
 	default:
 		// OpStar, OpQuest: optional, cannot prune on it.
-		// OpCharClass, OpAnyChar, anchors, OpEmptyMatch, OpNoMatch: no literal.
 		return literalSet{}
 	}
 }

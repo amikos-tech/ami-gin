@@ -61,18 +61,18 @@ The `Regex` operator uses trigram index for candidate row-group selection before
 
 **Files:**
 - `regex.go` - `ExtractLiterals()`, `AnalyzeRegex()`, literal extraction from regex patterns
-- `query.go:289` - `evaluateRegex()` implementation
+- `query.go` - `evaluateRegex()` implementation
 
 **How it works:**
 1. Parse regex using `regexp/syntax` with Perl mode
 2. Apply `Simplify()` (factors common prefixes: `Toyota|Tesla` → `T(oyota|esla)`)
-3. Extract combined literals via Cartesian product (e.g., `(error|warn)_msg` → `["error_msg", "warn_msg"]`)
+3. Extract literals: whole sets (the node matches exactly those strings) multiply across a concatenation (`(error|warn)_msg` → `["error_msg", "warn_msg"]`); fragments (repetition, gaps) stay separate (`foo.*bar` → `["foo", "bar"]`). Every match contains at least one returned literal. Nothing is returned when the cap is exceeded
 4. Query trigram index for each literal, union results
 5. Row groups not containing any literal are pruned
 
 **Key functions:**
-- `extractCombinedLiterals(re)` - Recursive literal extraction with Cartesian product for concatenation
-- `extractConcatLiterals(subs)` - Handles `OpConcat` by building combined strings
+- `extractLiterals(re)` - Recursive extraction returning a `literalSet` (`literals` + `whole` flag)
+- `extractConcatLiterals(subs)` - Multiplies consecutive whole nodes; a fragment ends the run
 - `hasUnboundedWildcard(re)` - Detects `.*` or `.+` patterns
 
 ### Field Transformers

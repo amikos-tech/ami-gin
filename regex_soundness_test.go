@@ -26,9 +26,9 @@ func regexKeepsMatch(t *testing.T, pattern, value string) bool {
 	return !idx.Evaluate([]Predicate{Regex("$.v", pattern)}).IsEmpty()
 }
 
-// TestRegexNeverPrunesAMatch pins issue #68: every row is a regexp match that
-// v1.1.0 pruned because a composed literal demanded a substring the match
-// does not hold.
+// TestRegexNeverPrunesAMatch pins issue #68. The first seven rows are regexp
+// matches that v1.1.0 pruned because a composed literal demanded a substring
+// the match does not hold. The last three guard behaviour that already held.
 func TestRegexNeverPrunesAMatch(t *testing.T) {
 	cases := []struct{ pattern, value string }{
 		{`(foo|)bar`, "xbarx"},
@@ -58,9 +58,10 @@ func TestRegexNeverPrunesAMatch(t *testing.T) {
 func TestRegexStillPrunes(t *testing.T) {
 	cases := []struct{ pattern, value string }{
 		{`(foo|bar)baz`, "foobar"},
-		{`(foo|[0-9]+)bar`, "foobaz"},
+		{`(foo|[0-9]+)baz`, "foobar"},
 		{`error.*timeout`, "warning only"},
 		{`Toyota|Tesla`, "Ford Mustang"},
+		{`(abc.*|cde)fgh`, "xyzxyz"}, // fragments still prune
 	}
 	for _, c := range cases {
 		t.Run(c.pattern, func(t *testing.T) {
@@ -74,6 +75,34 @@ func TestRegexStillPrunes(t *testing.T) {
 	}
 }
 
+// TestRegexExpansionCap pins that exceeding maxLiteralExpansion yields nothing
+// rather than a cut list; a cut list drops alternatives and prunes their matches.
+func TestRegexExpansionCap(t *testing.T) {
+	over := strings.Repeat("(aaa|bbb|ccc)", 5) // 243 combinations
+	lits, err := ExtractLiterals(over)
+	if err != nil || lits != nil {
+		t.Fatalf("ExtractLiterals(%q) = %q, %v; want nil", over, lits, err)
+	}
+	if !regexKeepsMatch(t, over, strings.Repeat("ccc", 5)) {
+		t.Errorf("Regex(%q) pruned a match after exceeding the cap", over)
+	}
+
+	under := strings.Repeat("(aaa|bbb|ccc)", 4) // 81 combinations
+	lits, err = ExtractLiterals(under)
+	if err != nil || len(lits) != 81 {
+		t.Fatalf("ExtractLiterals(%q) returned %d literals, %v; want 81", under, len(lits), err)
+	}
+	if regexKeepsMatch(t, under, "ababab") {
+		t.Errorf("Regex(%q) kept a non-match below the cap", under)
+	}
+
+	fragments := strings.Repeat("ab.*", maxLiteralExpansion+1)
+	lits, err = ExtractLiterals(fragments)
+	if err != nil || lits != nil {
+		t.Fatalf("ExtractLiterals(%q) = %d literals, %v; want nil", fragments, len(lits), err)
+	}
+}
+
 // genRegexPattern draws patterns from a small grammar over the alphabet "abc":
 // literals, classes, wildcards, anchors, alternation with possibly empty
 // branches, optional, star, plus, bounded repeats and groups.
@@ -82,7 +111,7 @@ func genRegexPattern(depth int) gopter.Gen {
 		return strings.Join(parts, "")
 	})
 	shortLiteral := gen.OneConstOf("a", "b", "c", "ab", "bc")
-	atom := gen.OneGenOf(literal, literal, shortLiteral,
+	atom := gen.OneGenOf(literal, literal, literal, literal, shortLiteral,
 		gen.OneConstOf("[ab]", "[^c]", ".", "\\d", "^", "$", "\\b", ""))
 	if depth == 0 {
 		return atom
@@ -115,9 +144,7 @@ func TestPropertyRegexIsSuperset(t *testing.T) {
 		func(pattern string, values []string) (bool, error) {
 			re, err := regexp.Compile(pattern)
 			if err != nil {
-				// The grammar can repeat an anchor; regexp rejects that and so
-				// does syntax.Parse, so there is nothing to compare.
-				return true, nil //nolint:nilerr // rejected pattern is vacuously sound
+				return false, err
 			}
 			builder, err := NewBuilder(DefaultConfig(), len(values))
 			if err != nil {
@@ -142,5 +169,39 @@ func TestPropertyRegexIsSuperset(t *testing.T) {
 		gen.SliceOfN(6, genValue),
 	))
 
+	properties.Property("regexp match implies a literal is a substring", prop.ForAll(
+		func(pattern string, values []string) (bool, error) {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				return false, err
+			}
+			lits, err := ExtractLiterals(pattern)
+			if err != nil {
+				return false, err
+			}
+			for _, v := range values {
+				if !re.MatchString(v) || len(lits) == 0 {
+					continue
+				}
+				if !containsAnyFold(v, lits) {
+					return false, fmt.Errorf("ExtractLiterals(%q) = %q, none in match %q", pattern, lits, v)
+				}
+			}
+			return true, nil
+		},
+		genRegexPattern(3),
+		gen.SliceOfN(6, genValue),
+	))
+
 	properties.TestingRun(t)
+}
+
+func containsAnyFold(value string, lits []string) bool {
+	lower := strings.ToLower(value)
+	for _, lit := range lits {
+		if strings.Contains(lower, strings.ToLower(lit)) {
+			return true
+		}
+	}
+	return false
 }
