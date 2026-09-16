@@ -17,6 +17,11 @@ const (
 	propertyTestHLLMinSuccessfulTests      = 250
 	propertyTestHLLShortMinSuccessfulTests = 50
 	propertyTestHLLEstimateSampleSize      = 256
+	// propertyTestHLLSigmaMultiplier must survive up to 250 independent
+	// gopter trials per run. A 3-sigma bound gives a ~49% family-wise
+	// false-positive rate across that many trials; 6-sigma drops it to
+	// ~4.9e-7 while still catching real estimator regressions (issue #67).
+	propertyTestHLLSigmaMultiplier = 6
 )
 
 func propertyTestMinSuccessfulTestsForMode(short bool, normal, shortBudget int) int {
@@ -403,7 +408,7 @@ func TestPropertyHLLEstimateWithinBounds(t *testing.T) {
 	// and otherwise dominates the race-enabled CI budget.
 	properties := gopter.NewProperties(propertyTestParametersWithBudgets(propertyTestHLLMinSuccessfulTests, propertyTestHLLShortMinSuccessfulTests))
 
-	properties.Property("estimate within 3σ of expected error", prop.ForAll(
+	properties.Property("estimate within 6σ of expected error", prop.ForAll(
 		func(items []string) bool {
 			if len(items) < 100 {
 				return true
@@ -428,10 +433,10 @@ func TestPropertyHLLEstimateWithinBounds(t *testing.T) {
 
 			m := float64(1 << 12)
 			stdError := 1.04 / math.Sqrt(m)
-			threeStdDev := 3 * stdError * actual
+			sigmaBound := propertyTestHLLSigmaMultiplier * stdError * actual
 
 			diff := math.Abs(estimate - actual)
-			return diff <= threeStdDev || diff <= 10
+			return diff <= sigmaBound || diff <= 10
 		},
 		gen.SliceOfN(propertyTestHLLEstimateSampleSize, gen.AlphaString()),
 	))

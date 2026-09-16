@@ -201,6 +201,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260915-tzk | PR #69 review findings: expansion-cap tests, direct ExtractLiterals property, dead compile branch, drop OpRepeat case, doc fixes, simplifier pass; filed #70 (Unicode fold) | 2026-09-15 | a8e4451 |  | [260915-tzk-apply-pr-69-review-findings-and-file-uni](./quick/260915-tzk-apply-pr-69-review-findings-and-file-uni/) |
 | 260916-88n | Fix #70: skip (?i) literals whose fold orbit does not lower to one rune (ſ, µ); Kelvin/ASCII/accents still prune | 2026-09-16 | 3cca783 |  | [260916-88n-fix-70-skip-case-folded-regex-literals-t](./quick/260916-88n-fix-70-skip-case-folded-regex-literals-t/) |
 | 260916-8j8 | PR #71 review findings: CHANGELOG ASCII-letter accuracy, ExtractLiterals doc comment, misleading Kelvin test comment, two new fold-fragment regression cases | 2026-09-16 | 2029c7e |  | [260916-8j8-fix-pr-71-code-review-findings-changelog](./quick/260916-8j8-fix-pr-71-code-review-findings-changelog/) |
+| 260916-8zu | Fix #67: widen TestPropertyHLLEstimateWithinBounds sigma bound from 3 to 6 to eliminate CI flakiness from the multiple-comparisons problem (250 trials/run) | 2026-09-16 | ef6f2f4 | Verified | [260916-8zu-fix-flaky-testpropertyhllestimatewithinb](./quick/260916-8zu-fix-flaky-testpropertyhllestimatewithinb/) |
 
 ## Deferred Items
 
