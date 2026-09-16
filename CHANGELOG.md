@@ -5,9 +5,11 @@
 - `NIN` now drops a multi-value row group whose distinct values all fall
   inside the query list (#63). The `AggregateIndex` gains `DistinctCounts`,
   one `uint32` per multi-value row group: the number of distinct string,
-  boolean and null values, plus one for a single numeric value. A row group
-  whose numbers span a range has an unknown count (`0`) and stays kept.
-  Wire format `v10` -> `v11`; rebuild serialized indexes.
+  boolean, null and container (object or array) values, plus one for a
+  single numeric value. A container value now also marks a two-document
+  row group multi-value, so `NE` and `NIN` keep it. A row group whose
+  numbers span a range has an unknown count (`0`) and stays kept. Wire
+  format `v10` -> `v11`; rebuild serialized indexes.
 - `NE`, `NIN` and `IsNull` are now sound when several documents share one
   `DocID` (`RowGroupCodec`, repeated `AddDocument`). The builder records a
   per-path `AggregateIndex` (`MultiValueRGs`, `AbsentRGs`) for row groups

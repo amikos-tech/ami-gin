@@ -139,6 +139,9 @@ type pathBuildData struct {
 	stringLengthStats map[int]*RGStringLengthStat
 	nullRGs           *RGSet
 	presentRGs        *RGSet
+	// containerRGs marks row groups where a document holds an object or an
+	// array at the path: present, but matched by no scalar term.
+	containerRGs *RGSet
 	// presentDocs[rg] is the number of documents in rg that carry the path.
 	presentDocs []uint32
 	hll         *HyperLogLog
@@ -398,6 +401,7 @@ func (b *GINBuilder) getOrCreatePath(path string) *pathBuildData {
 		stringLengthStats: make(map[int]*RGStringLengthStat),
 		nullRGs:           MustNewRGSet(b.numRGs),
 		presentRGs:        MustNewRGSet(b.numRGs),
+		containerRGs:      MustNewRGSet(b.numRGs),
 		presentDocs:       make([]uint32, b.numRGs),
 		hll:               MustNewHyperLogLog(b.config.HLLPrecision),
 	}
@@ -1094,6 +1098,9 @@ func (b *GINBuilder) mergeStagedPaths(state *documentBuildState) {
 		if staged.isNull {
 			pd.nullRGs.Set(state.rgID)
 		}
+		if staged.present && !staged.isNull && len(staged.stringTerms) == 0 && len(staged.numericValues) == 0 {
+			pd.containerRGs.Set(state.rgID)
+		}
 
 		if len(staged.stringTerms) > 0 {
 			terms := make([]string, 0, len(staged.stringTerms))
@@ -1455,11 +1462,7 @@ func (b *GINBuilder) buildAggregateIndex(pd *pathBuildData, aggregatedRGs []int)
 	multiValue := NoRGs(b.numRGs)
 	var distinct []uint32
 	if !multiDoc.IsEmpty() {
-		counts, multi := b.distinctValueCounts(pd)
-		multiValue = multi.Intersect(multiDoc)
-		for _, rg := range multiValue.ToSlice() {
-			distinct = append(distinct, counts[rg])
-		}
+		multiValue, distinct = b.multiValueRowGroups(pd, multiDoc)
 	}
 	if multiValue.IsEmpty() && absent.IsEmpty() {
 		return nil
@@ -1467,18 +1470,18 @@ func (b *GINBuilder) buildAggregateIndex(pd *pathBuildData, aggregatedRGs []int)
 	return &AggregateIndex{MultiValueRGs: multiValue, AbsentRGs: absent, DistinctCounts: distinct}
 }
 
-// distinctValueCounts counts the distinct values of the path per row group
-// and marks the row groups holding at least two. String and boolean terms
-// and an explicit null are counted exactly. A numeric row-group stat counts
-// as one value when min equals max; otherwise the row group holds at least
-// two numbers, is marked multi, and its count is reset to 0 (unknown).
-func (b *GINBuilder) distinctValueCounts(pd *pathBuildData) ([]uint32, *RGSet) {
+// multiValueRowGroups returns the row groups of multiDoc holding at least
+// two distinct values, with one count per returned row group in bit order.
+// See AggregateIndex.DistinctCounts for what counts as one value. The
+// numeric loop runs last because a range resets the count to 0 (unknown).
+func (b *GINBuilder) multiValueRowGroups(pd *pathBuildData, multiDoc *RGSet) (*RGSet, []uint32) {
 	counts := make([]uint32, b.numRGs)
 	countRG := func(rg uint32) bool {
 		counts[rg]++
 		return true
 	}
 	pd.nullRGs.Roaring().Iterate(countRG)
+	pd.containerRGs.Roaring().Iterate(countRG)
 	for _, bitmap := range pd.stringTerms {
 		bitmap.Roaring().Iterate(countRG)
 	}
@@ -1499,5 +1502,10 @@ func (b *GINBuilder) distinctValueCounts(pd *pathBuildData) ([]uint32, *RGSet) {
 			multi.Set(rg)
 		}
 	}
-	return counts, multi
+	multiValue := multi.Intersect(multiDoc)
+	var distinct []uint32
+	for _, rg := range multiValue.ToSlice() {
+		distinct = append(distinct, counts[rg])
+	}
+	return multiValue, distinct
 }

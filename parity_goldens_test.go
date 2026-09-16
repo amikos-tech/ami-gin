@@ -22,7 +22,7 @@ func TestRegenerateParityGoldens(t *testing.T) {
 				t.Fatalf("NewBuilder for %s: %v", fx.Name, err)
 			}
 			for i, doc := range fx.JSONDocs {
-				if err := builder.AddDocument(DocID(i), doc); err != nil {
+				if err := builder.AddDocument(fx.docID(i), doc); err != nil {
 					t.Fatalf("AddDocument[%d] for %s: %v", i, fx.Name, err)
 				}
 			}

@@ -1508,6 +1508,9 @@ func readAggregateIndexes(r io.Reader, idx *GINIndex) error {
 		if err := binary.Read(r, binary.LittleEndian, &numCounts); err != nil {
 			return errors.Wrapf(ErrInvalidFormat, "read aggregate index distinct count length: %v", err)
 		}
+		if numCounts > idx.Header.NumRowGroups {
+			return errors.Wrapf(ErrInvalidFormat, "aggregate index path %d: %d distinct counts exceeds %d row groups", pathID, numCounts, idx.Header.NumRowGroups)
+		}
 		if int(numCounts) != multiValue.Count() {
 			return errors.Wrapf(ErrInvalidFormat, "aggregate index path %d: %d distinct counts for %d multi-value row groups", pathID, numCounts, multiValue.Count())
 		}

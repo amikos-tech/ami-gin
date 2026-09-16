@@ -44,7 +44,7 @@ func buildAndEncodeWithParser(t *testing.T, fx parityFixture, parser Parser) []b
 		t.Fatalf("NewBuilder for %s: %v", fx.Name, err)
 	}
 	for i, doc := range fx.JSONDocs {
-		if err := builder.AddDocument(DocID(i), doc); err != nil {
+		if err := builder.AddDocument(fx.docID(i), doc); err != nil {
 			t.Fatalf("AddDocument[%d] for %s: %v", i, fx.Name, err)
 		}
 	}
@@ -329,7 +329,7 @@ func buildEvaluateMatrixIndex(t *testing.T, opts ...BuilderOption) *GINIndex {
 		t.Fatalf("NewBuilder: %v", err)
 	}
 	for i, doc := range fx.JSONDocs {
-		if err := builder.AddDocument(DocID(i), doc); err != nil {
+		if err := builder.AddDocument(fx.docID(i), doc); err != nil {
 			t.Fatalf("AddDocument[%d]: %v", i, err)
 		}
 	}

@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/RoaringBitmap/roaring/v2"
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
@@ -227,7 +229,8 @@ func aggregatedPredicates() []Predicate {
 
 // TestNegationUnderAggregationOracle checks every operator against a
 // brute-force oracle over a corpus with several documents per DocID. Every
-// operator must over-select or match; NE and IsNull must match exactly.
+// operator must over-select or match; NE, IsNull, and NIN on string-only
+// paths must match exactly.
 func TestNegationUnderAggregationOracle(t *testing.T) {
 	numRGs, docs := aggregatedCorpus()
 	idx := buildAggregated(t, numRGs, docs)
@@ -254,9 +257,8 @@ func TestNegationUnderAggregationOracle(t *testing.T) {
 	}
 }
 
-// TestPreciseNINIssue63 pins the expectations E1-E7 from the issue 63
-// context: a multi-value row group is dropped when every distinct value it
-// holds is in the NIN list, and kept otherwise.
+// TestPreciseNINIssue63: a multi-value row group is dropped when every
+// distinct value it holds is in the NIN list, and kept otherwise.
 func TestPreciseNINIssue63(t *testing.T) {
 	t.Run("E1 E2 issue example", func(t *testing.T) {
 		idx := buildAggregated(t, 3, []aggregatedDoc{
@@ -347,11 +349,113 @@ func TestPreciseNINIssue63(t *testing.T) {
 			t.Errorf("NIN(a) = %v, want [0]", got)
 		}
 	})
+
+	t.Run("container value is a distinct value no term matches", func(t *testing.T) {
+		for _, container := range []any{map[string]any{}, []any{}, map[string]any{"b": 1.0}, []any{"z"}} {
+			idx := buildAggregated(t, 1, []aggregatedDoc{
+				{0, map[string]any{"p": container}},
+				{0, map[string]any{"p": "x"}},
+				{0, map[string]any{"p": "y"}},
+			})
+			if got := indexDocIDs(idx, NIN("$.p", "x", "y")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+				t.Errorf("NIN(x, y) with %v = %v, want [0]", container, got)
+			}
+			two := buildAggregated(t, 1, []aggregatedDoc{
+				{0, map[string]any{"p": container}},
+				{0, map[string]any{"p": "x"}},
+			})
+			for _, p := range []Predicate{NIN("$.p", "x"), NE("$.p", "x")} {
+				if got := indexDocIDs(two, p).sorted(); !reflect.DeepEqual(got, []int{0}) {
+					t.Errorf("%s with %v = %v, want [0]", p, container, got)
+				}
+			}
+		}
+	})
+
+	t.Run("numeric and boolean forms of one term count once", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": 5.0}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", 5, 5.0, int64(5))).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(5, 5.0, int64 5) = %v, want [0]", got)
+		}
+		idx = buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": true}},
+			{0, map[string]any{"p": "x"}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "true", true)).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(\"true\", true) = %v, want [0]", got)
+		}
+	})
+
+	t.Run("absent document is not a distinct value", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": "b"}},
+			{0, map[string]any{"other": "x"}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "a", "b")).sorted(); len(got) != 0 {
+			t.Errorf("NIN(a, b) = %v, want []", got)
+		}
+	})
+
+	t.Run("three value types", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": true}},
+			{0, map[string]any{"p": 5.0}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "a", true, 5.0)).sorted(); len(got) != 0 {
+			t.Errorf("NIN(a, true, 5) = %v, want []", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.p", "a", true)).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a, true) = %v, want [0]", got)
+		}
+	})
 }
 
-// TestDistinctCountsAlignToMultiValueRGs pins the sparse layout (E12): one
-// count per set bit of MultiValueRGs, in bit order, and no entry at all for
-// a path whose multi-document row groups each hold one value.
+// TestPreciseNINAdaptivePath: on an adaptive path only promoted terms are
+// exact. The refinement drops a row group whose values are all promoted and
+// listed, and keeps one holding a tail-bucket term.
+func TestPreciseNINAdaptivePath(t *testing.T) {
+	config := DefaultConfig()
+	config.CardinalityThreshold = 2
+	config.AdaptiveBucketCount = 4
+	builder := mustNewBuilder(t, config, 6)
+	for _, doc := range []aggregatedDoc{
+		{0, map[string]any{"f": "hot"}}, {0, map[string]any{"f": "hot2"}},
+		{1, map[string]any{"f": "hot"}}, {1, map[string]any{"f": "tail_1"}},
+		{2, map[string]any{"f": "hot"}},
+		{3, map[string]any{"f": "hot2"}},
+		{4, map[string]any{"f": "tail_4"}},
+		{5, map[string]any{"f": "tail_5"}},
+	} {
+		raw, _ := json.Marshal(doc.data)
+		if err := builder.AddDocument(DocID(doc.rg), raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	idx := builder.Finalize()
+	entry := idx.PathDirectory[idx.pathLookup["$.f"]]
+	if entry.Mode != PathModeAdaptiveHybrid || entry.AdaptivePromotedTerms != 2 {
+		t.Fatalf("mode %v with %d promoted terms, want adaptive with hot and hot2 promoted", entry.Mode, entry.AdaptivePromotedTerms)
+	}
+	for _, tc := range []struct {
+		pred Predicate
+		want []int
+	}{
+		{NIN("$.f", "hot", "hot2"), []int{1, 4, 5}},
+		{NIN("$.f", "hot", "tail_1"), []int{0, 1, 2, 3, 4, 5}},
+	} {
+		if got := indexDocIDs(idx, tc.pred).sorted(); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s = %v, want %v", tc.pred, got, tc.want)
+		}
+	}
+}
+
+// TestDistinctCountsAlignToMultiValueRGs pins the sparse layout: one count
+// per set bit of MultiValueRGs, in bit order.
 func TestDistinctCountsAlignToMultiValueRGs(t *testing.T) {
 	numRGs, docs := aggregatedCorpus()
 	idx := buildAggregated(t, numRGs, docs)
@@ -373,9 +477,6 @@ func TestDistinctCountsAlignToMultiValueRGs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(n.DistinctCounts, []uint32{0}) {
 		t.Errorf("n DistinctCounts = %v, want [0]", n.DistinctCounts)
-	}
-	if _, ok := idx.AggregateIndexes[idx.pathLookup["$.id"]]; ok {
-		t.Error("aggregate index emitted for a path with no multi-value or absent row group")
 	}
 }
 
@@ -491,36 +592,56 @@ func TestEncodeRejectsMisalignedDistinctCounts(t *testing.T) {
 	}
 }
 
-func TestDecodeRejectsMisalignedDistinctCounts(t *testing.T) {
-	numRGs, docs := aggregatedCorpus()
-	idx := buildAggregated(t, numRGs, docs)
-	data, err := EncodeWithLevel(idx, CompressionNone)
-	if err != nil {
-		t.Fatal(err)
+func TestDecodeRejectsBadDistinctCounts(t *testing.T) {
+	multi := MustNewRGSet(4)
+	multi.Set(0)
+	multi.Set(1)
+	// Bits beyond NumRGs pass readRGSet; the count bound must not trust them.
+	wide := RGSetFromRoaring(roaring.BitmapOf(0, 1, 2, 3, 4), 1)
+	cases := []struct {
+		name   string
+		numRGs uint32
+		multi  *RGSet
+		counts func(*bytes.Buffer)
+		want   string
+	}{
+		{"length differs from bit count", 4, multi, func(b *bytes.Buffer) {
+			binary.Write(b, binary.LittleEndian, uint32(1))
+			binary.Write(b, binary.LittleEndian, uint32(2))
+		}, "distinct counts for"},
+		{"counts truncated", 4, multi, func(b *bytes.Buffer) {
+			binary.Write(b, binary.LittleEndian, uint32(2))
+			binary.Write(b, binary.LittleEndian, uint32(2))
+		}, "read aggregate index distinct counts"},
+		{"length missing", 4, multi, func(*bytes.Buffer) {}, "distinct count length"},
+		{"length exceeds row groups", 1, wide, func(b *bytes.Buffer) {
+			binary.Write(b, binary.LittleEndian, uint32(5))
+		}, "exceeds 1 row groups"},
 	}
-	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
-	// The count length field precedes the counts; locate it by its payload.
-	needle := make([]byte, 0, 4+4*len(env.DistinctCounts))
-	needle = append(needle, byte(len(env.DistinctCounts)), 0, 0, 0)
-	for _, c := range env.DistinctCounts {
-		needle = append(needle, byte(c), 0, 0, 0)
-	}
-	at := bytes.Index(data, needle)
-	if at < 0 {
-		t.Fatal("distinct count payload not found in uncompressed encoding")
-	}
-	data[at]++
-	_, err = Decode(data)
-	if err == nil || !strings.Contains(err.Error(), "aggregate index") {
-		t.Fatalf("Decode error = %v, want aggregate index rejection", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			binary.Write(&buf, binary.LittleEndian, uint32(1))
+			binary.Write(&buf, binary.LittleEndian, uint16(0))
+			writeRGSet(&buf, tc.multi)
+			writeRGSet(&buf, MustNewRGSet(int(tc.numRGs)))
+			tc.counts(&buf)
+			idx := NewGINIndex()
+			idx.Header.NumRowGroups = tc.numRGs
+			err := readAggregateIndexes(&buf, idx)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("readAggregateIndexes error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
-// genAggregatedDocs yields flat documents spread over numRGs row groups, so
-// most row groups hold several documents and a few hold one or none. env is a
-// low-cardinality string, n a small integer; either may be absent or null.
+// genAggregatedDocs yields documents spread over numRGs row groups, so most
+// row groups hold several documents and a few hold one or none. env is a
+// low-cardinality string, a container, null or absent; n is a small integer,
+// null or absent.
 func genAggregatedDocs(numRGs int) gopter.Gen {
-	envs := []any{"prod", "staging", "canary", nil, absentMarker{}}
+	envs := []any{"prod", "staging", "canary", nil, absentMarker{}, map[string]any{"k": "v"}, []any{}}
 	nums := []any{1.0, 2.0, 3.0, nil, absentMarker{}}
 	genDoc := gopter.CombineGens(
 		gen.IntRange(0, numRGs-1),

@@ -249,10 +249,11 @@ type AggregateIndex struct {
 	AbsentRGs *RGSet
 	// DistinctCounts holds one entry per set bit of MultiValueRGs, in bit
 	// order: the number of distinct values the row group holds. Strings,
-	// booleans and an explicit null are counted exactly; a single numeric
-	// value adds one. An entry of 0 means the count is unknown because the
-	// row group's numeric values span a range. NIN drops a multi-value row
-	// group when the count does not exceed the number of query terms it
+	// booleans, an explicit null and a container value (object or array)
+	// each count once; a single numeric value adds one. A known count is
+	// always at least 2. An entry of 0 means the count is unknown because
+	// the row group's numeric values span a range. NIN drops a multi-value
+	// row group when the count does not exceed the number of query terms it
 	// matches, because then no value falls outside the list.
 	DistinctCounts []uint32
 }
