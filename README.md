@@ -160,7 +160,7 @@ GIN Index v0.2.0 expands the original predicate surface with adaptive high-cardi
 - Index merge across multiple index files is intentionally deferred beyond v0.2.0.
 - Query-time transformers are not supported in v0.2.0; transformations must happen at index-build time.
 
-Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v11`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`, `v1.1.1` wrote `v10`) must be rebuilt.
+Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v11`, written by `v1.2.0`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`, `v1.1.0` and `v1.1.1` wrote `v10`) must be rebuilt.
 
 ## Query Types
 
