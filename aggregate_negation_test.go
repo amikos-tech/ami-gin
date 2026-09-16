@@ -500,11 +500,10 @@ func TestDecodeRejectsMisalignedDistinctCounts(t *testing.T) {
 	}
 	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
 	// The count length field precedes the counts; locate it by its payload.
-	var want []byte
+	needle := []byte{byte(len(env.DistinctCounts)), 0, 0, 0}
 	for _, c := range env.DistinctCounts {
-		want = append(want, byte(c), 0, 0, 0)
+		needle = append(needle, byte(c), 0, 0, 0)
 	}
-	needle := append([]byte{byte(len(env.DistinctCounts)), 0, 0, 0}, want...)
 	at := bytes.Index(data, needle)
 	if at < 0 {
 		t.Fatal("distinct count payload not found in uncompressed encoding")
