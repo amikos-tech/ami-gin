@@ -10,8 +10,11 @@ const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 // ExtractLiterals extracts literal strings from a regex pattern for
 // trigram-based candidate selection. Every match of the pattern contains at
 // least one returned literal as a substring, so callers must treat the list
-// as OR. Case-folded literals ((?i)) come back in one case; compare
-// case-insensitively. Returns nil when no literal is guaranteed or the
+// as OR. A case-folded literal run ((?i)) is dropped entirely — contributing
+// no literal — when any rune in it has a unicode.SimpleFold orbit member
+// whose unicode.ToLower differs from that rune's own ToLower; the drop
+// applies to the whole merged literal node, not just the offending rune (see
+// foldsUnderToLower). Returns nil when no literal is guaranteed or the
 // expansion exceeds maxLiteralExpansion.
 //
 //	"foo|bar"          -> ["foo", "bar"]

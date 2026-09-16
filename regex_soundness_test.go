@@ -43,7 +43,9 @@ func TestRegexNeverPrunesAMatch(t *testing.T) {
 		{`(?i)Checkout`, "CHECKOUT-v2"},
 		{`(?i)sss`, "ſſſ"}, // #70: long s folds with s, ToLower keeps it
 		{`(?i)µµµ`, "μμμ"}, // #70: micro sign folds with Greek mu
-		{`(?i)kkk`, "KKK"}, // Kelvin sign lowers to k
+		{`(?i)kkk`, "KKK"}, // Kelvin sign orbit is safe under ToLower — must not be wrongly rejected
+		{`(?i)sx`, "ſx"},   // #70: fold-bad rune ('s') sits beside a safe rune in one concat; the bad fragment adds no wrong pruning evidence
+		{`(?i)sX`, "ſX"},   // #70: whole literal dropped, conservative — one fold-bad rune drops the entire multi-rune literal, match still kept
 	}
 	for _, c := range cases {
 		t.Run(c.pattern, func(t *testing.T) {
