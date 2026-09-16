@@ -2,6 +2,7 @@ package gin
 
 import (
 	"regexp/syntax"
+	"unicode"
 )
 
 const maxLiteralExpansion = 100 // Limit Cartesian product explosion
@@ -9,8 +10,11 @@ const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 // ExtractLiterals extracts literal strings from a regex pattern for
 // trigram-based candidate selection. Every match of the pattern contains at
 // least one returned literal as a substring, so callers must treat the list
-// as OR. Case-folded literals ((?i)) come back in one case; compare
-// case-insensitively. Returns nil when no literal is guaranteed or the
+// as OR. A case-folded literal run ((?i)) is dropped entirely — contributing
+// no literal — when any rune in it has a unicode.SimpleFold orbit member
+// whose unicode.ToLower differs from that rune's own ToLower; the drop
+// applies to the whole merged literal node, not just the offending rune (see
+// foldsUnderToLower). Returns nil when no literal is guaranteed or the
 // expansion exceeds maxLiteralExpansion.
 //
 //	"foo|bar"          -> ["foo", "bar"]
@@ -38,6 +42,9 @@ type literalSet struct {
 func extractLiterals(re *syntax.Regexp) literalSet {
 	switch re.Op {
 	case syntax.OpLiteral:
+		if re.Flags&syntax.FoldCase != 0 && !foldsUnderToLower(re.Rune) {
+			return literalSet{}
+		}
 		return literalSet{literals: []string{string(re.Rune)}, whole: true}
 
 	case syntax.OpConcat:
@@ -98,6 +105,21 @@ func extractConcatLiterals(subs []*syntax.Regexp) literalSet {
 		}
 	}
 	return literalSet{literals: append(groups, run...), whole: whole}
+}
+
+// foldsUnderToLower reports whether strings.ToLower, which TrigramIndex applies
+// to both sides, equates every rune in a (?i) literal with its whole fold orbit.
+// "s" fails: regexp folds it with "ſ" (long s), which ToLower keeps as is.
+func foldsUnderToLower(runes []rune) bool {
+	for _, r := range runes {
+		lower := unicode.ToLower(r)
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if unicode.ToLower(f) != lower {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func crossJoin(prefixes, suffixes []string) []string {

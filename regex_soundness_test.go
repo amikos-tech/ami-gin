@@ -41,6 +41,11 @@ func TestRegexNeverPrunesAMatch(t *testing.T) {
 		{`foo(bar|baz)?qux`, "fooqux"},
 		{`^check`, "checkout"},
 		{`(?i)Checkout`, "CHECKOUT-v2"},
+		{`(?i)sss`, "ſſſ"}, // #70: long s folds with s, ToLower keeps it
+		{`(?i)µµµ`, "μμμ"}, // #70: micro sign folds with Greek mu
+		{`(?i)kkk`, "KKK"}, // Kelvin sign orbit is safe under ToLower — must not be wrongly rejected
+		{`(?i)sx`, "ſx"},   // #70: fold-bad rune ('s') sits beside a safe rune in one concat; the bad fragment adds no wrong pruning evidence
+		{`(?i)sX`, "ſX"},   // #70: whole literal dropped, conservative — one fold-bad rune drops the entire multi-rune literal, match still kept
 	}
 	for _, c := range cases {
 		t.Run(c.pattern, func(t *testing.T) {
@@ -62,6 +67,8 @@ func TestRegexStillPrunes(t *testing.T) {
 		{`error.*timeout`, "warning only"},
 		{`Toyota|Tesla`, "Ford Mustang"},
 		{`(abc.*|cde)fgh`, "xyzxyz"}, // fragments still prune
+		{`(?i)Checkout`, "cart"},
+		{`(?i)kkk`, "cart"}, // Kelvin orbit is safe under ToLower, still prunes
 	}
 	for _, c := range cases {
 		t.Run(c.pattern, func(t *testing.T) {
@@ -110,7 +117,7 @@ func genRegexPattern(depth int) gopter.Gen {
 	literal := gen.SliceOfN(3, gen.OneConstOf("a", "b", "c")).Map(func(parts []string) string {
 		return strings.Join(parts, "")
 	})
-	shortLiteral := gen.OneConstOf("a", "b", "c", "ab", "bc")
+	shortLiteral := gen.OneConstOf("a", "b", "c", "ab", "bc", "sss", "kkk")
 	atom := gen.OneGenOf(literal, literal, literal, literal, shortLiteral,
 		gen.OneConstOf("[ab]", "[^c]", ".", "\\d", "^", "$", "\\b", ""))
 	if depth == 0 {
@@ -136,7 +143,7 @@ func genRegexPattern(depth int) gopter.Gen {
 func TestPropertyRegexIsSuperset(t *testing.T) {
 	properties := gopter.NewProperties(propertyTestParametersWithBudgets(400, 60))
 
-	genValue := gen.SliceOfN(8, gen.OneConstOf("a", "b", "c", "x", "A", "1", " ")).Map(func(parts []string) string {
+	genValue := gen.SliceOfN(8, gen.OneConstOf("a", "b", "c", "x", "A", "1", " ", "ſ", "K")).Map(func(parts []string) string {
 		return strings.Join(parts, "")
 	})
 
