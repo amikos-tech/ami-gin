@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
 Plan: 8 of 8
 Status: Issue #54 shipped — PR #64 (self-review)
-Last activity: 2026-09-14
+Last activity: 2026-09-16
 
 Progress: [█████████░] 94%
 
@@ -198,6 +198,9 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260802-hkk | verify and address issue #54 (work in a PR branch) | 2026-08-02 | 404ad73 | Verified | [260802-hkk-verify-and-address-issue-54-work-in-a-pr](./quick/260802-hkk-verify-and-address-issue-54-work-in-a-pr/) |
 | 260808-n99 | Address round-3 PR review findings on fix/issue-54: budget diagnostic unit, SIMD doc-guard cold-cache skip, lexical-order pin, --max-staged-paths on build, docs/SECURITY wording | 2026-08-08 | d475969 |  | [260808-n99-round3-review-fixes](./quick/260808-n99-round3-review-fixes/) |
 | 260914-n4a | Address review findings on fix/issue-54: comment trims, SECURITY.md citations, budget error hint, recovery/flat-array/companion/AllRGs tests, experiment negative-flag test | 2026-09-14 | 18371ed |  | [260914-n4a-address-pr-review-findings-for-issue-54](./quick/260914-n4a-address-pr-review-findings-for-issue-54/) |
+| 260915-tzk | PR #69 review findings: expansion-cap tests, direct ExtractLiterals property, dead compile branch, drop OpRepeat case, doc fixes, simplifier pass; filed #70 (Unicode fold) | 2026-09-15 | a8e4451 |  | [260915-tzk-apply-pr-69-review-findings-and-file-uni](./quick/260915-tzk-apply-pr-69-review-findings-and-file-uni/) |
+| 260916-88n | Fix #70: skip (?i) literals whose fold orbit does not lower to one rune (ſ, µ); Kelvin/ASCII/accents still prune | 2026-09-16 | 3cca783 |  | [260916-88n-fix-70-skip-case-folded-regex-literals-t](./quick/260916-88n-fix-70-skip-case-folded-regex-literals-t/) |
+| 260916-8j8 | PR #71 review findings: CHANGELOG ASCII-letter accuracy, ExtractLiterals doc comment, misleading Kelvin test comment, two new fold-fragment regression cases | 2026-09-16 | 2029c7e |  | [260916-8j8-fix-pr-71-code-review-findings-changelog](./quick/260916-8j8-fix-pr-71-code-review-findings-changelog/) |
 
 ## Deferred Items
 
