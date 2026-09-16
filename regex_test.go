@@ -58,7 +58,32 @@ func TestExtractLiterals(t *testing.T) {
 		{
 			name:     "repeated literal",
 			pattern:  "ab+c",
-			expected: []string{"abc"}, // + requires at least one b
+			expected: []string{"a", "b", "c"}, // "abbc" matches and holds no "abc"
+		},
+		{
+			name:     "empty alternation branch",
+			pattern:  "(foo|)bar",
+			expected: []string{"bar"}, // "bar" alone matches; "foo" is not required
+		},
+		{
+			name:     "class alternation branch",
+			pattern:  "(foo|[0-9]+)bar",
+			expected: []string{"bar"},
+		},
+		{
+			name:     "star alternation branch",
+			pattern:  "(a|b*)cde",
+			expected: []string{"cde"},
+		},
+		{
+			name:     "gap inside an alternation branch",
+			pattern:  "(ab.*|cd)ef",
+			expected: []string{"ab", "cd", "ef"}, // fragments, never glued to "ef"
+		},
+		{
+			name:     "no literal at all",
+			pattern:  "[a-z]+|.*",
+			expected: nil,
 		},
 	}
 
