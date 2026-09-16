@@ -630,7 +630,7 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 			if !exact {
 				allExact = false
 			}
-			terms[ninTermKey(v)] = rgSet
+			terms[term] = rgSet
 		}
 		if !allExact {
 			return presentRGs
@@ -656,9 +656,10 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 
 // ninTermKey names a query value the way the index stores it, so a value
 // repeated in a NIN list counts once. Strings and booleans share the string
-// index; every numeric form maps to its float64. Collapsing two values into
-// one key can only lower the per-row-group hit count, which keeps more row
-// groups, never fewer.
+// index; the numeric forms eqIsExact accepts share one float64 key. Any
+// other value reaches here only with an empty match set, so one shared key
+// is enough. Collapsing two values into one key can only lower the
+// per-row-group hit count, which keeps more row groups, never fewer.
 func ninTermKey(value any) string {
 	if term, ok := stringPredicateTerm(value); ok {
 		return "s:" + term
@@ -666,13 +667,12 @@ func ninTermKey(value any) string {
 	if f := toFloat64(value); f != nil {
 		return "n:" + strconv.FormatFloat(*f, 'g', -1, 64)
 	}
-	return fmt.Sprintf("?:%T:%v", value, value)
+	return ""
 }
 
-// negateTerms negates IN over exact per-term matches. It starts from negate,
-// then drops a multi-value row group whose distinct count is known and does
-// not exceed the number of query terms it matches: every value it holds is
-// in the list. An unknown count (0) keeps the row group.
+// negateTerms negates IN over exact per-term matches, then drops a
+// multi-value row group whose known distinct count equals the number of
+// query terms it matches: it holds no value outside the list.
 func (idx *GINIndex) negateTerms(pathID int, presentRGs *RGSet, terms map[string]*RGSet) *RGSet {
 	inResult := NoRGs(int(idx.Header.NumRowGroups))
 	for _, rgSet := range terms {
