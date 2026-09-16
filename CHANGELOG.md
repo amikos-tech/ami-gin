@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.1.1 (2026-09-16)
 
 - `Regex` with `(?i)` no longer prunes a match that uses a non-ASCII case fold
   (#70). `(?i)sss` matches `ſſſ` (long s) but the trigram index lowercases with
