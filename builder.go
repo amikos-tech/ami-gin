@@ -1503,9 +1503,13 @@ func (b *GINBuilder) multiValueRowGroups(pd *pathBuildData, multiDoc *RGSet) (*R
 		}
 	}
 	multiValue := multi.Intersect(multiDoc)
-	var distinct []uint32
-	for _, rg := range multiValue.ToSlice() {
-		distinct = append(distinct, counts[rg])
+	if multiValue.IsEmpty() {
+		return multiValue, nil
+	}
+	rgs := multiValue.ToSlice()
+	distinct := make([]uint32, len(rgs))
+	for i, rg := range rgs {
+		distinct[i] = counts[rg]
 	}
 	return multiValue, distinct
 }
