@@ -1453,35 +1453,51 @@ func (b *GINBuilder) buildAggregateIndex(pd *pathBuildData, aggregatedRGs []int)
 		}
 	}
 	multiValue := NoRGs(b.numRGs)
+	var distinct []uint32
 	if !multiDoc.IsEmpty() {
-		multiValue = b.multiValueRowGroups(pd).Intersect(multiDoc)
+		counts, multi := b.distinctValueCounts(pd)
+		multiValue = multi.Intersect(multiDoc)
+		for _, rg := range multiValue.ToSlice() {
+			distinct = append(distinct, counts[rg])
+		}
 	}
 	if multiValue.IsEmpty() && absent.IsEmpty() {
 		return nil
 	}
-	return &AggregateIndex{MultiValueRGs: multiValue, AbsentRGs: absent}
+	return &AggregateIndex{MultiValueRGs: multiValue, AbsentRGs: absent, DistinctCounts: distinct}
 }
 
-// multiValueRowGroups marks the row groups holding at least two distinct
-// values of the path. String and boolean terms are counted exactly, an
-// explicit null counts as one value, and a numeric row-group stat counts as
-// one value when min equals max and as two otherwise.
-func (b *GINBuilder) multiValueRowGroups(pd *pathBuildData) *RGSet {
-	seen := pd.nullRGs.Clone()
-	multi := MustNewRGSet(b.numRGs)
-	for _, bitmap := range pd.stringTerms {
-		multi.UnionWith(seen.Intersect(bitmap))
-		seen.UnionWith(bitmap)
+// distinctValueCounts counts the distinct values of the path per row group
+// and marks the row groups holding at least two. String and boolean terms
+// and an explicit null are counted exactly. A numeric row-group stat counts
+// as one value when min equals max; otherwise the row group holds at least
+// two numbers, is marked multi, and its count is reset to 0 (unknown).
+func (b *GINBuilder) distinctValueCounts(pd *pathBuildData) ([]uint32, *RGSet) {
+	counts := make([]uint32, b.numRGs)
+	countRG := func(rg uint32) bool {
+		counts[rg]++
+		return true
 	}
+	pd.nullRGs.Roaring().Iterate(countRG)
+	for _, bitmap := range pd.stringTerms {
+		bitmap.Roaring().Iterate(countRG)
+	}
+	multi := MustNewRGSet(b.numRGs)
 	for rg, stat := range pd.numericStats {
 		if !stat.HasValue {
 			continue
 		}
-		if stat.IntMin != stat.IntMax || stat.Min != stat.Max || seen.IsSet(rg) {
+		if stat.IntMin != stat.IntMax || stat.Min != stat.Max {
+			counts[rg] = 0
 			multi.Set(rg)
 			continue
 		}
-		seen.Set(rg)
+		counts[rg]++
 	}
-	return multi
+	for rg, n := range counts {
+		if n >= 2 {
+			multi.Set(rg)
+		}
+	}
+	return counts, multi
 }

@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"reflect"
@@ -243,7 +244,138 @@ func TestNegationUnderAggregationOracle(t *testing.T) {
 			if !got.equals(want) {
 				t.Errorf("%s = %v, want exactly %v", p, got.sorted(), want.sorted())
 			}
+		case OpNIN:
+			// env, app hold only strings/null, so the distinct count is
+			// known and NIN is exact. n spans a range in rg 0 (unknown).
+			if p.Path != "$.n" && !got.equals(want) {
+				t.Errorf("%s = %v, want exactly %v", p, got.sorted(), want.sorted())
+			}
 		}
+	}
+}
+
+// TestPreciseNINIssue63 pins the expectations E1-E7 from the issue 63
+// context: a multi-value row group is dropped when every distinct value it
+// holds is in the NIN list, and kept otherwise.
+func TestPreciseNINIssue63(t *testing.T) {
+	t.Run("E1 E2 issue example", func(t *testing.T) {
+		idx := buildAggregated(t, 3, []aggregatedDoc{
+			{0, map[string]any{"color": "red"}},
+			{0, map[string]any{"color": "red"}},
+			{1, map[string]any{"color": "red"}},
+			{1, map[string]any{"color": "blue"}},
+			{2, map[string]any{"color": "red"}},
+			{2, map[string]any{"color": "blue"}},
+			{2, map[string]any{"color": "green"}},
+		})
+		if got := indexDocIDs(idx, NIN("$.color", "red", "blue")).sorted(); !reflect.DeepEqual(got, []int{2}) {
+			t.Errorf("NIN(red, blue) = %v, want [2]", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.color", "red")).sorted(); !reflect.DeepEqual(got, []int{1, 2}) {
+			t.Errorf("NIN(red) = %v, want [1 2]", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.color", "red", "blue", "green")).sorted(); len(got) != 0 {
+			t.Errorf("NIN(red, blue, green) = %v, want []", got)
+		}
+	})
+
+	t.Run("E3 duplicate query values count once", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": "b"}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "a", "a")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a, a) = %v, want [0]", got)
+		}
+	})
+
+	t.Run("E4 string true and bool true are one term", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "true"}},
+			{0, map[string]any{"p": true}},
+		})
+		if len(idx.AggregateIndexes) != 0 {
+			t.Fatalf("AggregateIndexes = %d entries, want none: both documents index the same term", len(idx.AggregateIndexes))
+		}
+		for _, p := range []Predicate{NIN("$.p", "true"), NIN("$.p", true), NIN("$.p", "true", true)} {
+			if got := indexDocIDs(idx, p).sorted(); len(got) != 0 {
+				t.Errorf("%s = %v, want []", p, got)
+			}
+		}
+	})
+
+	t.Run("E5 single numeric value counts as one", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": 5.0}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "a", 5.0)).sorted(); len(got) != 0 {
+			t.Errorf("NIN(a, 5) = %v, want []", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.p", "a", 5)).sorted(); len(got) != 0 {
+			t.Errorf("NIN(a, int 5) = %v, want []", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.p", "a")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a) = %v, want [0]", got)
+		}
+		if got := indexDocIDs(idx, NIN("$.p", "a", "5")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a, \"5\") = %v, want [0]: the string 5 is not the number 5", got)
+		}
+	})
+
+	t.Run("E6 numeric range keeps the row group", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": 5.0}},
+			{0, map[string]any{"p": 7.0}},
+		})
+		ai := idx.AggregateIndexes[idx.pathLookup["$.p"]]
+		if ai == nil || !reflect.DeepEqual(ai.DistinctCounts, []uint32{0}) {
+			t.Fatalf("DistinctCounts = %+v, want [0] (unknown)", ai)
+		}
+		if got := indexDocIDs(idx, NIN("$.p", "a", 5.0, 7.0)).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a, 5, 7) = %v, want [0]", got)
+		}
+	})
+
+	t.Run("E7 explicit null is a distinct value", func(t *testing.T) {
+		idx := buildAggregated(t, 1, []aggregatedDoc{
+			{0, map[string]any{"p": "a"}},
+			{0, map[string]any{"p": nil}},
+		})
+		if got := indexDocIDs(idx, NIN("$.p", "a")).sorted(); !reflect.DeepEqual(got, []int{0}) {
+			t.Errorf("NIN(a) = %v, want [0]", got)
+		}
+	})
+}
+
+// TestDistinctCountsAlignToMultiValueRGs pins the sparse layout (E12): one
+// count per set bit of MultiValueRGs, in bit order, and no entry at all for
+// a path whose multi-document row groups each hold one value.
+func TestDistinctCountsAlignToMultiValueRGs(t *testing.T) {
+	numRGs, docs := aggregatedCorpus()
+	idx := buildAggregated(t, numRGs, docs)
+	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
+	if env == nil {
+		t.Fatal("no aggregate index for $.env")
+	}
+	// rg 0 {prod, canary}, rg 2 {null, staging}; rg 1 and rg 3 hold one value.
+	if got := env.MultiValueRGs.ToSlice(); !reflect.DeepEqual(got, []int{0, 2}) {
+		t.Fatalf("MultiValueRGs = %v, want [0 2]", got)
+	}
+	if !reflect.DeepEqual(env.DistinctCounts, []uint32{2, 2}) {
+		t.Errorf("DistinctCounts = %v, want [2 2]", env.DistinctCounts)
+	}
+	n := idx.AggregateIndexes[idx.pathLookup["$.n"]]
+	// rg 0 spans 1..2 (unknown); rg 1 lacks n in one doc but holds one value.
+	if got := n.MultiValueRGs.ToSlice(); !reflect.DeepEqual(got, []int{0}) {
+		t.Fatalf("n MultiValueRGs = %v, want [0]", got)
+	}
+	if !reflect.DeepEqual(n.DistinctCounts, []uint32{0}) {
+		t.Errorf("n DistinctCounts = %v, want [0]", n.DistinctCounts)
+	}
+	if _, ok := idx.AggregateIndexes[idx.pathLookup["$.id"]]; ok {
+		t.Error("aggregate index emitted for a path with no multi-value or absent row group")
 	}
 }
 
@@ -324,7 +456,8 @@ func TestAggregateIndexSerializationRoundTrip(t *testing.T) {
 				t.Fatalf("path %d missing after decode", pathID)
 			}
 			if !reflect.DeepEqual(got.MultiValueRGs.ToSlice(), want.MultiValueRGs.ToSlice()) ||
-				!reflect.DeepEqual(got.AbsentRGs.ToSlice(), want.AbsentRGs.ToSlice()) {
+				!reflect.DeepEqual(got.AbsentRGs.ToSlice(), want.AbsentRGs.ToSlice()) ||
+				!reflect.DeepEqual(got.DistinctCounts, want.DistinctCounts) {
 				t.Fatalf("path %d round trip mismatch: got %+v want %+v", pathID, got, want)
 			}
 		}
@@ -345,6 +478,41 @@ func TestDecodeRejectsAggregateIndexForUnknownPath(t *testing.T) {
 	}
 	if _, err := Encode(idx); err == nil {
 		t.Fatal("Encode accepted an aggregate index for a path outside the directory")
+	}
+}
+
+func TestEncodeRejectsMisalignedDistinctCounts(t *testing.T) {
+	numRGs, docs := aggregatedCorpus()
+	idx := buildAggregated(t, numRGs, docs)
+	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
+	env.DistinctCounts = append(env.DistinctCounts, 3)
+	if _, err := Encode(idx); err == nil || !strings.Contains(err.Error(), "distinct counts") {
+		t.Fatalf("Encode error = %v, want distinct count mismatch", err)
+	}
+}
+
+func TestDecodeRejectsMisalignedDistinctCounts(t *testing.T) {
+	numRGs, docs := aggregatedCorpus()
+	idx := buildAggregated(t, numRGs, docs)
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
+	// The count length field precedes the counts; locate it by its payload.
+	var want []byte
+	for _, c := range env.DistinctCounts {
+		want = append(want, byte(c), 0, 0, 0)
+	}
+	needle := append([]byte{byte(len(env.DistinctCounts)), 0, 0, 0}, want...)
+	at := bytes.Index(data, needle)
+	if at < 0 {
+		t.Fatal("distinct count payload not found in uncompressed encoding")
+	}
+	data[at]++
+	_, err = Decode(data)
+	if err == nil || !strings.Contains(err.Error(), "aggregate index") {
+		t.Fatalf("Decode error = %v, want aggregate index rejection", err)
 	}
 }
 
@@ -387,7 +555,8 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 
 	predicates := []Predicate{
 		EQ("$.env", "prod"), NE("$.env", "prod"), NE("$.env", "canary"), NE("$.n", 2.0),
-		IN("$.env", "prod", "staging"), NIN("$.env", "prod"), NIN("$.env", "prod", "staging"), NIN("$.n", 1.0),
+		IN("$.env", "prod", "staging"), NIN("$.env", "prod"), NIN("$.env", "prod", "staging"),
+		NIN("$.env", "prod", "staging", "canary"), NIN("$.env", "prod", "prod"), NIN("$.n", 1.0), NIN("$.n", 1.0, 2.0),
 		IsNull("$.env"), IsNull("$.n"), IsNotNull("$.env"),
 		GT("$.n", 1.0), LTE("$.n", 2.0), Contains("$.env", "sta"), Regex("$.env", "^ca"),
 	}
@@ -420,7 +589,7 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 					return false, fmt.Errorf("%s under-selects: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
 				}
 				exact := p.Operator == OpNE || p.Operator == OpIsNull ||
-					(p.Operator == OpNIN && len(p.Value.([]any)) == 1)
+					(p.Operator == OpNIN && (p.Path == "$.env" || len(p.Value.([]any)) == 1))
 				if exact && !got.intersect(multiDoc).equals(want.intersect(multiDoc)) {
 					return false, fmt.Errorf("%s not exact on aggregated row groups: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
 				}

@@ -383,6 +383,7 @@ func TestDecodeVersionMismatch(t *testing.T) {
 		{name: "future version", version: 99},
 		{name: "zero version", version: 0},
 		{name: "previous phase version", version: 8},
+		{name: "v1.1.1 release version", version: 10},
 	}
 
 	for _, tt := range tests {
@@ -847,7 +848,7 @@ func TestReadConfigRejectsValidateFailureAsInvalidFormat(t *testing.T) {
 	}
 }
 
-func TestTransformerFailureModeWireTokensStayV10(t *testing.T) {
+func TestTransformerFailureModeWireTokensStayV11(t *testing.T) {
 	config, err := NewConfig(
 		WithToLowerTransformer("$.email", lowerAlias, WithTransformerFailureMode(IngestFailureSoft)),
 	)
@@ -865,8 +866,8 @@ func TestTransformerFailureModeWireTokensStayV10(t *testing.T) {
 		t.Fatalf("EncodeWithLevel() error = %v", err)
 	}
 
-	if Version != 10 {
-		t.Fatalf("Version = %d, want 10", Version)
+	if Version != 11 {
+		t.Fatalf("Version = %d, want 11", Version)
 	}
 
 	configJSON, representationJSON, _ := encodedConfigAndRepresentationJSON(t, data)
@@ -2063,6 +2064,7 @@ func TestDecodeRejectsDuplicatePathSectionsAcrossReaders(t *testing.T) {
 					binary.Write(&buf, binary.LittleEndian, uint16(0))
 					writeRGSet(&buf, MustNewRGSet(1))
 					writeRGSet(&buf, MustNewRGSet(1))
+					binary.Write(&buf, binary.LittleEndian, uint32(0))
 				}
 				return readAggregateIndexes(&buf, idx)
 			},

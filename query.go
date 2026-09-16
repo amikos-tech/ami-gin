@@ -614,7 +614,7 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 		}
 
 		presentRGs := idx.evaluateIsNotNull(pathID)
-		inResult := NoRGs(int(idx.Header.NumRowGroups))
+		terms := make(map[string]*RGSet, len(values))
 		allExact := true
 		for _, v := range values {
 			term, ok := stringPredicateTerm(v)
@@ -630,12 +630,12 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 			if !exact {
 				allExact = false
 			}
-			inResult = inResult.Union(rgSet)
+			terms[ninTermKey(v)] = rgSet
 		}
 		if !allExact {
 			return presentRGs
 		}
-		return idx.negate(pathID, presentRGs, inResult)
+		return idx.negateTerms(pathID, presentRGs, terms)
 	}
 
 	presentRGs := idx.evaluateIsNotNull(pathID)
@@ -643,16 +643,62 @@ func (idx *GINIndex) evaluateNIN(pathID int, entry *PathEntry, value any) *RGSet
 	if !ok {
 		return presentRGs
 	}
-	numRGs := int(idx.Header.NumRowGroups)
-	inResult := NoRGs(numRGs)
+	terms := make(map[string]*RGSet, len(values))
 	for _, v := range values {
 		eqResult := idx.evaluateEQ(pathID, entry, v)
 		if !idx.eqIsExact(pathID, entry, v, eqResult) {
 			return presentRGs
 		}
-		inResult = inResult.Union(eqResult)
+		terms[ninTermKey(v)] = eqResult
 	}
-	return idx.negate(pathID, presentRGs, inResult)
+	return idx.negateTerms(pathID, presentRGs, terms)
+}
+
+// ninTermKey names a query value the way the index stores it, so a value
+// repeated in a NIN list counts once. Strings and booleans share the string
+// index; every numeric form maps to its float64. Collapsing two values into
+// one key can only lower the per-row-group hit count, which keeps more row
+// groups, never fewer.
+func ninTermKey(value any) string {
+	if term, ok := stringPredicateTerm(value); ok {
+		return "s:" + term
+	}
+	if f := toFloat64(value); f != nil {
+		return "n:" + strconv.FormatFloat(*f, 'g', -1, 64)
+	}
+	return fmt.Sprintf("?:%T:%v", value, value)
+}
+
+// negateTerms negates IN over exact per-term matches. It starts from negate,
+// then drops a multi-value row group whose distinct count is known and does
+// not exceed the number of query terms it matches: every value it holds is
+// in the list. An unknown count (0) keeps the row group.
+func (idx *GINIndex) negateTerms(pathID int, presentRGs *RGSet, terms map[string]*RGSet) *RGSet {
+	inResult := NoRGs(int(idx.Header.NumRowGroups))
+	for _, rgSet := range terms {
+		inResult.UnionWith(rgSet)
+	}
+	result := idx.negate(pathID, presentRGs, inResult)
+	ai, ok := idx.AggregateIndexes[uint16(pathID)]
+	if !ok || ai.MultiValueRGs == nil || len(ai.DistinctCounts) != ai.MultiValueRGs.Count() {
+		return result
+	}
+	for i, rg := range ai.MultiValueRGs.ToSlice() {
+		d := ai.DistinctCounts[i]
+		if d == 0 || !result.IsSet(rg) {
+			continue
+		}
+		hits := uint32(0)
+		for _, rgSet := range terms {
+			if rgSet.IsSet(rg) {
+				hits++
+			}
+		}
+		if d <= hits {
+			result.Clear(rg)
+		}
+	}
+	return result
 }
 
 func (idx *GINIndex) evaluateIsNull(pathID int) *RGSet {

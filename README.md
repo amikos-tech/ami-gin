@@ -160,7 +160,7 @@ GIN Index v0.2.0 expands the original predicate surface with adaptive high-cardi
 - Index merge across multiple index files is intentionally deferred beyond v0.2.0.
 - Query-time transformers are not supported in v0.2.0; transformations must happen at index-build time.
 
-Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v10`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`) must be rebuilt.
+Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v11`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`, `v1.1.1` wrote `v10`) must be rebuilt.
 
 ## Query Types
 
@@ -173,7 +173,7 @@ gin.IN("$.status", "active", "pending", "review")
 gin.NIN("$.status", "deleted", "archived")  // NOT IN
 ```
 
-`NE` and `NIN` select a row group when the path is present in it and some document holds a value other than the given ones. When several documents share one `DocID` (see [DocID Codec](#docid-codec-optional)), the index records which row groups hold more than one distinct value, so a row group containing both `deleted` and `active` is kept for `NE("$.status", "deleted")`. In modes without an exact term index (bloom-only paths, unpromoted adaptive terms) the negation cannot be proven and falls back to every row group where the path is present.
+`NE` and `NIN` select a row group when the path is present in it and some document holds a value other than the given ones. When several documents share one `DocID` (see [DocID Codec](#docid-codec-optional)), the index records which row groups hold more than one distinct value and how many, so a row group containing both `deleted` and `active` is kept for `NE("$.status", "deleted")` and dropped for `NIN("$.status", "deleted", "active")`. Numeric values are counted only when a row group holds a single one; a row group whose numbers span a range is always kept. In modes without an exact term index (bloom-only paths, unpromoted adaptive terms) the negation cannot be proven and falls back to every row group where the path is present.
 
 ### Numeric Range
 
@@ -1177,8 +1177,8 @@ docID := codec.Encode(fileIndex, rgIndex)  // e.g., file=3, rg=15 → DocID=75
 builder.AddDocument(docID, jsonDoc)
 // Adding several documents under one DocID is supported. The builder then
 // records per-path aggregate evidence (AggregateIndex) so NE, NIN and IsNull
-// stay sound: a row group holding several values, or a document without the
-// path, is never pruned by those operators.
+// stay sound: a row group holding a value outside the query, or a document
+// without the path, is never pruned by those operators.
 
 // Query and decode results
 result := idx.Evaluate(predicates)
