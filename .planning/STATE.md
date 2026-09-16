@@ -202,6 +202,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260916-88n | Fix #70: skip (?i) literals whose fold orbit does not lower to one rune (ſ, µ); Kelvin/ASCII/accents still prune | 2026-09-16 | 3cca783 |  | [260916-88n-fix-70-skip-case-folded-regex-literals-t](./quick/260916-88n-fix-70-skip-case-folded-regex-literals-t/) |
 | 260916-8j8 | PR #71 review findings: CHANGELOG ASCII-letter accuracy, ExtractLiterals doc comment, misleading Kelvin test comment, two new fold-fragment regression cases | 2026-09-16 | 2029c7e |  | [260916-8j8-fix-pr-71-code-review-findings-changelog](./quick/260916-8j8-fix-pr-71-code-review-findings-changelog/) |
 | 260916-8zu | Fix #67: widen TestPropertyHLLEstimateWithinBounds sigma bound from 3 to 6 to eliminate CI flakiness from the multiple-comparisons problem (250 trials/run) | 2026-09-16 | ef6f2f4 | Verified | [260916-8zu-fix-flaky-testpropertyhllestimatewithinb](./quick/260916-8zu-fix-flaky-testpropertyhllestimatewithinb/) |
+| 260916-ee0 | Fix #63: precise NIN on multi-value row groups via sparse DistinctCounts in AggregateIndex; wire v10 -> v11; grilling ledger + E1-E12 hold-out validated; PR #75 review follow-up: container values count once, decode count bound, aggregated golden, adaptive/decoder tests | 2026-09-16 | 717e374 | Verified | [260916-ee0-precise-nin-on-multi-value-row-groups-is](./quick/260916-ee0-precise-nin-on-multi-value-row-groups-is/) |
 
 ## Deferred Items
 

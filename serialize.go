@@ -1467,6 +1467,15 @@ func writeAggregateIndexes(w io.Writer, idx *GINIndex) error {
 		if err := writeRGSet(w, ai.AbsentRGs); err != nil {
 			return err
 		}
+		if len(ai.DistinctCounts) != ai.MultiValueRGs.Count() {
+			return errors.Errorf("aggregate index path %d: %d distinct counts for %d multi-value row groups", pathID, len(ai.DistinctCounts), ai.MultiValueRGs.Count())
+		}
+		if err := binary.Write(w, binary.LittleEndian, uint32(len(ai.DistinctCounts))); err != nil {
+			return err
+		}
+		if err := binary.Write(w, binary.LittleEndian, ai.DistinctCounts); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1495,9 +1504,27 @@ func readAggregateIndexes(r io.Reader, idx *GINIndex) error {
 		if err != nil {
 			return err
 		}
+		var numCounts uint32
+		if err := binary.Read(r, binary.LittleEndian, &numCounts); err != nil {
+			return errors.Wrapf(ErrInvalidFormat, "read aggregate index distinct count length: %v", err)
+		}
+		if numCounts > idx.Header.NumRowGroups {
+			return errors.Wrapf(ErrInvalidFormat, "aggregate index path %d: %d distinct counts exceeds %d row groups", pathID, numCounts, idx.Header.NumRowGroups)
+		}
+		if int(numCounts) != multiValue.Count() {
+			return errors.Wrapf(ErrInvalidFormat, "aggregate index path %d: %d distinct counts for %d multi-value row groups", pathID, numCounts, multiValue.Count())
+		}
+		var distinct []uint32
+		if numCounts > 0 {
+			distinct = make([]uint32, numCounts)
+			if err := binary.Read(r, binary.LittleEndian, distinct); err != nil {
+				return errors.Wrapf(ErrInvalidFormat, "read aggregate index distinct counts: %v", err)
+			}
+		}
 		idx.AggregateIndexes[pathID] = &AggregateIndex{
-			MultiValueRGs: multiValue,
-			AbsentRGs:     absent,
+			MultiValueRGs:  multiValue,
+			AbsentRGs:      absent,
+			DistinctCounts: distinct,
 		}
 	}
 	return nil

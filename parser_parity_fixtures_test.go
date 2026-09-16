@@ -5,10 +5,32 @@ type parityFixture struct {
 	Config   func() GINConfig
 	NumRGs   int
 	JSONDocs [][]byte
+	// DocIDs maps each document to its DocID; nil means one document per DocID.
+	DocIDs []DocID
+}
+
+func (fx parityFixture) docID(i int) DocID {
+	if fx.DocIDs != nil {
+		return fx.DocIDs[i]
+	}
+	return DocID(i)
 }
 
 func authoredParityFixtures() []parityFixture {
 	return []parityFixture{
+		{
+			Name:   "aggregated-docids",
+			Config: DefaultConfig,
+			NumRGs: 2,
+			DocIDs: []DocID{0, 0, 0, 1, 1},
+			JSONDocs: [][]byte{
+				[]byte(`{"env":"prod","n":1,"tags":{}}`),
+				[]byte(`{"env":"canary","n":2}`),
+				[]byte(`{"env":null,"tags":["a"]}`),
+				[]byte(`{"env":"prod","n":5}`),
+				[]byte(`{"env":"prod"}`),
+			},
+		},
 		{
 			Name:   "int64-boundaries",
 			Config: DefaultConfig,

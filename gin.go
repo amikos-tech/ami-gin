@@ -17,6 +17,9 @@ const (
 	// Version is the binary format version. Decode rejects mismatches with
 	// ErrVersionMismatch; the only migration path is to rebuild the index
 	// with the target binary. Version history:
+	//   v11: per-row-group distinct value counts in the AggregateIndex
+	//        section so NIN drops a multi-value row group whose values all
+	//        fall inside the query list (#63)
 	//   v10: per-path AggregateIndex section so NE, NIN and IsNull stay
 	//        sound when several documents share one DocID (#60)
 	//   v9: compaction for ordered-string sections, including path
@@ -30,7 +33,7 @@ const (
 	//       iteration of the adaptive string index section before the wire
 	//       format was finalised in v6.
 	//   v4: earlier pre-OSS format
-	Version = 10
+	Version = 11
 )
 
 const (
@@ -244,6 +247,15 @@ type AggregateIndex struct {
 	// least one document does not carry the path. Such a row group always
 	// satisfies IsNull.
 	AbsentRGs *RGSet
+	// DistinctCounts holds one entry per set bit of MultiValueRGs, in bit
+	// order: the number of distinct values the row group holds. Strings,
+	// booleans, an explicit null and a container value (object or array)
+	// each count once; a single numeric value adds one. A known count is
+	// always at least 2. An entry of 0 means the count is unknown because
+	// the row group's numeric values span a range. NIN drops a multi-value
+	// row group when the count does not exceed the number of query terms it
+	// matches, because then no value falls outside the list.
+	DistinctCounts []uint32
 }
 
 type StringLengthIndex struct {

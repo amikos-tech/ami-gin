@@ -771,6 +771,9 @@ func trimExperimentIndexRowGroups(idx *gin.GINIndex, rowGroups int) {
 	for _, ai := range idx.AggregateIndexes {
 		trimExperimentRGSet(ai.MultiValueRGs, rowGroups)
 		trimExperimentRGSet(ai.AbsentRGs, rowGroups)
+		if ai.MultiValueRGs != nil && len(ai.DistinctCounts) > ai.MultiValueRGs.Count() {
+			ai.DistinctCounts = ai.DistinctCounts[:ai.MultiValueRGs.Count()]
+		}
 	}
 
 	for _, ti := range idx.TrigramIndexes {
