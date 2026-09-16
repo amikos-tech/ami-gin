@@ -2,6 +2,7 @@ package gin
 
 import (
 	"regexp/syntax"
+	"unicode"
 )
 
 const maxLiteralExpansion = 100 // Limit Cartesian product explosion
@@ -38,6 +39,9 @@ type literalSet struct {
 func extractLiterals(re *syntax.Regexp) literalSet {
 	switch re.Op {
 	case syntax.OpLiteral:
+		if re.Flags&syntax.FoldCase != 0 && !foldsUnderToLower(re.Rune) {
+			return literalSet{}
+		}
 		return literalSet{literals: []string{string(re.Rune)}, whole: true}
 
 	case syntax.OpConcat:
@@ -98,6 +102,21 @@ func extractConcatLiterals(subs []*syntax.Regexp) literalSet {
 		}
 	}
 	return literalSet{literals: append(groups, run...), whole: whole}
+}
+
+// foldsUnderToLower reports whether strings.ToLower, which TrigramIndex applies
+// to both sides, equates every rune in a (?i) literal with its whole fold orbit.
+// "s" fails: regexp folds it with "ſ" (long s), which ToLower keeps as is.
+func foldsUnderToLower(runes []rune) bool {
+	for _, r := range runes {
+		lower := unicode.ToLower(r)
+		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+			if unicode.ToLower(f) != lower {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func crossJoin(prefixes, suffixes []string) []string {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `Regex` with `(?i)` no longer prunes a match that uses a non-ASCII case fold
+  (#70). `(?i)sss` matches `ſſſ` (long s) but the trigram index lowercases with
+  `strings.ToLower`, which keeps `ſ`. A case-folded literal is now skipped
+  when any rune's `unicode.SimpleFold` orbit does not lower to one rune, so
+  such patterns fall back to a full scan. ASCII and accented letters, and the
+  Kelvin sign orbit of `k`, still prune. The index format is unchanged.
 - `Regex` no longer prunes a row group that holds a match (#68). Literal
   extraction now tracks whether a node's literals are whole (the node matches
   exactly those strings) or fragments (every match contains one of them
