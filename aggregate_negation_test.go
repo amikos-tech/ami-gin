@@ -500,7 +500,8 @@ func TestDecodeRejectsMisalignedDistinctCounts(t *testing.T) {
 	}
 	env := idx.AggregateIndexes[idx.pathLookup["$.env"]]
 	// The count length field precedes the counts; locate it by its payload.
-	needle := []byte{byte(len(env.DistinctCounts)), 0, 0, 0}
+	needle := make([]byte, 0, 4+4*len(env.DistinctCounts))
+	needle = append(needle, byte(len(env.DistinctCounts)), 0, 0, 0)
 	for _, c := range env.DistinctCounts {
 		needle = append(needle, byte(c), 0, 0, 0)
 	}
