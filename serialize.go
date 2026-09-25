@@ -300,8 +300,14 @@ var (
 	zstdDecoderErr  error
 )
 
+// sharedZstdEncoderKey collapses a numeric level to its zstd mode and pairs it
+// with the profile, yielding the cache key sharedZstdEncoder uses.
+func sharedZstdEncoderKey(level CompressionLevel, profile EncoderProfile) zstdEncoderKey {
+	return zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+}
+
 func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.Encoder, error) {
-	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
 	if enc, ok := zstdEncoders[key]; ok {

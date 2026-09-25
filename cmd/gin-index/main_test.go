@@ -866,3 +866,69 @@ func TestRunBuildUsageListsLowMemoryFlag(t *testing.T) {
 		t.Fatalf("usage = %q, want -low-memory flag", stderr.String())
 	}
 }
+
+func TestEncoderProfileForLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	if got := encoderProfileFor(true); got != gin.EncoderProfileBoundedMemory {
+		t.Fatalf("encoderProfileFor(true) = %v, want bounded-memory", got)
+	}
+	if got := encoderProfileFor(false); got != gin.EncoderProfileDefault {
+		t.Fatalf("encoderProfileFor(false) = %v, want default", got)
+	}
+}
+
+func TestRunExtractUsageListsLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runExtract([]string{"-h"}, &stdout, &stderr); code == 0 {
+		t.Fatal("runExtract(-h) code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr.String(), "-low-memory") {
+		t.Fatalf("usage = %q, want -low-memory flag", stderr.String())
+	}
+}
+
+// The bounded profile changes only encoder memory, so extract -low-memory must
+// write exactly the bytes a default extract writes.
+func TestRunExtractLowMemoryWritesSameBytes(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetFile := filepath.Join(tmpDir, "embedded.parquet")
+	createCLIParquetFile(t, parquetFile, []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+		{ID: 2, Attributes: `{"status":"warn"}`},
+	})
+	idx, err := gin.BuildFromParquet(parquetFile, "attributes", gin.DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+	if err := gin.RebuildWithIndex(parquetFile, idx, gin.DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex: %v", err)
+	}
+
+	extract := func(name string, extra ...string) []byte {
+		t.Helper()
+		output := filepath.Join(tmpDir, name)
+		args := append(append([]string{}, extra...), "-o", output, parquetFile)
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := runExtract(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("runExtract(%v) code = %d; stderr=%q", args, code, stderr.String())
+		}
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatalf("read %s: %v", output, err)
+		}
+		return data
+	}
+
+	want := extract("default.gin")
+	got := extract("bounded.gin", "-low-memory")
+	if !bytes.Equal(got, want) {
+		t.Fatal("extract -low-memory output differs from default extract output")
+	}
+}

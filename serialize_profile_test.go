@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,13 +18,13 @@ var encoderProfileLevels = []CompressionLevel{
 	CompressionFastest, CompressionBalanced, CompressionBetter, CompressionBest, CompressionMax,
 }
 
-// dropSharedZstdEncoder removes one cached encoder so a test can observe
-// whether a code path constructs it. Callers must not run in parallel with
-// other encodes at that key: Go runs top-level sequential tests before any
-// t.Parallel test resumes, so a sequential test is safe.
-func dropSharedZstdEncoder(t *testing.T, level CompressionLevel, profile EncoderProfile) {
-	t.Helper()
-	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+// evictSharedZstdEncoder removes one cached encoder so a test can observe
+// whether a code path constructs it, or a benchmark can measure what that
+// construction retains. Callers must not run in parallel with other encodes
+// at that key: Go runs top-level sequential tests before any t.Parallel test
+// resumes, and benchmarks run after all tests, so both are safe.
+func evictSharedZstdEncoder(level CompressionLevel, profile EncoderProfile) {
+	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
 	if enc, ok := zstdEncoders[key]; ok {
@@ -33,7 +34,7 @@ func dropSharedZstdEncoder(t *testing.T, level CompressionLevel, profile Encoder
 }
 
 func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) bool {
-	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
 	_, ok := zstdEncoders[key]
@@ -41,12 +42,61 @@ func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) boo
 }
 
 // E1: bounded and default encodings are byte-identical at every level and
-// both decode to the original index.
+// both decode to the original index. The small fixture fits in one zstd block
+// (EncodeAll's no-history path); the multi-block fixture exceeds the 128 KB
+// block size so the history-buffer path, where WithLowerEncoderMem changes
+// buffer sizing, is exercised too.
 func TestEncoderProfileBoundedOutputIdenticalToDefault(t *testing.T) {
 	t.Parallel()
-	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
-	ctx := context.Background()
+	const zstdBlockSize = 128 << 10
+	fixtures := []struct {
+		name       string
+		idx        *GINIndex
+		multiBlock bool
+	}{
+		{name: "single-block", idx: buildAdaptiveSerializationFixture(t, DefaultConfig())},
+		{name: "multi-block", idx: buildHighCardinalityIndex(t, 200, 20), multiBlock: true},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			raw, err := EncodeWithLevel(fixture.idx, CompressionNone)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if payload := len(raw) - len(uncompressedMagic); (payload > zstdBlockSize) != fixture.multiBlock {
+				t.Fatalf("payload is %d bytes; multi-block = %v, want %v", payload, payload > zstdBlockSize, fixture.multiBlock)
+			}
+			assertEncoderProfilesByteIdentical(t, fixture.idx)
+		})
+	}
+}
 
+// buildHighCardinalityIndex builds an index where every document
+// carries unique string values, so the string, trigram and HLL sections are
+// large and the zstd payload is representative of a high-cardinality index.
+func buildHighCardinalityIndex(tb testing.TB, numRGs, docsPerRG int) *GINIndex {
+	tb.Helper()
+	builder, err := NewBuilder(DefaultConfig(), numRGs)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	n := 0
+	for rg := 0; rg < numRGs; rg++ {
+		for d := 0; d < docsPerRG; d++ {
+			doc := fmt.Sprintf(`{"id":%d,"trace_id":"trace-%08x-%08x","user":"user_%d@example.com","status":%q,"latency_ms":%d}`,
+				n, n*2654435761, n*40503, n, []string{"ok", "error", "timeout"}[n%3], (n*37)%5000)
+			if err := builder.AddDocument(DocID(rg), []byte(doc)); err != nil {
+				tb.Fatal(err)
+			}
+			n++
+		}
+	}
+	return builder.Finalize()
+}
+
+func assertEncoderProfilesByteIdentical(t *testing.T, idx *GINIndex) {
+	t.Helper()
+	ctx := context.Background()
 	for _, level := range encoderProfileLevels {
 		want, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileDefault))
 		if err != nil {
@@ -179,7 +229,7 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 
 	for name, run := range paths {
 		t.Run(name, func(t *testing.T) {
-			dropSharedZstdEncoder(t, CompressionBest, EncoderProfileBoundedMemory)
+			evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
 			data := run(t)
 			if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
 				t.Errorf("%s did not use the bounded-memory encoder", name)
@@ -212,7 +262,7 @@ func TestEncoderProfilePerCallOverridesConfig(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("config bounded, call default", func(t *testing.T) {
-		dropSharedZstdEncoder(t, CompressionBalanced, EncoderProfileBoundedMemory)
+		evictSharedZstdEncoder(CompressionBalanced, EncoderProfileBoundedMemory)
 		if _, err := EncodeWithLevelContext(ctx, boundedIdx, CompressionBalanced, WithEncodeProfile(EncoderProfileDefault)); err != nil {
 			t.Fatal(err)
 		}
@@ -221,7 +271,7 @@ func TestEncoderProfilePerCallOverridesConfig(t *testing.T) {
 		}
 	})
 	t.Run("config default, call bounded", func(t *testing.T) {
-		dropSharedZstdEncoder(t, CompressionFastest, EncoderProfileBoundedMemory)
+		evictSharedZstdEncoder(CompressionFastest, EncoderProfileBoundedMemory)
 		if _, err := EncodeWithLevelContext(ctx, defaultIdx, CompressionFastest, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
 			t.Fatal(err)
 		}

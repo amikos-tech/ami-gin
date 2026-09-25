@@ -1663,3 +1663,38 @@ func TestRunExperimentCanceledPredicateExitsCleanly(t *testing.T) {
 		t.Fatalf("stderr = %q, want 'Error: ... canceled ...'", errOut)
 	}
 }
+
+// The bounded profile changes only encoder memory, so experiment --low-memory
+// must write exactly the sidecar bytes a default run writes.
+func TestRunExperimentLowMemoryWritesSameSidecarBytes(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "docs.jsonl", []string{
+		`{"status":"ok","user":"alice"}`,
+		`{"status":"ok","user":"bob"}`,
+		`{"status":"error","user":"cora"}`,
+	}, true)
+
+	run := func(name string, extra ...string) []byte {
+		t.Helper()
+		outputPath := filepath.Join(tmpDir, name)
+		args := append(append([]string{}, extra...), "--rg-size", "2", "-o", outputPath, inputPath)
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := runExperiment(args, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
+			t.Fatalf("runExperiment(%v) code = %d; stderr=%q", args, code, stderr.String())
+		}
+		data, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", outputPath, err)
+		}
+		return data
+	}
+
+	want := run("default.gin")
+	got := run("bounded.gin", "--low-memory")
+	if !bytes.Equal(got, want) {
+		t.Fatal("experiment --low-memory sidecar differs from default sidecar")
+	}
+}

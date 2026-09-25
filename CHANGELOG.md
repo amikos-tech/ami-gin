@@ -11,7 +11,7 @@
   with `WithEncodeProfile` (an `EncodeOption`) or on the config with
   `WithEncoderProfile` (a `ConfigOption`) so `WriteSidecar`,
   `EncodeToMetadata` and S3 sidecars use it; the per-call option wins.
-  `gin-index build` gains `-low-memory`. Encoders are cached by zstd mode and
+  `gin-index build`, `extract` and `experiment` gain `-low-memory`. Encoders are cached by zstd mode and
   profile, so the two profiles never share an instance. The profile is
   runtime-only and not serialized; the default profile and the wire format
   (`v11`) are unchanged. `make bench-encoder-profile` reports retained memory,

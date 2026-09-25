@@ -409,8 +409,9 @@ data, err := gin.EncodeContext(ctx, idx, gin.WithEncodeProfile(gin.EncoderProfil
 // Or on the config, so WriteSidecar, EncodeToMetadata and S3 sidecars use it too
 cfg, err := gin.NewConfig(gin.WithEncoderProfile(gin.EncoderProfileBoundedMemory))
 
-// CLI
+// CLI: build, extract and experiment -o all accept -low-memory
 gin-index build -c attributes -low-memory data.parquet
+gin-index extract -low-memory -o data.parquet.gin data.parquet
 ```
 
 A per-call `WithEncodeProfile` overrides the config profile, including an

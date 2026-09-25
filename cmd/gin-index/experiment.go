@@ -52,6 +52,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	logLevel := fs.String("log-level", experimentLogLevelOff, "Log level: off|info|debug")
 	sampleLimit := fs.Int("sample", 0, "Cap successful ingests at N documents")
 	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
+	lowMemory := fs.Bool("low-memory", false, "With -o, encode the sidecar with the bounded-memory zstd profile: one worker instead of one per CPU; same output bytes")
 	onError := fs.String("on-error", experimentOnErrorAbort, "Malformed-line handling: abort|continue")
 	if err := fs.Parse(args); err != nil {
 		return 1
@@ -59,7 +60,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	if *rgSize <= 0 {
 		fmt.Fprintln(stderr, "Error: --rg-size must be greater than 0")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--low-memory] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 	if *sampleLimit < 0 {
@@ -77,7 +78,7 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "Error: exactly one input path is required")
-		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--log-level off|info|debug] <input-path|->")
+		fmt.Fprintln(stderr, "Usage: gin-index experiment [--rg-size N] [--sample N] [--max-staged-paths N] [--on-error abort|continue] [--json] [--test '<predicate>'] [-o out.gin] [--low-memory] [--log-level off|info|debug] <input-path|->")
 		return 1
 	}
 
@@ -88,6 +89,10 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 1
 	}
 	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&config); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	if err := gin.WithEncoderProfile(encoderProfileFor(*lowMemory))(&config); err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
