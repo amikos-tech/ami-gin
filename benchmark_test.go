@@ -12,12 +12,14 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pkg/errors"
 
 	"github.com/amikos-tech/ami-gin/logging"
@@ -4685,4 +4687,135 @@ func BenchmarkEvaluateWithTracer(b *testing.B) {
 			_ = idx.EvaluateContext(ctx, preds)
 		}
 	})
+}
+
+// BenchmarkEncoderProfile compares the default and bounded-memory zstd
+// encoder profiles (issue #79). Run it at several worker-pool sizes:
+//
+//	make bench-encoder-profile            # GOMAXPROCS=1, 4, 16
+//
+// Sub-benchmarks: profile / level / fixture / cold|repeated.
+//   - cold: constructs an uncached encoder per iteration and encodes the
+//     serialized payload once; retained_MB is the heap still held after GC
+//     while that encoder is alive (the cost the shared cache keeps forever).
+//   - repeated: the public EncodeWithLevelContext path against the shared
+//     cache; retained_MB is measured once for the cache entry the loop uses.
+//
+// Both report compressed_bytes; -benchmem supplies allocs/op and B/op.
+func BenchmarkEncoderProfile(b *testing.B) {
+	fixtures := []struct {
+		name string
+		idx  *GINIndex
+	}{
+		{name: "small", idx: setupTestIndex(100)},
+		{name: "highcard", idx: setupHighCardinalityBenchmarkIndex(b, 500, 20)},
+	}
+	levels := []CompressionLevel{CompressionBest, CompressionBalanced}
+	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory}
+
+	for _, profile := range profiles {
+		for _, level := range levels {
+			for _, fixture := range fixtures {
+				name := fmt.Sprintf("%s/L%d/%s", profile, level, fixture.name)
+				payload := uncompressedPayload(b, fixture.idx)
+				encLevel := zstd.EncoderLevelFromZstd(int(level))
+
+				b.Run(name+"/cold", func(b *testing.B) {
+					b.ReportAllocs()
+					var retained, compressed float64
+					for i := 0; i < b.N; i++ {
+						before := heapAllocAfterGC()
+						enc, err := newZstdEncoder(encLevel, profile)
+						if err != nil {
+							b.Fatal(err)
+						}
+						out := enc.EncodeAll(payload, nil)
+						compressed = float64(len(out))
+						retained += float64(heapAllocAfterGC()-before) / (1 << 20)
+						runtime.KeepAlive(enc)
+						enc.Close()
+					}
+					b.ReportMetric(retained/float64(b.N), "retained_MB")
+					b.ReportMetric(compressed, "compressed_bytes")
+				})
+
+				b.Run(name+"/repeated", func(b *testing.B) {
+					b.ReportAllocs()
+					ctx := context.Background()
+					opts := []EncodeOption{WithEncodeProfile(profile)}
+					// Measure what the shared cache retains for this key by
+					// evicting it, then constructing it through the public path.
+					evictSharedZstdEncoder(level, profile)
+					before := heapAllocAfterGC()
+					if _, err := EncodeWithLevelContext(ctx, fixture.idx, level, opts...); err != nil {
+						b.Fatal(err)
+					}
+					retained := float64(heapAllocAfterGC()-before) / (1 << 20)
+					var compressed int
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						out, err := EncodeWithLevelContext(ctx, fixture.idx, level, opts...)
+						if err != nil {
+							b.Fatal(err)
+						}
+						compressed = len(out)
+					}
+					b.StopTimer()
+					b.ReportMetric(retained, "retained_MB")
+					b.ReportMetric(float64(compressed), "compressed_bytes")
+				})
+			}
+		}
+	}
+}
+
+// setupHighCardinalityBenchmarkIndex builds an index where every document
+// carries unique string values, so the string, trigram and HLL sections are
+// large and the zstd payload is representative of a high-cardinality index.
+func setupHighCardinalityBenchmarkIndex(b *testing.B, numRGs, docsPerRG int) *GINIndex {
+	b.Helper()
+	builder, err := NewBuilder(DefaultConfig(), numRGs)
+	if err != nil {
+		b.Fatal(err)
+	}
+	n := 0
+	for rg := 0; rg < numRGs; rg++ {
+		for d := 0; d < docsPerRG; d++ {
+			doc := fmt.Sprintf(`{"id":%d,"trace_id":"trace-%08x-%08x","user":"user_%d@example.com","status":%q,"latency_ms":%d}`,
+				n, n*2654435761, n*40503, n, []string{"ok", "error", "timeout"}[n%3], (n*37)%5000)
+			if err := builder.AddDocument(DocID(rg), []byte(doc)); err != nil {
+				b.Fatal(err)
+			}
+			n++
+		}
+	}
+	return builder.Finalize()
+}
+
+// uncompressedPayload returns the serialized index bytes without the magic
+// prefix, i.e. exactly what the zstd encoder sees.
+func uncompressedPayload(b *testing.B, idx *GINIndex) []byte {
+	b.Helper()
+	data, err := EncodeWithLevel(idx, CompressionNone)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return data[len(uncompressedMagic):]
+}
+
+func heapAllocAfterGC() uint64 {
+	runtime.GC()
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
+func evictSharedZstdEncoder(level CompressionLevel, profile EncoderProfile) {
+	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+	zstdEncoderMu.Lock()
+	defer zstdEncoderMu.Unlock()
+	if enc, ok := zstdEncoders[key]; ok {
+		delete(zstdEncoders, key)
+		enc.Close()
+	}
 }

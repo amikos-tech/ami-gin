@@ -829,3 +829,40 @@ func TestLocalOutputModeWrapsStatErrors(t *testing.T) {
 		t.Fatalf("localOutputMode(missing) error = %q, want stat local file context", err)
 	}
 }
+
+func TestBuildGINConfigLowMemorySelectsBoundedProfile(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := buildGINConfig(0, true)
+	if err != nil {
+		t.Fatalf("buildGINConfig(0, true) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileBoundedMemory {
+		t.Fatalf("EncoderProfile = %v, want bounded-memory", cfg.EncoderProfile)
+	}
+
+	cfg, err = buildGINConfig(7, false)
+	if err != nil {
+		t.Fatalf("buildGINConfig(7, false) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileDefault {
+		t.Fatalf("EncoderProfile = %v, want default", cfg.EncoderProfile)
+	}
+	if cfg.MaxStagedPaths != 7 {
+		t.Fatalf("MaxStagedPaths = %d, want 7", cfg.MaxStagedPaths)
+	}
+}
+
+func TestRunBuildUsageListsLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-h"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild(-h) code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr.String(), "-low-memory") {
+		t.Fatalf("usage = %q, want -low-memory flag", stderr.String())
+	}
+}

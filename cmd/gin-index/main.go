@@ -108,6 +108,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
 	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
+	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~40 MB at level 15) instead of one per CPU; same output bytes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -128,8 +129,8 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	}
 
 	input := fs.Arg(0)
-	ginCfg := gin.DefaultConfig()
-	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&ginCfg); err != nil {
+	ginCfg, err := buildGINConfig(*maxStagedPaths, *lowMemory)
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
@@ -165,6 +166,18 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// buildGINConfig maps the build command's index flags onto a GINConfig.
+// lowMemory selects gin.EncoderProfileBoundedMemory so every encode path the
+// build takes (local sidecar, embedded metadata, S3 sidecar) retains one zstd
+// worker instead of one per CPU.
+func buildGINConfig(maxStagedPaths int, lowMemory bool) (gin.GINConfig, error) {
+	opts := []gin.ConfigOption{gin.WithMaxStagedPaths(maxStagedPaths)}
+	if lowMemory {
+		opts = append(opts, gin.WithEncoderProfile(gin.EncoderProfileBoundedMemory))
+	}
+	return gin.NewConfig(opts...)
 }
 
 // buildSingleFile/extractSingleFile are os.Stdout/os.Stderr wrappers kept for

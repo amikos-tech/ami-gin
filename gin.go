@@ -450,6 +450,13 @@ type GINConfig struct {
 	// on-wire config payload (see SerializedConfig and writeConfig/readConfig).
 	Logger  logging.Logger    // noop by default; set via WithLogger
 	Signals telemetry.Signals // disabled by default; set via WithSignals
+
+	// EncoderProfile selects the zstd encoder memory profile used by every
+	// encode path that reads this config (Encode, WriteSidecar,
+	// EncodeToMetadata, S3 sidecars). Runtime-only, never serialized; a decoded
+	// index always reads EncoderProfileDefault. Set via WithEncoderProfile;
+	// WithEncodeProfile overrides it per call.
+	EncoderProfile EncoderProfile
 }
 
 type ConfigOption func(*GINConfig) error
@@ -830,6 +837,19 @@ func WithSignals(signals telemetry.Signals) ConfigOption {
 	}
 }
 
+// WithEncoderProfile sets the zstd encoder memory profile on the config so
+// that every encode path reading the index config uses it. See EncoderProfile
+// for the memory trade-off. Unknown values are rejected.
+func WithEncoderProfile(profile EncoderProfile) ConfigOption {
+	return func(c *GINConfig) error {
+		if err := profile.validate(); err != nil {
+			return errors.Wrap(err, "encoder profile")
+		}
+		c.EncoderProfile = profile
+		return nil
+	}
+}
+
 // configLogger returns a safe logger from cfg, collapsing nil configs to noop.
 func configLogger(cfg *GINConfig) logging.Logger {
 	if cfg == nil {
@@ -878,6 +898,9 @@ func NewGINIndex() *GINIndex {
 func (c GINConfig) validate() error {
 	if c.MaxStagedPaths < 0 {
 		return errors.New("max staged paths must be non-negative")
+	}
+	if err := c.EncoderProfile.validate(); err != nil {
+		return errors.Wrap(err, "encoder profile")
 	}
 
 	// Zero is the disable sentinel for AdaptivePromotedTermCap and

@@ -390,6 +390,51 @@ data, _ := os.ReadFile("index.gin")
 idx, err := gin.Decode(data)
 ```
 
+### Encoder memory profile
+
+`Encode` reuses one zstd encoder per compression level for the life of the
+process. By default that encoder keeps one worker per `GOMAXPROCS` so parallel
+encodes at the same level do not queue. Each level-15 worker holds about 36 MB
+of match tables, so a 16-CPU host retains roughly 580 MB after its first
+level-15 encode even if it only ever encodes one index at a time.
+
+`EncoderProfileBoundedMemory` keeps a single worker with zstd's lower-memory
+buffers. Output bytes are identical to the default profile at every level; only
+retained memory and same-level parallelism change.
+
+```go
+// Per call
+data, err := gin.EncodeContext(ctx, idx, gin.WithEncodeProfile(gin.EncoderProfileBoundedMemory))
+
+// Or on the config, so WriteSidecar, EncodeToMetadata and S3 sidecars use it too
+cfg, err := gin.NewConfig(gin.WithEncoderProfile(gin.EncoderProfileBoundedMemory))
+
+// CLI
+gin-index build -c attributes -low-memory data.parquet
+```
+
+A per-call `WithEncodeProfile` overrides the config profile, including an
+explicit `EncoderProfileDefault`. The profile is runtime-only and never
+serialized; a decoded index always reads `EncoderProfileDefault`.
+
+Retained heap after the first level-15 encode (`make bench-encoder-profile`,
+klauspost/compress v1.19.2):
+
+| GOMAXPROCS | Default profile | Bounded-memory profile |
+|-----------:|----------------:|-----------------------:|
+| 1          | 51 MB  | 42 MB         |
+| 4          | 153 MB  | 42 MB         |
+| 16         | 561 MB | 42 MB        |
+
+Choose the bounded profile when the process runs under a memory limit or
+encodes one index at a time; keep the default when several goroutines encode
+at the same level concurrently and memory is plentiful. Level 3 retains much
+less under either profile (10 to 37 MB in the same runs) at a larger output
+size, so lowering the level is a different trade-off. Full numbers,
+including allocations, elapsed time and compressed size for small and
+high-cardinality indexes, are in
+[`docs/encoder-profile-benchmarks.md`](./docs/encoder-profile-benchmarks.md).
+
 ## Parquet Integration
 
 The GIN index integrates directly with Parquet files, supporting three storage strategies:

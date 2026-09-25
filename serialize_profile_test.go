@@ -1,0 +1,281 @@
+package gin
+
+import (
+	"bytes"
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/klauspost/compress/zstd"
+)
+
+// encoderProfileLevels covers one level per collapsed zstd mode plus 19,
+// which shares SpeedBestCompression with 15.
+var encoderProfileLevels = []CompressionLevel{
+	CompressionFastest, CompressionBalanced, CompressionBetter, CompressionBest, CompressionMax,
+}
+
+// dropSharedZstdEncoder removes one cached encoder so a test can observe
+// whether a code path constructs it. Callers must not run in parallel with
+// other encodes at that key: Go runs top-level sequential tests before any
+// t.Parallel test resumes, so a sequential test is safe.
+func dropSharedZstdEncoder(t *testing.T, level CompressionLevel, profile EncoderProfile) {
+	t.Helper()
+	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+	zstdEncoderMu.Lock()
+	defer zstdEncoderMu.Unlock()
+	if enc, ok := zstdEncoders[key]; ok {
+		delete(zstdEncoders, key)
+		enc.Close()
+	}
+}
+
+func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) bool {
+	key := zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
+	zstdEncoderMu.Lock()
+	defer zstdEncoderMu.Unlock()
+	_, ok := zstdEncoders[key]
+	return ok
+}
+
+// E1: bounded and default encodings are byte-identical at every level and
+// both decode to the original index.
+func TestEncoderProfileBoundedOutputIdenticalToDefault(t *testing.T) {
+	t.Parallel()
+	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+	ctx := context.Background()
+
+	for _, level := range encoderProfileLevels {
+		want, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileDefault))
+		if err != nil {
+			t.Fatalf("default level %d: %v", level, err)
+		}
+		got, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileBoundedMemory))
+		if err != nil {
+			t.Fatalf("bounded level %d: %v", level, err)
+		}
+		if !bytes.Equal(want, got) {
+			t.Fatalf("level %d: bounded output differs from default output", level)
+		}
+		decoded, err := Decode(got)
+		if err != nil {
+			t.Fatalf("decode bounded level %d: %v", level, err)
+		}
+		reEncoded, err := EncodeWithLevel(decoded, level)
+		if err != nil {
+			t.Fatalf("re-encode level %d: %v", level, err)
+		}
+		if !bytes.Equal(reEncoded, want) {
+			t.Fatalf("level %d: decoded index re-encodes differently", level)
+		}
+	}
+}
+
+// E3: each (mode, profile) key caches exactly one encoder; the two profiles
+// never share an instance; mode collisions (15 and 19) share within a profile.
+func TestEncoderProfileCacheKeyedByModeAndProfile(t *testing.T) {
+	def15, err := sharedZstdEncoder(CompressionBest, EncoderProfileDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	def19, err := sharedZstdEncoder(CompressionMax, EncoderProfileDefault)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded15, err := sharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded19, err := sharedZstdEncoder(CompressionMax, EncoderProfileBoundedMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def15 != def19 {
+		t.Error("default profile: levels 15 and 19 should share one SpeedBestCompression encoder")
+	}
+	if bounded15 != bounded19 {
+		t.Error("bounded profile: levels 15 and 19 should share one SpeedBestCompression encoder")
+	}
+	if def15 == bounded15 {
+		t.Error("default and bounded profiles must not share an encoder instance")
+	}
+	again, err := sharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != bounded15 {
+		t.Error("repeated bounded lookup returned a different instance")
+	}
+
+	zstdEncoderMu.Lock()
+	n := len(zstdEncoders)
+	zstdEncoderMu.Unlock()
+	if maxEntries := 4 * 2; n > maxEntries {
+		t.Errorf("encoder cache holds %d entries, want at most %d (4 modes x 2 profiles)", n, maxEntries)
+	}
+}
+
+// E5: a bounded config reaches every encode path that reads idx.Config, and
+// the profile is never serialized.
+func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
+	cfg, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemory))
+	if err != nil {
+		t.Fatal(err)
+	}
+	idx := buildAdaptiveSerializationFixture(t, cfg)
+
+	paths := map[string]func(t *testing.T) []byte{
+		"Encode": func(t *testing.T) []byte {
+			data, err := Encode(idx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		},
+		"EncodeContext": func(t *testing.T) []byte {
+			data, err := EncodeContext(context.Background(), idx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		},
+		"WriteSidecar": func(t *testing.T) []byte {
+			parquetFile := filepath.Join(t.TempDir(), "data.parquet")
+			// WriteSidecar only stats the parquet file to mirror its permissions.
+			if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteSidecar(parquetFile, idx); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := ReadSidecar(parquetFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := Encode(loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		},
+		"EncodeToMetadata": func(t *testing.T) []byte {
+			_, value, err := EncodeToMetadata(idx, DefaultParquetConfig())
+			if err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := DecodeFromMetadata(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := Encode(loaded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		},
+	}
+
+	for name, run := range paths {
+		t.Run(name, func(t *testing.T) {
+			dropSharedZstdEncoder(t, CompressionBest, EncoderProfileBoundedMemory)
+			data := run(t)
+			if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
+				t.Errorf("%s did not use the bounded-memory encoder", name)
+			}
+			decoded, err := Decode(data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Config == nil {
+				t.Fatal("decoded index has nil config")
+			}
+			if decoded.Config.EncoderProfile != EncoderProfileDefault {
+				t.Errorf("decoded EncoderProfile = %v, want default (profile must not be serialized)", decoded.Config.EncoderProfile)
+			}
+			if decoded.Header.Version != Version {
+				t.Errorf("wire version = %d, want %d", decoded.Header.Version, Version)
+			}
+		})
+	}
+}
+
+// E6: the per-call option wins over the config profile in both directions.
+func TestEncoderProfilePerCallOverridesConfig(t *testing.T) {
+	bounded, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemory))
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundedIdx := buildAdaptiveSerializationFixture(t, bounded)
+	defaultIdx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+	ctx := context.Background()
+
+	t.Run("config bounded, call default", func(t *testing.T) {
+		dropSharedZstdEncoder(t, CompressionBalanced, EncoderProfileBoundedMemory)
+		if _, err := EncodeWithLevelContext(ctx, boundedIdx, CompressionBalanced, WithEncodeProfile(EncoderProfileDefault)); err != nil {
+			t.Fatal(err)
+		}
+		if sharedZstdEncoderCached(CompressionBalanced, EncoderProfileBoundedMemory) {
+			t.Error("explicit default per-call option did not override the bounded config")
+		}
+	})
+	t.Run("config default, call bounded", func(t *testing.T) {
+		dropSharedZstdEncoder(t, CompressionFastest, EncoderProfileBoundedMemory)
+		if _, err := EncodeWithLevelContext(ctx, defaultIdx, CompressionFastest, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
+			t.Fatal(err)
+		}
+		if !sharedZstdEncoderCached(CompressionFastest, EncoderProfileBoundedMemory) {
+			t.Error("bounded per-call option did not override the default config")
+		}
+	})
+	t.Run("nil config falls back to default", func(t *testing.T) {
+		if got := configEncoderProfile(nil); got != EncoderProfileDefault {
+			t.Errorf("configEncoderProfile(nil) = %v, want default", got)
+		}
+	})
+}
+
+// E7: an unknown profile fails loudly from the config option, from config
+// validation, and from the encode call.
+func TestEncoderProfileUnknownValueRejected(t *testing.T) {
+	t.Parallel()
+	const bogus = EncoderProfile(200)
+
+	if _, err := NewConfig(WithEncoderProfile(bogus)); err == nil {
+		t.Error("NewConfig(WithEncoderProfile(200)) returned nil error")
+	} else if !strings.Contains(err.Error(), "unknown encoder profile 200") {
+		t.Errorf("NewConfig error = %q, want mention of unknown encoder profile 200", err)
+	}
+
+	cfg := DefaultConfig()
+	cfg.EncoderProfile = bogus
+	if err := cfg.validate(); err == nil {
+		t.Error("config validate accepted an unknown encoder profile")
+	}
+
+	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+	if _, err := EncodeWithLevelContext(context.Background(), idx, CompressionBest, WithEncodeProfile(bogus)); err == nil {
+		t.Error("encode with unknown per-call profile returned nil error")
+	}
+	if _, err := EncodeWithLevelContext(context.Background(), idx, CompressionNone, WithEncodeProfile(bogus)); err == nil {
+		t.Error("uncompressed encode with unknown per-call profile returned nil error")
+	}
+	if _, err := newZstdEncoder(zstd.SpeedDefault, bogus); err == nil {
+		t.Error("newZstdEncoder accepted an unknown profile")
+	}
+}
+
+func TestEncoderProfileString(t *testing.T) {
+	t.Parallel()
+	cases := map[EncoderProfile]string{
+		EncoderProfileDefault:       "default",
+		EncoderProfileBoundedMemory: "bounded-memory",
+		EncoderProfile(7):           "EncoderProfile(7)",
+	}
+	for p, want := range cases {
+		if got := p.String(); got != want {
+			t.Errorf("EncoderProfile(%d).String() = %q, want %q", uint8(p), got, want)
+		}
+	}
+}

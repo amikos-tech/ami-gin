@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"context"
 	"sync"
 	"testing"
 )
@@ -76,6 +77,72 @@ func TestEncodeDecodeConcurrent(t *testing.T) {
 				}
 				if !bytes.Equal(reEncoded, want) {
 					t.Errorf("level %d: decode->re-encode differs from golden (faithless decode)", lvl)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+}
+
+// TestEncodeDecodeConcurrentMixedProfiles is the profile-aware sibling of
+// TestEncodeDecodeConcurrent (issue #79). Goroutines interleave both encoder
+// profiles across every collapsed zstd mode, so the profile-keyed cache is
+// populated and read concurrently. Every output must equal the
+// single-threaded default-profile golden: this proves both that no goroutine
+// received the other profile's settings (they would still match, since output
+// is profile-independent) and, more importantly, that the single bounded
+// worker is not corrupted when several goroutines queue on it.
+//
+// Meaningful only under the race detector: go test -race -run Concurrent .
+func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
+	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+	ctx := context.Background()
+
+	levels := []CompressionLevel{
+		CompressionFastest, CompressionBalanced, CompressionBetter, CompressionBest, CompressionMax,
+	}
+	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory}
+
+	golden := make(map[CompressionLevel][]byte, len(levels))
+	for _, lvl := range levels {
+		encoded, err := EncodeWithLevel(idx, lvl)
+		if err != nil {
+			t.Fatalf("golden EncodeWithLevel(%d): %v", lvl, err)
+		}
+		golden[lvl] = encoded
+	}
+
+	const (
+		goroutines = 32
+		iterations = 25
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func(g int) {
+			defer wg.Done()
+			lvl := levels[g%len(levels)]
+			profile := profiles[(g/len(levels))%len(profiles)]
+			want := golden[lvl]
+			for i := 0; i < iterations; i++ {
+				encoded, err := EncodeWithLevelContext(ctx, idx, lvl, WithEncodeProfile(profile))
+				if err != nil {
+					t.Errorf("EncodeWithLevelContext(%d, %v): %v", lvl, profile, err)
+					return
+				}
+				if !bytes.Equal(encoded, want) {
+					t.Errorf("level %d profile %v: concurrent encode differs from golden", lvl, profile)
+					return
+				}
+				decoded, err := Decode(encoded)
+				if err != nil {
+					t.Errorf("Decode(level %d, profile %v): %v", lvl, profile, err)
+					return
+				}
+				if decoded.Header.NumRowGroups != idx.Header.NumRowGroups {
+					t.Errorf("level %d profile %v: decoded NumRowGroups = %d, want %d", lvl, profile, decoded.Header.NumRowGroups, idx.Header.NumRowGroups)
 					return
 				}
 			}
