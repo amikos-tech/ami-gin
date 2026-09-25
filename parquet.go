@@ -56,8 +56,11 @@ func writeFileWithMode(path string, data []byte, mode os.FileMode) error {
 	return nil
 }
 
-func WriteSidecar(parquetFile string, idx *GINIndex) error {
-	data, err := Encode(idx)
+// WriteSidecar encodes idx and writes it to the sidecar path derived from
+// parquetFile. opts (e.g. WithEncodeProfile) override the profile carried by
+// idx.Config, since a decoded index always carries EncoderProfileDefault.
+func WriteSidecar(parquetFile string, idx *GINIndex, opts ...EncodeOption) error {
+	data, err := EncodeContext(context.Background(), idx, opts...)
 	if err != nil {
 		return errors.Wrap(err, "encode index")
 	}
@@ -246,8 +249,11 @@ func finalizeParquetBuild(builder *GINBuilder) (*GINIndex, error) {
 	return nil, errors.Wrap(ErrNilIndex, "finalize index after parquet build")
 }
 
-func EncodeToMetadata(idx *GINIndex, cfg ParquetConfig) (key string, value string, err error) {
-	data, err := Encode(idx)
+// EncodeToMetadata encodes idx and returns the Parquet key-value metadata pair
+// to embed it. opts (e.g. WithEncodeProfile) override the profile carried by
+// idx.Config, since a decoded index always carries EncoderProfileDefault.
+func EncodeToMetadata(idx *GINIndex, cfg ParquetConfig, opts ...EncodeOption) (key string, value string, err error) {
+	data, err := EncodeContext(context.Background(), idx, opts...)
 	if err != nil {
 		return "", "", errors.Wrap(err, "encode index")
 	}
@@ -338,14 +344,17 @@ func HasGINIndexReader(parquetFile string, cfg ParquetConfig, reader io.ReaderAt
 	return false, nil
 }
 
-func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig) error {
+// RebuildWithIndex rewrites parquetFile with idx embedded as metadata. opts
+// (e.g. WithEncodeProfile) override the profile carried by idx.Config, since a
+// decoded index always carries EncoderProfileDefault.
+func RebuildWithIndex(parquetFile string, idx *GINIndex, cfg ParquetConfig, opts ...EncodeOption) error {
 	pf, srcFile, err := openParquetFile(parquetFile)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = srcFile.Close() }()
 
-	key, value, err := EncodeToMetadata(idx, cfg)
+	key, value, err := EncodeToMetadata(idx, cfg, opts...)
 	if err != nil {
 		return errors.Wrap(err, "encode metadata")
 	}

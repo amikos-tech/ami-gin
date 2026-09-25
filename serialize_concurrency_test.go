@@ -88,11 +88,10 @@ func TestEncodeDecodeConcurrent(t *testing.T) {
 // TestEncodeDecodeConcurrentMixedProfiles is the profile-aware sibling of
 // TestEncodeDecodeConcurrent (issue #79). Goroutines interleave both encoder
 // profiles across every collapsed zstd mode, so the profile-keyed cache is
-// populated and read concurrently. Every output must equal the
-// single-threaded default-profile golden: this proves both that no goroutine
-// received the other profile's settings (they would still match, since output
-// is profile-independent) and, more importantly, that the single bounded
-// worker is not corrupted when several goroutines queue on it.
+// populated and read concurrently. Every output is byte-identical to the
+// single-threaded default-profile golden under contention, which proves the
+// single bounded worker is not corrupted when goroutines queue on it; running
+// with -race also checks the profile-keyed encoder cache for data races.
 //
 // Meaningful only under the race detector: go test -race -run Concurrent .
 func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
@@ -141,8 +140,13 @@ func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
 					t.Errorf("Decode(level %d, profile %v): %v", lvl, profile, err)
 					return
 				}
-				if decoded.Header.NumRowGroups != idx.Header.NumRowGroups {
-					t.Errorf("level %d profile %v: decoded NumRowGroups = %d, want %d", lvl, profile, decoded.Header.NumRowGroups, idx.Header.NumRowGroups)
+				reEncoded, err := EncodeWithLevel(decoded, lvl)
+				if err != nil {
+					t.Errorf("re-encode decoded index (level %d, profile %v): %v", lvl, profile, err)
+					return
+				}
+				if !bytes.Equal(reEncoded, want) {
+					t.Errorf("level %d profile %v: decode->re-encode differs from golden (faithless decode)", lvl, profile)
 					return
 				}
 			}

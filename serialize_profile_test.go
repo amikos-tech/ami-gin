@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
+	"unsafe"
 
 	"github.com/klauspost/compress/zstd"
 )
@@ -176,6 +179,26 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 	}
 	idx := buildAdaptiveSerializationFixture(t, cfg)
 
+	// S2: prove the config payload does not carry the profile by encoding the
+	// same document set once through a bounded-profile config and once through
+	// a default-profile config, both at Encode's default (CompressionBest)
+	// level, and asserting the two outputs are byte-identical. A tautological
+	// decoded.Header.Version == Version check previously stood in for this.
+	t.Run("ConfigPayloadIndependentOfProfile", func(t *testing.T) {
+		defaultIdx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+		boundedBytes, err := Encode(idx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defaultBytes, err := Encode(defaultIdx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(boundedBytes, defaultBytes) {
+			t.Error("serialized bytes differ between a bounded-profile config and a default-profile config over the same document set; the profile must be runtime-only")
+		}
+	})
+
 	paths := map[string]func(t *testing.T) []byte{
 		"Encode": func(t *testing.T) []byte {
 			data, err := Encode(idx)
@@ -244,11 +267,110 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 			if decoded.Config.EncoderProfile != EncoderProfileDefault {
 				t.Errorf("decoded EncoderProfile = %v, want default (profile must not be serialized)", decoded.Config.EncoderProfile)
 			}
-			if decoded.Header.Version != Version {
-				t.Errorf("wire version = %d, want %d", decoded.Header.Version, Version)
-			}
 		})
 	}
+}
+
+// I1: library helpers that only had an idx.Config-derived profile now also
+// accept a per-call EncodeOption that overrides it. Build an index whose
+// config carries the default profile (as every decoded index does), then
+// prove WriteSidecar and EncodeToMetadata still honor an explicit
+// WithEncodeProfile(EncoderProfileBoundedMemory) override.
+func TestEncoderProfileLibraryHelpersAcceptPerCallOption(t *testing.T) {
+	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+
+	t.Run("WriteSidecar", func(t *testing.T) {
+		evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
+		parquetFile := filepath.Join(t.TempDir(), "data.parquet")
+		if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := WriteSidecar(parquetFile, idx, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
+			t.Fatal(err)
+		}
+		if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
+			t.Error("WriteSidecar with a per-call bounded profile did not use the bounded-memory encoder")
+		}
+	})
+
+	t.Run("EncodeToMetadata", func(t *testing.T) {
+		evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
+		if _, _, err := EncodeToMetadata(idx, DefaultParquetConfig(), WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
+			t.Fatal(err)
+		}
+		if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
+			t.Error("EncodeToMetadata with a per-call bounded profile did not use the bounded-memory encoder")
+		}
+	})
+}
+
+// I2: prove the bounded profile actually configures the underlying zstd
+// encoder with a single worker and lowMem=true, not just byte-identical
+// output. This reaches into klauspost/compress internals via reflection
+// because zstd.Encoder exposes no public accessor for worker count or lowMem;
+// if a future klauspost/compress bump renames the `encoders` channel field or
+// the `o.lowMem` field, this test will fail with a reflect panic or a
+// FieldByName zero Value, not a silent false pass -- see the failure messages
+// below for the exact field names to check.
+func TestEncoderProfileBoundedUsesSingleWorker(t *testing.T) {
+	bounded, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileBoundedMemory)
+	if err != nil {
+		t.Fatalf("newZstdEncoder(bounded): %v", err)
+	}
+	defer bounded.Close()
+	_ = bounded.EncodeAll([]byte("force lazy init"), nil)
+
+	boundedWorkers, boundedLowMem := inspectZstdEncoderInternals(t, bounded)
+	if boundedWorkers != 1 {
+		t.Errorf("bounded profile: encoders channel capacity = %d, want 1 (depends on klauspost/compress internal field `encoders`)", boundedWorkers)
+	}
+	if !boundedLowMem {
+		t.Error("bounded profile: o.lowMem = false, want true (depends on klauspost/compress internal field `o.lowMem`)")
+	}
+
+	def, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileDefault)
+	if err != nil {
+		t.Fatalf("newZstdEncoder(default): %v", err)
+	}
+	defer def.Close()
+	_ = def.EncodeAll([]byte("force lazy init"), nil)
+
+	defWorkers, _ := inspectZstdEncoderInternals(t, def)
+	if gomaxprocs := runtime.GOMAXPROCS(0); gomaxprocs == 1 {
+		t.Skipf("GOMAXPROCS=1: default and bounded worker counts are indistinguishable (both 1)")
+	} else if defWorkers != gomaxprocs {
+		t.Errorf("default profile: encoders channel capacity = %d, want GOMAXPROCS(0) = %d (depends on klauspost/compress internal field `encoders`)", defWorkers, gomaxprocs)
+	}
+}
+
+// inspectZstdEncoderInternals reads the unexported `encoders` channel field
+// (capacity == configured worker count) and the unexported `o.lowMem` field
+// off a *zstd.Encoder via reflect+unsafe. It does not import the zstd internal
+// package; it only reflects on the exported *zstd.Encoder value returned by
+// newZstdEncoder.
+func inspectZstdEncoderInternals(t *testing.T, enc *zstd.Encoder) (workers int, lowMem bool) {
+	t.Helper()
+	v := reflect.ValueOf(enc).Elem()
+
+	encodersField := v.FieldByName("encoders")
+	if !encodersField.IsValid() {
+		t.Fatal("zstd.Encoder has no field named `encoders`; klauspost/compress internals changed")
+	}
+	encodersField = reflect.NewAt(encodersField.Type(), unsafe.Pointer(encodersField.UnsafeAddr())).Elem()
+	workers = encodersField.Cap()
+
+	optsField := v.FieldByName("o")
+	if !optsField.IsValid() {
+		t.Fatal("zstd.Encoder has no field named `o`; klauspost/compress internals changed")
+	}
+	lowMemField := optsField.FieldByName("lowMem")
+	if !lowMemField.IsValid() {
+		t.Fatal("zstd.Encoder.o has no field named `lowMem`; klauspost/compress internals changed")
+	}
+	lowMemField = reflect.NewAt(lowMemField.Type(), unsafe.Pointer(lowMemField.UnsafeAddr())).Elem()
+	lowMem = lowMemField.Bool()
+
+	return workers, lowMem
 }
 
 // E6: the per-call option wins over the config profile in both directions.

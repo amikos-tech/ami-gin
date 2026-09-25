@@ -207,14 +207,19 @@ type EncoderProfile uint8
 
 const (
 	// EncoderProfileDefault keeps one zstd worker per GOMAXPROCS so concurrent
-	// encodes at the same level run in parallel. Each level-15 worker retains
-	// roughly 36 MB for the life of the process, so a 16-CPU host holds about
-	// 580 MB after the first level-15 encode.
+	// encodes at the same level run in parallel. Each additional level-15
+	// worker retains roughly 34 MB for the life of the process, so a 16-CPU
+	// host holds about 560 MB after the first level-15 encode. See
+	// docs/encoder-profile-benchmarks.md for the measured tables. The worker
+	// pool size is read from GOMAXPROCS once, when the shared encoder for a
+	// given (mode, profile) key is first constructed, and is not resized
+	// later even if GOMAXPROCS changes.
 	EncoderProfileDefault EncoderProfile = iota
 	// EncoderProfileBoundedMemory keeps a single zstd worker with zstd's
-	// lower-memory buffers. Level 15 retains about 40 MB regardless of
+	// lower-memory buffers. Level 15 retains about 42 MB regardless of
 	// GOMAXPROCS. Concurrent encodes at the same level and profile queue on
-	// that one worker instead of running in parallel.
+	// that one worker instead of running in parallel. See
+	// docs/encoder-profile-benchmarks.md for the measured tables.
 	EncoderProfileBoundedMemory
 )
 
@@ -235,7 +240,7 @@ func (p EncoderProfile) validate() error {
 	case EncoderProfileDefault, EncoderProfileBoundedMemory:
 		return nil
 	default:
-		return errors.Errorf("unknown encoder profile %d", uint8(p))
+		return errors.Errorf("unknown encoder profile %d (want EncoderProfileDefault or EncoderProfileBoundedMemory)", uint8(p))
 	}
 }
 
@@ -285,7 +290,8 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 // state. A default-profile encoder keeps the GOMAXPROCS-sized worker pool so
 // concurrent encodes at the same level run in parallel; a bounded-memory
 // encoder keeps one worker. The two profiles never share an instance. Shared
-// instances are never Closed.
+// instances are never Closed by production code; tests evict and Close
+// entries through evictSharedZstdEncoder.
 type zstdEncoderKey struct {
 	level   zstd.EncoderLevel
 	profile EncoderProfile
@@ -313,7 +319,7 @@ func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.En
 	if enc, ok := zstdEncoders[key]; ok {
 		return enc, nil
 	}
-	enc, err := newZstdEncoder(key.level, profile)
+	enc, err := newZstdEncoder(key.level, key.profile)
 	if err != nil {
 		return nil, err
 	}
@@ -368,9 +374,11 @@ func EncodeWithLevel(idx *GINIndex, level CompressionLevel) ([]byte, error) {
 }
 
 // EncodeWithLevelContext is the context-aware, configurable-compression sibling
-// of EncodeWithLevel. Observability is seeded from idx.Config when present;
-// caller EncodeOptions override it. Cancellation is checked before the blocking
-// encode body, but the zstd codec itself cannot be preempted once it starts.
+// of EncodeWithLevel. Observability and the encoder profile are seeded from
+// idx.Config when present; caller EncodeOptions (WithEncodeSignals,
+// WithEncodeProfile) override them. Cancellation is checked before the
+// blocking encode body, but the zstd codec itself cannot be preempted once it
+// starts.
 func EncodeWithLevelContext(ctx context.Context, idx *GINIndex, level CompressionLevel, opts ...EncodeOption) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -500,7 +508,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 
 	encoder, err := sharedZstdEncoder(level, profile)
 	if err != nil {
-		return nil, errors.Wrap(err, "create zstd encoder")
+		return nil, errors.Wrapf(err, "create zstd encoder (level %d, profile %s)", level, profile)
 	}
 
 	compressed := encoder.EncodeAll(buf.Bytes(), nil)
