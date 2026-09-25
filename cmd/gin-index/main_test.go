@@ -892,7 +892,10 @@ func TestRunExtractUsageListsLowMemoryFlag(t *testing.T) {
 }
 
 // The bounded profile changes only encoder memory, so extract -low-memory must
-// write exactly the bytes a default extract writes.
+// write exactly the bytes a default extract writes. This test guards output
+// bytes and exit code only; it does not verify that -low-memory actually
+// engaged the bounded encoder (that is covered by
+// TestEncoderProfileForLowMemoryFlag and TestBuildGINConfigLowMemorySelectsBoundedProfile).
 func TestRunExtractLowMemoryWritesSameBytes(t *testing.T) {
 	t.Parallel()
 
@@ -931,4 +934,56 @@ func TestRunExtractLowMemoryWritesSameBytes(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatal("extract -low-memory output differs from default extract output")
 	}
+}
+
+// TestRunBuildLowMemoryProducesDecodableIndex is an end-to-end check (S1) that
+// `gin-index build -low-memory` actually produces a usable index in both
+// sidecar and -embed modes, rather than only asserting byte equality against a
+// default-profile golden.
+func TestRunBuildLowMemoryProducesDecodableIndex(t *testing.T) {
+	t.Parallel()
+
+	records := []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+		{ID: 2, Attributes: `{"status":"warn"}`},
+	}
+
+	t.Run("sidecar", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		parquetFile := filepath.Join(tmpDir, "sidecar.parquet")
+		createCLIParquetFile(t, parquetFile, records)
+
+		sidecarPath := filepath.Join(tmpDir, "sidecar.gin")
+		var stdout, stderr bytes.Buffer
+		code := runBuild([]string{"-c", "attributes", "-low-memory", "-o", sidecarPath, parquetFile}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runBuild(-low-memory -o) code = %d; stderr=%q", code, stderr.String())
+		}
+
+		data, err := os.ReadFile(sidecarPath)
+		if err != nil {
+			t.Fatalf("read sidecar: %v", err)
+		}
+		if _, err := gin.Decode(data); err != nil {
+			t.Fatalf("gin.Decode(sidecar): %v", err)
+		}
+	})
+
+	t.Run("embed", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		parquetFile := filepath.Join(tmpDir, "embed.parquet")
+		createCLIParquetFile(t, parquetFile, records)
+
+		var stdout, stderr bytes.Buffer
+		code := runBuild([]string{"-c", "attributes", "-low-memory", "-embed", parquetFile}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runBuild(-low-memory -embed) code = %d; stderr=%q", code, stderr.String())
+		}
+
+		if _, err := gin.ReadFromParquetMetadata(parquetFile, gin.DefaultParquetConfig()); err != nil {
+			t.Fatalf("gin.ReadFromParquetMetadata: %v", err)
+		}
+	})
 }

@@ -83,18 +83,13 @@ func runExperiment(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	}
 
 	inputArg := fs.Arg(0)
-	config, err := experimentConfigForLogLevel(*logLevel, stderr)
+	config, err := experimentGINConfig(*logLevel, *maxStagedPaths, *lowMemory, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&config); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
-	}
-	if err := gin.WithEncoderProfile(encoderProfileFor(*lowMemory))(&config); err != nil {
-		fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
+	if *lowMemory && *outputPath == "" {
+		fmt.Fprintln(stderr, "Warning: -low-memory has no effect without -o")
 	}
 
 	source, err := prepareExperimentSource(inputArg, stdin, *sampleLimit, *onError, stderr)
@@ -821,6 +816,25 @@ func trimExperimentLineEnding(line []byte) []byte {
 		line = line[:n-1]
 	}
 	return line
+}
+
+// experimentGINConfig builds the GINConfig used by runExperiment from the
+// experiment command's log-level, max-staged-paths, and low-memory flags. It
+// is independently testable so a test can assert the encoder profile lands on
+// the config without spinning up the full CLI I/O path (mirrors buildGINConfig
+// in main.go for the build command).
+func experimentGINConfig(logLevel string, maxStagedPaths int, lowMemory bool, stderr io.Writer) (gin.GINConfig, error) {
+	config, err := experimentConfigForLogLevel(logLevel, stderr)
+	if err != nil {
+		return gin.GINConfig{}, err
+	}
+	if err := gin.WithMaxStagedPaths(maxStagedPaths)(&config); err != nil {
+		return gin.GINConfig{}, err
+	}
+	if err := gin.WithEncoderProfile(encoderProfileFor(lowMemory))(&config); err != nil {
+		return gin.GINConfig{}, err
+	}
+	return config, nil
 }
 
 func experimentConfigForLogLevel(level string, stderr io.Writer) (gin.GINConfig, error) {

@@ -1666,6 +1666,10 @@ func TestRunExperimentCanceledPredicateExitsCleanly(t *testing.T) {
 
 // The bounded profile changes only encoder memory, so experiment --low-memory
 // must write exactly the sidecar bytes a default run writes.
+// TestRunExperimentLowMemoryWritesSameSidecarBytes guards output bytes and
+// exit code only; it does not verify that --low-memory actually engaged the
+// bounded encoder (that is covered by
+// TestExperimentGINConfigLowMemorySelectsBoundedProfile).
 func TestRunExperimentLowMemoryWritesSameSidecarBytes(t *testing.T) {
 	t.Parallel()
 
@@ -1697,4 +1701,69 @@ func TestRunExperimentLowMemoryWritesSameSidecarBytes(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatal("experiment --low-memory sidecar differs from default sidecar")
 	}
+}
+
+// TestExperimentGINConfigLowMemorySelectsBoundedProfile (S1) mirrors
+// TestBuildGINConfigLowMemorySelectsBoundedProfile in main_test.go: it calls
+// experimentGINConfig directly and asserts the resulting EncoderProfile,
+// without spinning up the full CLI I/O path.
+func TestExperimentGINConfigLowMemorySelectsBoundedProfile(t *testing.T) {
+	t.Parallel()
+
+	var stderr bytes.Buffer
+	cfg, err := experimentGINConfig(experimentLogLevelOff, 0, true, &stderr)
+	if err != nil {
+		t.Fatalf("experimentGINConfig(lowMemory=true) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileBoundedMemory {
+		t.Fatalf("EncoderProfile = %v, want bounded-memory", cfg.EncoderProfile)
+	}
+
+	cfg, err = experimentGINConfig(experimentLogLevelOff, 7, false, &stderr)
+	if err != nil {
+		t.Fatalf("experimentGINConfig(lowMemory=false) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileDefault {
+		t.Fatalf("EncoderProfile = %v, want default", cfg.EncoderProfile)
+	}
+	if cfg.MaxStagedPaths != 7 {
+		t.Fatalf("MaxStagedPaths = %d, want 7", cfg.MaxStagedPaths)
+	}
+}
+
+// TestRunExperimentLowMemoryWarnsWithoutOutput (I4) asserts that
+// --low-memory without -o prints a stderr warning and still exits 0, and that
+// passing both --low-memory and -o produces no such warning.
+func TestRunExperimentLowMemoryWarnsWithoutOutput(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	inputPath := writeJSONLFixture(t, tmpDir, "docs.jsonl", []string{
+		`{"status":"ok","user":"alice"}`,
+	}, true)
+
+	t.Run("without -o warns", func(t *testing.T) {
+		t.Parallel()
+		var stdout, stderr bytes.Buffer
+		code := runExperiment([]string{"--low-memory", inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment(--low-memory) code = %d; stderr=%q", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "Warning: -low-memory has no effect without -o") {
+			t.Fatalf("stderr = %q, want -low-memory warning", stderr.String())
+		}
+	})
+
+	t.Run("with -o does not warn", func(t *testing.T) {
+		t.Parallel()
+		outputPath := filepath.Join(tmpDir, "with-output.gin")
+		var stdout, stderr bytes.Buffer
+		code := runExperiment([]string{"--low-memory", "-o", outputPath, inputPath}, bytes.NewReader(nil), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runExperiment(--low-memory -o) code = %d; stderr=%q", code, stderr.String())
+		}
+		if strings.Contains(stderr.String(), "-low-memory has no effect") {
+			t.Fatalf("stderr = %q, want no -low-memory warning when -o is set", stderr.String())
+		}
+	})
 }
