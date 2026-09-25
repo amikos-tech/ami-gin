@@ -12,7 +12,9 @@ Metrics: *retained* is heap still allocated after GC while the encoder is alive 
 | 4 | 152.6 | 42.5 | 21.6 | 9.8 |
 | 16 | 560.7 | 42.5 | 36.7 | 9.8 |
 
-Bounded-memory retention is independent of GOMAXPROCS. Default retention scales linearly with it (about 36 MB per worker at level 15).
+Bounded-memory retention is independent of GOMAXPROCS. Default retention scales linearly with it (about 34 MB per worker at level 15).
+
+The L3 columns above are sourced from the `highcard` fixture (matching the `highcard` rows in the Full table below, e.g. the level-3 default retained values 17.8/21.6/36.7 MB). Unlike level 15, which always allocates its full window regardless of payload size, level-3 retained memory is sensitive to the size of the first payload encoded at that (mode, profile) key.
 
 ## Compressed size (identical across profiles)
 
@@ -76,7 +78,7 @@ Bounded-memory retention is independent of GOMAXPROCS. Default retention scales 
 
 ## Reading the numbers
 
-- Level 15 costs about 36 MB per worker whatever the profile; the bounded profile simply stops at one worker (~42 MB total) where the default keeps GOMAXPROCS of them.
+- Level 15 costs about 34 MB per worker whatever the profile; the bounded profile simply stops at one worker (~42 MB total) where the default keeps GOMAXPROCS of them.
 - Cold construction of the default level-15 encoder is the expensive step at high GOMAXPROCS (hundreds of MB allocated and zeroed once). Repeated encodes through the shared cache allocate only the per-call serialization buffers under either profile.
 - Repeated-encode time is within noise between profiles for a single caller. The bounded profile serializes concurrent same-level encodes on its one worker, so a process that encodes many indexes in parallel loses that parallelism.
 - Level 3 retains a few MB under either profile at a larger output (about 8% larger on the high-cardinality fixture); dropping the level is a different trade-off from bounding the workers.

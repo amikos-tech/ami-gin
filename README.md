@@ -392,10 +392,12 @@ idx, err := gin.Decode(data)
 
 ### Encoder memory profile
 
-`Encode` reuses one zstd encoder per compression level for the life of the
-process. By default that encoder keeps one worker per `GOMAXPROCS` so parallel
-encodes at the same level do not queue. Each level-15 worker holds about 36 MB
-of match tables, so a 16-CPU host retains roughly 580 MB after its first
+`Encode` reuses one zstd encoder per zstd compression mode and encoder
+profile for the life of the process (adjacent levels within a mode, e.g.
+10-19, share one cached `SpeedBestCompression` encoder). By default that
+encoder keeps one worker per `GOMAXPROCS` so parallel encodes at the same
+level do not queue. Each additional level-15 worker holds about 34 MB of
+match tables, so a 16-CPU host retains roughly 560 MB after its first
 level-15 encode even if it only ever encodes one index at a time.
 
 `EncoderProfileBoundedMemory` keeps a single worker with zstd's lower-memory
@@ -430,8 +432,10 @@ klauspost/compress v1.19.2):
 Choose the bounded profile when the process runs under a memory limit or
 encodes one index at a time; keep the default when several goroutines encode
 at the same level concurrently and memory is plentiful. Level 3 retains much
-less under either profile (10 to 37 MB in the same runs) at a larger output
-size, so lowering the level is a different trade-off. Full numbers,
+less under either profile (10 to 37 MB in the same runs); its output size is
+workload-dependent, about 8% larger than level 15 on the high-cardinality
+fixture but smaller than level 15 on the small fixture, so lowering the level
+is a different trade-off, not a strict size win or loss. Full numbers,
 including allocations, elapsed time and compressed size for small and
 high-cardinality indexes, are in
 [`docs/encoder-profile-benchmarks.md`](./docs/encoder-profile-benchmarks.md).

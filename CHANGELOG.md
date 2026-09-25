@@ -3,11 +3,12 @@
 ## Unreleased
 
 - Opt-in bounded-memory zstd encoder profile (#79). The shared encoder that
-  `Encode` reuses keeps one worker per `GOMAXPROCS`, and each level-15 worker
-  retains about 36 MB, so a 16-CPU host held roughly 580 MB after its first
-  encode. `EncoderProfileBoundedMemory` keeps a single worker with zstd's
-  lower-memory buffers (about 40 MB at level 15 regardless of `GOMAXPROCS`)
-  while producing byte-identical output at the same level. Select it per call
+  `Encode` reuses keeps one worker per `GOMAXPROCS`, and each additional
+  level-15 worker retains about 34 MB, so a 16-CPU host held roughly 560 MB
+  after its first encode. `EncoderProfileBoundedMemory` keeps a single worker
+  with zstd's lower-memory buffers (about 42 MB at level 15 regardless of
+  `GOMAXPROCS`) while producing byte-identical output at the same level.
+  Select it per call
   with `WithEncodeProfile` (an `EncodeOption`) or on the config with
   `WithEncoderProfile` (a `ConfigOption`) so `WriteSidecar`,
   `EncodeToMetadata` and S3 sidecars use it; the per-call option wins.

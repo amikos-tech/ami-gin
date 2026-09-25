@@ -110,7 +110,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
 	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
-	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~40 MB at level 15) instead of one per CPU; same output bytes")
+	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~42 MB at level 15) instead of one per CPU; same output bytes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -548,7 +548,7 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	output := fs.String("o", "", "Output path (required for single file)")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
-	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~40 MB at level 15) instead of one per CPU; same output bytes")
+	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~42 MB at level 15) instead of one per CPU; same output bytes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
