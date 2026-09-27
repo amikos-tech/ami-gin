@@ -36,6 +36,12 @@ func evictSharedZstdEncoder(level CompressionLevel, profile EncoderProfile) {
 	}
 }
 
+// sharedZstdEncoderCached mirrors evictSharedZstdEncoder's (level, profile)
+// signature for symmetry. Every current call site checks the bounded-memory
+// profile, which trips unparam; keep profile explicit rather than hardcoding
+// it so a future default-profile assertion does not need a signature change.
+//
+//nolint:unparam // see comment above
 func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) bool {
 	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()

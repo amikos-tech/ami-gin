@@ -945,7 +945,7 @@ func TestRunBuildLowMemoryProducesDecodableIndex(t *testing.T) {
 
 	records := []cliTestRecord{
 		{ID: 1, Attributes: `{"status":"ok"}`},
-		{ID: 2, Attributes: `{"status":"warn"}`},
+		{ID: 2, Attributes: `{"status":"active"}`},
 	}
 
 	t.Run("sidecar", func(t *testing.T) {
