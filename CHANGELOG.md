@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- Opt-in bounded-memory zstd encoder profile (#79). The shared encoder that
+  `Encode` reuses keeps one worker per `GOMAXPROCS`, and each additional
+  level-15 worker retains about 34 MB, so a 16-CPU host held roughly 560 MB
+  after its first encode. `EncoderProfileBoundedMemory` keeps a single worker
+  with zstd's lower-memory buffers (about 42 MB at level 15 regardless of
+  `GOMAXPROCS`) while producing byte-identical output at the same level.
+  Select it per call with `WithEncodeProfile` (an `EncodeOption`) or on the
+  config with `WithEncoderProfile` (a `ConfigOption`) so `WriteSidecar`,
+  `EncodeToMetadata` and S3 sidecars use it; the per-call option wins.
+  `WriteSidecar`, `EncodeToMetadata`, `RebuildWithIndex` and
+  `S3Client.WriteSidecar`/`WriteSidecarContext` accept trailing
+  `EncodeOption`s, so a decoded index, which always carries the default
+  profile, can be re-encoded with the bounded profile without a config.
+  `gin-index build`, `extract` and `experiment` gain `-low-memory`. Encoders
+  are cached by zstd mode and profile, so the two profiles never share an
+  instance. The profile is
+  runtime-only and not serialized; the default profile and the wire format
+  (`v11`) are unchanged. `make bench-encoder-profile` reports retained memory,
+  allocations, time and compressed size at `GOMAXPROCS` 1, 4 and 16.
+
 ## v1.2.0 (2026-09-16)
 
 - `NIN` now drops a multi-value row group whose distinct values all fall

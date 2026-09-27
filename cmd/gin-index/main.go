@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -74,6 +75,7 @@ Single File Examples:
   gin-index query data.parquet.gin '$.status = "error"'
   gin-index info data.parquet.gin
   gin-index extract -o data.parquet.gin data.parquet
+  gin-index extract -low-memory -o data.parquet.gin data.parquet
   gin-index experiment path/to/docs.jsonl
   cat docs.jsonl | gin-index experiment -
 
@@ -108,6 +110,7 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	embed := fs.Bool("embed", false, "Embed index in Parquet file instead of sidecar")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
 	maxStagedPaths := fs.Int("max-staged-paths", 0, "Cap total staged JSON paths per document; 0 is unlimited")
+	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~42 MB at level 15) instead of one per CPU; same output bytes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -128,8 +131,8 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 	}
 
 	input := fs.Arg(0)
-	ginCfg := gin.DefaultConfig()
-	if err := gin.WithMaxStagedPaths(*maxStagedPaths)(&ginCfg); err != nil {
+	ginCfg, err := buildGINConfig(*maxStagedPaths, *lowMemory)
+	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
@@ -165,6 +168,25 @@ func runBuild(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// buildGINConfig maps the build command's index flags onto a GINConfig.
+// lowMemory selects gin.EncoderProfileBoundedMemory so every encode path the
+// build takes (local sidecar, embedded metadata, S3 sidecar) retains one zstd
+// worker instead of one per CPU.
+func buildGINConfig(maxStagedPaths int, lowMemory bool) (gin.GINConfig, error) {
+	return gin.NewConfig(
+		gin.WithMaxStagedPaths(maxStagedPaths),
+		gin.WithEncoderProfile(encoderProfileFor(lowMemory)),
+	)
+}
+
+// encoderProfileFor maps the shared -low-memory CLI flag to an encoder profile.
+func encoderProfileFor(lowMemory bool) gin.EncoderProfile {
+	if lowMemory {
+		return gin.EncoderProfileBoundedMemory
+	}
+	return gin.EncoderProfileDefault
 }
 
 // buildSingleFile/extractSingleFile are os.Stdout/os.Stderr wrappers kept for
@@ -526,6 +548,7 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	output := fs.String("o", "", "Output path (required for single file)")
 	key := fs.String("key", gin.DefaultMetadataKey, "Metadata key for embedded index")
+	lowMemory := fs.Bool("low-memory", false, "Encode with the bounded-memory zstd profile: one worker (~42 MB at level 15) instead of one per CPU; same output bytes")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -566,7 +589,7 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 		if outPath == "" {
 			outPath = file + ".gin"
 		}
-		if err := extractSingleFileWithIO(stdout, stderr, file, outPath, pqCfg); err != nil {
+		if err := extractSingleFileWithIO(stdout, stderr, file, outPath, pqCfg, encoderProfileFor(*lowMemory)); err != nil {
 			continue
 		}
 		successes++
@@ -580,10 +603,13 @@ func runExtract(args []string, stdout, stderr io.Writer) int {
 }
 
 func extractSingleFile(parquetPath, output string, pqCfg gin.ParquetConfig) {
-	_ = extractSingleFileWithIO(os.Stdout, os.Stderr, parquetPath, output, pqCfg)
+	_ = extractSingleFileWithIO(os.Stdout, os.Stderr, parquetPath, output, pqCfg, gin.EncoderProfileDefault)
 }
 
-func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output string, pqCfg gin.ParquetConfig) error {
+// extractSingleFileWithIO re-encodes the embedded index with the given
+// profile. A decoded index always carries EncoderProfileDefault in its config,
+// so the profile is passed per call rather than through the config.
+func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output string, pqCfg gin.ParquetConfig, profile gin.EncoderProfile) error {
 	var idx *gin.GINIndex
 
 	if gin.IsS3Path(parquetPath) {
@@ -611,7 +637,7 @@ func extractSingleFileWithIO(stdout, stderr io.Writer, parquetPath, output strin
 		idx = loaded
 	}
 
-	data, err := gin.Encode(idx)
+	data, err := gin.EncodeContext(context.Background(), idx, gin.WithEncodeProfile(profile))
 	if err != nil {
 		fmt.Fprintf(stderr, "  Error: Failed to encode index: %v\n", err)
 		return err

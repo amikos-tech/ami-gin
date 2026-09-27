@@ -29,7 +29,7 @@ go run ./examples/basic/main.go
 1. **Builder** (`builder.go`) - Ingests JSON documents via `AddDocument(rgID, jsonDoc)`, walks JSON structure, extracts paths/values
 2. **Index** (`gin.go`) - Final immutable index created by `Finalize()`, contains all index structures
 3. **Query** (`query.go`) - Evaluates predicates against index, returns `RGSet` bitmap of matching row groups
-4. **Serialize** (`serialize.go`) - Binary encoding with zstd compression via `Encode()`/`Decode()`
+4. **Serialize** (`serialize.go`) - Binary encoding with zstd compression via `Encode()`/`Decode()`. zstd encoders are shared per (zstd mode, `EncoderProfile`); `EncoderProfileBoundedMemory` (via `WithEncoderProfile` config option or `WithEncodeProfile` per call) keeps one worker instead of one per `GOMAXPROCS` with byte-identical output
 
 ### Index Structures (all keyed by pathID)
 
@@ -212,7 +212,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - Timeout: 5m, concurrency: 4
 ## Key Dependencies
 - `github.com/cespare/xxhash/v2` v2.3.0 - Fast non-cryptographic hash function; used by BloomFilter (`bloom.go`) and HyperLogLog (`hyperloglog.go`) for hashing values
-- `github.com/klauspost/compress` v1.18.3 - zstd compression/decompression for index serialization (`serialize.go`); supports configurable compression levels 0-19
+- `github.com/klauspost/compress` v1.19.2 - zstd compression/decompression for index serialization (`serialize.go`); supports configurable compression levels 0-19
 - `github.com/RoaringBitmap/roaring/v2` v2.14.4 - Compressed bitmap data structure; underlies `RGSet` (`bitmap.go`) for row-group tracking with set operations (And/Or/AndNot)
 - `github.com/ohler55/ojg` v1.28.0 - JSONPath parsing library; used in `jsonpath.go` for path validation via `ojg/jp` subpackage
 - `github.com/parquet-go/parquet-go` v0.27.0 - Apache Parquet file reading/writing; used in `parquet.go` for building indexes from Parquet files and embedding indexes in Parquet metadata

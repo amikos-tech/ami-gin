@@ -829,3 +829,164 @@ func TestLocalOutputModeWrapsStatErrors(t *testing.T) {
 		t.Fatalf("localOutputMode(missing) error = %q, want stat local file context", err)
 	}
 }
+
+func TestBuildGINConfigLowMemorySelectsBoundedProfile(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := buildGINConfig(0, true)
+	if err != nil {
+		t.Fatalf("buildGINConfig(0, true) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileBoundedMemory {
+		t.Fatalf("EncoderProfile = %v, want bounded-memory", cfg.EncoderProfile)
+	}
+
+	cfg, err = buildGINConfig(7, false)
+	if err != nil {
+		t.Fatalf("buildGINConfig(7, false) error = %v", err)
+	}
+	if cfg.EncoderProfile != gin.EncoderProfileDefault {
+		t.Fatalf("EncoderProfile = %v, want default", cfg.EncoderProfile)
+	}
+	if cfg.MaxStagedPaths != 7 {
+		t.Fatalf("MaxStagedPaths = %d, want 7", cfg.MaxStagedPaths)
+	}
+}
+
+func TestRunBuildUsageListsLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := runBuild([]string{"-h"}, &stdout, &stderr)
+	if code == 0 {
+		t.Fatal("runBuild(-h) code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr.String(), "-low-memory") {
+		t.Fatalf("usage = %q, want -low-memory flag", stderr.String())
+	}
+}
+
+func TestEncoderProfileForLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	if got := encoderProfileFor(true); got != gin.EncoderProfileBoundedMemory {
+		t.Fatalf("encoderProfileFor(true) = %v, want bounded-memory", got)
+	}
+	if got := encoderProfileFor(false); got != gin.EncoderProfileDefault {
+		t.Fatalf("encoderProfileFor(false) = %v, want default", got)
+	}
+}
+
+func TestRunExtractUsageListsLowMemoryFlag(t *testing.T) {
+	t.Parallel()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runExtract([]string{"-h"}, &stdout, &stderr); code == 0 {
+		t.Fatal("runExtract(-h) code = 0, want non-zero")
+	}
+	if !strings.Contains(stderr.String(), "-low-memory") {
+		t.Fatalf("usage = %q, want -low-memory flag", stderr.String())
+	}
+}
+
+// The bounded profile changes only encoder memory, so extract -low-memory must
+// write exactly the bytes a default extract writes. This test guards output
+// bytes and exit code only; it does not verify that -low-memory actually
+// engaged the bounded encoder. extract works on a decoded index, which always
+// carries the default profile, so it passes the profile per call via
+// WithEncodeProfile in extractSingleFileWithIO; the flag-to-profile mapping is
+// covered by TestEncoderProfileForLowMemoryFlag and the per-call override by
+// the gin package's TestEncoderProfilePerCallOverridesConfig.
+func TestRunExtractLowMemoryWritesSameBytes(t *testing.T) {
+	t.Parallel()
+
+	tmpDir := t.TempDir()
+	parquetFile := filepath.Join(tmpDir, "embedded.parquet")
+	createCLIParquetFile(t, parquetFile, []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+		{ID: 2, Attributes: `{"status":"warn"}`},
+	})
+	idx, err := gin.BuildFromParquet(parquetFile, "attributes", gin.DefaultConfig())
+	if err != nil {
+		t.Fatalf("BuildFromParquet: %v", err)
+	}
+	if err := gin.RebuildWithIndex(parquetFile, idx, gin.DefaultParquetConfig()); err != nil {
+		t.Fatalf("RebuildWithIndex: %v", err)
+	}
+
+	extract := func(name string, extra ...string) []byte {
+		t.Helper()
+		output := filepath.Join(tmpDir, name)
+		args := append(append([]string{}, extra...), "-o", output, parquetFile)
+		var stdout bytes.Buffer
+		var stderr bytes.Buffer
+		if code := runExtract(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("runExtract(%v) code = %d; stderr=%q", args, code, stderr.String())
+		}
+		data, err := os.ReadFile(output)
+		if err != nil {
+			t.Fatalf("read %s: %v", output, err)
+		}
+		return data
+	}
+
+	want := extract("default.gin")
+	got := extract("bounded.gin", "-low-memory")
+	if !bytes.Equal(got, want) {
+		t.Fatal("extract -low-memory output differs from default extract output")
+	}
+}
+
+// TestRunBuildLowMemoryProducesDecodableIndex is an end-to-end check (S1) that
+// `gin-index build -low-memory` actually produces a usable index in both
+// sidecar and -embed modes, rather than only asserting byte equality against a
+// default-profile golden.
+func TestRunBuildLowMemoryProducesDecodableIndex(t *testing.T) {
+	t.Parallel()
+
+	records := []cliTestRecord{
+		{ID: 1, Attributes: `{"status":"ok"}`},
+		{ID: 2, Attributes: `{"status":"active"}`},
+	}
+
+	t.Run("sidecar", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		parquetFile := filepath.Join(tmpDir, "sidecar.parquet")
+		createCLIParquetFile(t, parquetFile, records)
+
+		sidecarPath := filepath.Join(tmpDir, "sidecar.gin")
+		var stdout, stderr bytes.Buffer
+		code := runBuild([]string{"-c", "attributes", "-low-memory", "-o", sidecarPath, parquetFile}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runBuild(-low-memory -o) code = %d; stderr=%q", code, stderr.String())
+		}
+
+		data, err := os.ReadFile(sidecarPath)
+		if err != nil {
+			t.Fatalf("read sidecar: %v", err)
+		}
+		if _, err := gin.Decode(data); err != nil {
+			t.Fatalf("gin.Decode(sidecar): %v", err)
+		}
+	})
+
+	t.Run("embed", func(t *testing.T) {
+		t.Parallel()
+		tmpDir := t.TempDir()
+		parquetFile := filepath.Join(tmpDir, "embed.parquet")
+		createCLIParquetFile(t, parquetFile, records)
+
+		var stdout, stderr bytes.Buffer
+		code := runBuild([]string{"-c", "attributes", "-low-memory", "-embed", parquetFile}, &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("runBuild(-low-memory -embed) code = %d; stderr=%q", code, stderr.String())
+		}
+
+		if _, err := gin.ReadFromParquetMetadata(parquetFile, gin.DefaultParquetConfig()); err != nil {
+			t.Fatalf("gin.ReadFromParquetMetadata: %v", err)
+		}
+	})
+}

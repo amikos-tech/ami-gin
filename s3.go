@@ -277,12 +277,18 @@ func (c *S3Client) BuildFromParquetContext(ctx context.Context, bucket, key, jso
 	return BuildFromParquetReaderContext(ctx, "", jsonColumn, ginCfg, reader, size)
 }
 
-func (c *S3Client) WriteSidecar(bucket, parquetKey string, idx *GINIndex) error {
-	return c.WriteSidecarContext(context.Background(), bucket, parquetKey, idx)
+// WriteSidecar encodes idx and writes it to the S3 sidecar key derived from
+// parquetKey. opts (e.g. WithEncodeProfile) override the profile carried by
+// idx.Config, since a decoded index always carries EncoderProfileDefault.
+func (c *S3Client) WriteSidecar(bucket, parquetKey string, idx *GINIndex, opts ...EncodeOption) error {
+	return c.WriteSidecarContext(context.Background(), bucket, parquetKey, idx, opts...)
 }
 
-func (c *S3Client) WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *GINIndex) error {
-	data, err := EncodeContext(ctx, idx)
+// WriteSidecarContext is the context-aware sibling of WriteSidecar. opts
+// (e.g. WithEncodeProfile) override the profile carried by idx.Config, since a
+// decoded index always carries EncoderProfileDefault.
+func (c *S3Client) WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *GINIndex, opts ...EncodeOption) error {
+	data, err := EncodeContext(ctx, idx, opts...)
 	if err != nil {
 		return errors.Wrap(err, "encode index")
 	}

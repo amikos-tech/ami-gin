@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
 Plan: 8 of 8
 Status: Issue #54 shipped — PR #64 (self-review)
-Last activity: 2026-09-16
+Last activity: 2026-09-27 - Completed quick task 260925-kcs: PR #80 review findings on encoder profile
 
 Progress: [█████████░] 94%
 
@@ -203,6 +203,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260916-8j8 | PR #71 review findings: CHANGELOG ASCII-letter accuracy, ExtractLiterals doc comment, misleading Kelvin test comment, two new fold-fragment regression cases | 2026-09-16 | 2029c7e |  | [260916-8j8-fix-pr-71-code-review-findings-changelog](./quick/260916-8j8-fix-pr-71-code-review-findings-changelog/) |
 | 260916-8zu | Fix #67: widen TestPropertyHLLEstimateWithinBounds sigma bound from 3 to 6 to eliminate CI flakiness from the multiple-comparisons problem (250 trials/run) | 2026-09-16 | ef6f2f4 | Verified | [260916-8zu-fix-flaky-testpropertyhllestimatewithinb](./quick/260916-8zu-fix-flaky-testpropertyhllestimatewithinb/) |
 | 260916-ee0 | Fix #63: precise NIN on multi-value row groups via sparse DistinctCounts in AggregateIndex; wire v10 -> v11; grilling ledger + E1-E12 hold-out validated; PR #75 review follow-up: container values count once, decode count bound, aggregated golden, adaptive/decoder tests | 2026-09-16 | 717e374 | Verified | [260916-ee0-precise-nin-on-multi-value-row-groups-is](./quick/260916-ee0-precise-nin-on-multi-value-row-groups-is/) |
+| 260925-kcs | PR #80 review findings on encoder profile (#79): trailing EncodeOption on WriteSidecar/EncodeToMetadata/RebuildWithIndex/S3 sidecar helpers, single-worker + lowMem assertion test, experiment -low-memory no-op warning, build/extract test hardening, memory numbers aligned to 34/560/42 MB, klauspost pin v1.19.2 | 2026-09-27 | 873c5e7 |  | [260925-kcs-address-pr-80-review-findings-on-encoder](./quick/260925-kcs-address-pr-80-review-findings-on-encoder/) |
 
 ## Deferred Items
 

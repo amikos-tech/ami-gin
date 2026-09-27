@@ -141,8 +141,8 @@ func TestS3SidecarHelpersExposeContextAwareSiblings(t *testing.T) {
 		WriteFileContext(ctx context.Context, bucket, key string, data []byte) error
 		Exists(bucket, key string) (bool, error)
 		ExistsContext(ctx context.Context, bucket, key string) (bool, error)
-		WriteSidecar(bucket, parquetKey string, idx *gin.GINIndex) error
-		WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *gin.GINIndex) error
+		WriteSidecar(bucket, parquetKey string, idx *gin.GINIndex, opts ...gin.EncodeOption) error
+		WriteSidecarContext(ctx context.Context, bucket, parquetKey string, idx *gin.GINIndex, opts ...gin.EncodeOption) error
 		ReadSidecar(bucket, parquetKey string) (*gin.GINIndex, error)
 		ReadSidecarContext(ctx context.Context, bucket, parquetKey string) (*gin.GINIndex, error)
 		HasSidecar(bucket, parquetKey string) (bool, error)
