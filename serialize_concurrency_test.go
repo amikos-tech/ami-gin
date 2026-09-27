@@ -8,7 +8,8 @@ import (
 )
 
 // TestEncodeDecodeConcurrent exercises the shared, never-Closed zstd
-// encoder/decoder singletons (serialize.go:230-262) from many goroutines.
+// encoder/decoder singletons (zstdEncoders via sharedZstdEncoder, and
+// sharedZstdDecoder in serialize.go) from many goroutines.
 // It locks in the invariant the encoder-reuse optimization relies on:
 // EncodeAll/DecodeAll on the shared codecs are safe for concurrent use.
 //

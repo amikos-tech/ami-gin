@@ -36,12 +36,9 @@ func evictSharedZstdEncoder(level CompressionLevel, profile EncoderProfile) {
 	}
 }
 
-// sharedZstdEncoderCached mirrors evictSharedZstdEncoder's (level, profile)
-// signature for symmetry. Every current call site checks the bounded-memory
-// profile, which trips unparam; keep profile explicit rather than hardcoding
-// it so a future default-profile assertion does not need a signature change.
-//
-//nolint:unparam // see comment above
+// sharedZstdEncoderCached reports whether the shared encoder for
+// (level, profile) is currently in the cache. It mirrors
+// evictSharedZstdEncoder's signature.
 func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) bool {
 	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
@@ -188,8 +185,7 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 	// S2: prove the config payload does not carry the profile by encoding the
 	// same document set once through a bounded-profile config and once through
 	// a default-profile config, both at Encode's default (CompressionBest)
-	// level, and asserting the two outputs are byte-identical. A tautological
-	// decoded.Header.Version == Version check previously stood in for this.
+	// level, and asserting the two outputs are byte-identical.
 	t.Run("ConfigPayloadIndependentOfProfile", func(t *testing.T) {
 		defaultIdx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 		boundedBytes, err := Encode(idx)
@@ -315,8 +311,8 @@ func TestEncoderProfileLibraryHelpersAcceptPerCallOption(t *testing.T) {
 // output. This reaches into klauspost/compress internals via reflection
 // because zstd.Encoder exposes no public accessor for worker count or lowMem;
 // if a future klauspost/compress bump renames the `encoders` channel field or
-// the `o.lowMem` field, this test will fail with a reflect panic or a
-// FieldByName zero Value, not a silent false pass -- see the failure messages
+// the `o.lowMem` field, inspectZstdEncoderInternals calls t.Fatal naming the
+// missing field rather than passing silently -- see the failure messages
 // below for the exact field names to check.
 func TestEncoderProfileBoundedUsesSingleWorker(t *testing.T) {
 	bounded, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileBoundedMemory)
@@ -351,9 +347,7 @@ func TestEncoderProfileBoundedUsesSingleWorker(t *testing.T) {
 
 // inspectZstdEncoderInternals reads the unexported `encoders` channel field
 // (capacity == configured worker count) and the unexported `o.lowMem` field
-// off a *zstd.Encoder via reflect+unsafe. It does not import the zstd internal
-// package; it only reflects on the exported *zstd.Encoder value returned by
-// newZstdEncoder.
+// off a *zstd.Encoder via reflect+unsafe on the value newZstdEncoder returns.
 func inspectZstdEncoderInternals(t *testing.T, enc *zstd.Encoder) (workers int, lowMem bool) {
 	t.Helper()
 	v := reflect.ValueOf(enc).Elem()
@@ -391,11 +385,15 @@ func TestEncoderProfilePerCallOverridesConfig(t *testing.T) {
 
 	t.Run("config bounded, call default", func(t *testing.T) {
 		evictSharedZstdEncoder(CompressionBalanced, EncoderProfileBoundedMemory)
+		evictSharedZstdEncoder(CompressionBalanced, EncoderProfileDefault)
 		if _, err := EncodeWithLevelContext(ctx, boundedIdx, CompressionBalanced, WithEncodeProfile(EncoderProfileDefault)); err != nil {
 			t.Fatal(err)
 		}
 		if sharedZstdEncoderCached(CompressionBalanced, EncoderProfileBoundedMemory) {
 			t.Error("explicit default per-call option did not override the bounded config")
+		}
+		if !sharedZstdEncoderCached(CompressionBalanced, EncoderProfileDefault) {
+			t.Error("explicit default per-call option did not construct the default encoder")
 		}
 	})
 	t.Run("config default, call bounded", func(t *testing.T) {

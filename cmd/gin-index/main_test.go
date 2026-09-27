@@ -894,8 +894,11 @@ func TestRunExtractUsageListsLowMemoryFlag(t *testing.T) {
 // The bounded profile changes only encoder memory, so extract -low-memory must
 // write exactly the bytes a default extract writes. This test guards output
 // bytes and exit code only; it does not verify that -low-memory actually
-// engaged the bounded encoder (that is covered by
-// TestEncoderProfileForLowMemoryFlag and TestBuildGINConfigLowMemorySelectsBoundedProfile).
+// engaged the bounded encoder. extract works on a decoded index, which always
+// carries the default profile, so it passes the profile per call via
+// WithEncodeProfile in extractSingleFileWithIO; the flag-to-profile mapping is
+// covered by TestEncoderProfileForLowMemoryFlag and the per-call override by
+// the gin package's TestEncoderProfilePerCallOverridesConfig.
 func TestRunExtractLowMemoryWritesSameBytes(t *testing.T) {
 	t.Parallel()
 

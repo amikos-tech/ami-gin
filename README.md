@@ -411,6 +411,10 @@ data, err := gin.EncodeContext(ctx, idx, gin.WithEncodeProfile(gin.EncoderProfil
 // Or on the config, so WriteSidecar, EncodeToMetadata and S3 sidecars use it too
 cfg, err := gin.NewConfig(gin.WithEncoderProfile(gin.EncoderProfileBoundedMemory))
 
+// The helpers also take the per-call option, e.g. for a decoded index,
+// which always carries the default profile
+err = gin.WriteSidecar("data.parquet", idx, gin.WithEncodeProfile(gin.EncoderProfileBoundedMemory))
+
 // CLI: build, extract and experiment -o all accept -low-memory
 gin-index build -c attributes -low-memory data.parquet
 gin-index extract -low-memory -o data.parquet.gin data.parquet
@@ -432,7 +436,8 @@ klauspost/compress v1.19.2):
 Choose the bounded profile when the process runs under a memory limit or
 encodes one index at a time; keep the default when several goroutines encode
 at the same level concurrently and memory is plentiful. Level 3 retains much
-less under either profile (10 to 37 MB in the same runs); its output size is
+less under either profile (10 to 37 MB on the high-cardinality fixture, 1 to
+2 MB on the small one); its output size is
 workload-dependent, about 8% larger than level 15 on the high-cardinality
 fixture but smaller than level 15 on the small fixture, so lowering the level
 is a different trade-off, not a strict size win or loss. Full numbers,
