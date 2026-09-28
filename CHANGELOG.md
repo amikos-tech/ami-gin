@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.3.0 (2026-09-27)
 
 - Opt-in bounded-memory zstd encoder profile (#79). The shared encoder that
   `Encode` reuses keeps one worker per `GOMAXPROCS`, and each additional
