@@ -44,9 +44,9 @@ func buildAggregated(t *testing.T, numRGs int, docs []aggregatedDoc) *GINIndex {
 
 // docMatches is the document-level oracle for the row-group semantics ami-gin
 // implements: a path counts as present when the key exists, null included.
-// An absent key satisfies IsNull only when the row group aggregates several
-// documents (aggregated); a lone document keeps the historical reading.
-func docMatches(p Predicate, data map[string]any, aggregated bool) bool {
+// An absent key counts as null for IsNull, whatever the row group's document
+// count.
+func docMatches(p Predicate, data map[string]any) bool {
 	field := strings.TrimPrefix(p.Path, "$.")
 	value, present := data[field]
 	switch p.Operator {
@@ -59,7 +59,7 @@ func docMatches(p Predicate, data map[string]any, aggregated bool) bool {
 	case OpNIN:
 		return present && !scalarIn(value, p.Value)
 	case OpIsNull:
-		return (present && value == nil) || (!present && aggregated)
+		return !present || value == nil
 	case OpIsNotNull:
 		return present
 	case OpGT, OpGTE, OpLT, OpLTE:
@@ -161,13 +161,9 @@ func indexDocIDs(idx *GINIndex, p Predicate) docIDSet {
 }
 
 func oracleDocIDs(docs []aggregatedDoc, p Predicate) docIDSet {
-	perRG := map[int]int{}
-	for _, doc := range docs {
-		perRG[doc.rg]++
-	}
 	out := docIDSet{}
 	for _, doc := range docs {
-		if docMatches(p, doc.data, perRG[doc.rg] >= 2) {
+		if docMatches(p, doc.data) {
 			out[DocID(doc.rg)] = struct{}{}
 		}
 	}
@@ -480,10 +476,11 @@ func TestDistinctCountsAlignToMultiValueRGs(t *testing.T) {
 	}
 }
 
-// TestNegationSingleDocumentSemanticsUnchanged pins the one-document-per-DocID
+// TestNegationSingleDocumentSemantics pins the one-document-per-DocID
 // behaviour: an array-valued document still counts as "value appears", and a
-// document without the key is not null. No AggregateIndex is built.
-func TestNegationSingleDocumentSemanticsUnchanged(t *testing.T) {
+// document without the key IS null for IsNull (#89). No AggregateIndex is
+// built.
+func TestNegationSingleDocumentSemantics(t *testing.T) {
 	idx := buildAggregated(t, 3, []aggregatedDoc{
 		{0, map[string]any{"tags": []any{"a", "b"}}},
 		{1, map[string]any{"tags": []any{"b"}}},
@@ -495,8 +492,8 @@ func TestNegationSingleDocumentSemanticsUnchanged(t *testing.T) {
 	if got := idx.Evaluate([]Predicate{NE("$.tags[*]", "a")}).ToSlice(); !reflect.DeepEqual(got, []int{1}) {
 		t.Errorf("NE($.tags[*], a) = %v, want [1]", got)
 	}
-	if got := idx.Evaluate([]Predicate{IsNull("$.tags[*]")}).ToSlice(); len(got) != 0 {
-		t.Errorf("IsNull($.tags[*]) = %v, want [] for a 1:1 index", got)
+	if got := idx.Evaluate([]Predicate{IsNull("$.tags[*]")}).ToSlice(); !reflect.DeepEqual(got, []int{2}) {
+		t.Errorf("IsNull($.tags[*]) = %v, want [2]: the third row group holds a document without tags", got)
 	}
 }
 
@@ -668,8 +665,10 @@ func isAbsent(v any) bool {
 }
 
 // TestPropertyNegationUnderAggregation: for random aggregated corpora the
-// index never under-selects on any operator, and NE, NIN with one value and
-// IsNull are exact on row groups holding at least two documents.
+// index never under-selects on any operator. IsNull is exact on every row
+// group that received documents and never selects fewer row groups than the
+// pre-#89 rule (v1.1.0-v1.4.0). NE and NIN with one value are exact on row groups holding at
+// least two documents.
 func TestPropertyNegationUnderAggregation(t *testing.T) {
 	const numRGs = 6
 	properties := gopter.NewProperties(propertyTestParametersWithBudgets(300, 60))
@@ -703,13 +702,31 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 				}
 			}
 			idx := builder.Finalize()
+			// The pre-#89 IsNull rule, derived from the documents: an explicit
+			// null, or a missing path in a row group holding two or more
+			// documents. The new rule never selects fewer row groups.
+			for _, key := range []string{"env", "n", "id"} {
+				legacy := docIDSet{}
+				for _, doc := range docs {
+					v, has := doc.data[key]
+					if (has && v == nil) || (!has && perRG[doc.rg] >= 2) {
+						legacy[DocID(doc.rg)] = struct{}{}
+					}
+				}
+				if got := indexDocIDs(idx, IsNull("$."+key)); !got.superset(legacy) {
+					return false, fmt.Errorf("IsNull($.%s) drops row groups the pre-#89 rule selected: index %v legacy %v docs %v", key, got.sorted(), legacy.sorted(), docs)
+				}
+			}
 			for _, p := range predicates {
 				got := indexDocIDs(idx, p)
 				want := oracleDocIDs(docs, p)
 				if !got.superset(want) {
 					return false, fmt.Errorf("%s under-selects: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
 				}
-				exact := p.Operator == OpNE || p.Operator == OpIsNull ||
+				if p.Operator == OpIsNull && !got.equals(want) {
+					return false, fmt.Errorf("%s not exact: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
+				}
+				exact := p.Operator == OpNE ||
 					(p.Operator == OpNIN && (p.Path == "$.env" || len(p.Value.([]any)) == 1))
 				if exact && !got.intersect(multiDoc).equals(want.intersect(multiDoc)) {
 					return false, fmt.Errorf("%s not exact on aggregated row groups: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)

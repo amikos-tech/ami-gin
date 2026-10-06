@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- `IsNull` now selects a row group whose single document lacks the path, in
+  aggregated indexes and in plain 1:1 indexes. An absent key counts as null
+  whatever the row group's document count. This replaces the README rule that
+  a one-document row group keeps the historical reading. Callers who read
+  `IsNull` as "explicit null only" now get more row groups. This is safe for
+  pruning, because it can only over-select.
+- `IsNull` no longer under-selects a one-document row group without the path,
+  so `NE` union `IsNull` is complete (#89). The answer is derived at query time
+  from root presence (the `$` path's present row groups minus the path's present
+  row groups). The wire format stays v11, and existing v11 indexes are fixed on
+  read with no rebuild.
+
 ## v1.4.0 (2026-10-06)
 
 - Add `EncoderProfileBoundedMemoryUncached` (#83), a third encoder profile

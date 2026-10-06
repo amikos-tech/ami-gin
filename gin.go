@@ -235,8 +235,7 @@ type NullIndex struct {
 // AggregateIndex records, per path, evidence that only exists when several
 // documents share one DocID (for example through RowGroupCodec). The negation
 // operators NE, NIN and IsNull consult it; every other operator ignores it.
-// A path without an entry has no such row group, so the operators keep the
-// one-document-per-DocID semantics for it.
+// A path without an entry has no row group in MultiValueRGs or AbsentRGs.
 type AggregateIndex struct {
 	// MultiValueRGs marks row groups where at least two documents carry the
 	// path and the path holds at least two distinct values. Such a row group
@@ -245,7 +244,10 @@ type AggregateIndex struct {
 	MultiValueRGs *RGSet
 	// AbsentRGs marks row groups holding at least two documents where at
 	// least one document does not carry the path. Such a row group always
-	// satisfies IsNull.
+	// satisfies IsNull. One-document row groups are not recorded here:
+	// IsNull derives them at query time from the root path's
+	// NullIndex.PresentRGBitmap minus this path's NullIndex.PresentRGBitmap,
+	// so no extra data is stored.
 	AbsentRGs *RGSet
 	// DistinctCounts holds one entry per set bit of MultiValueRGs, in bit
 	// order: the number of distinct values the row group holds. Strings,

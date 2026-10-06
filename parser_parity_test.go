@@ -372,7 +372,7 @@ func evaluateMatrixCases() []evaluateMatrixCase {
 		{"IN-prune", IN("$.name", "xxx", "yyy"), []int{}},
 		{"NIN-match", NIN("$.name", "nobody"), []int{0, 1, 2, 3}},
 		{"NIN-prune", NIN("$.name", "alice", "bob", "carol"), []int{}},
-		{"IsNull-match", IsNull("$.status"), []int{2}},
+		{"IsNull-match", IsNull("$.status"), []int{2, 3}},
 		{"IsNull-prune", IsNull("$.name"), []int{}},
 		{"IsNotNull-match", IsNotNull("$.name"), []int{0, 1, 2, 3}},
 		{"IsNotNull-prune", IsNotNull("$.status"), []int{0, 1, 2}},
