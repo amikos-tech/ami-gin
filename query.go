@@ -930,9 +930,9 @@ func NIN(path string, values ...any) Predicate {
 // IsNull selects every row group holding at least one document whose value for
 // path is an explicit JSON null, or that does not carry the path. It does so
 // whatever the row group's document count. Combine it with NE or NIN to keep a
-// row group whose document lacks the path. Indexes written by v10 and v11
-// builders give the same answer, because one-document row groups are derived
-// at query time from root presence.
+// row group whose document lacks the path. An index decoded from a v11 file
+// written before this rule gives the same answer as a freshly built one,
+// because one-document row groups are derived at query time from root presence.
 func IsNull(path string) Predicate {
 	return Predicate{Path: path, Operator: OpIsNull}
 }

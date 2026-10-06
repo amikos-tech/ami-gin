@@ -16,8 +16,8 @@
 - `IsNull` no longer under-selects a one-document row group without the path,
   so `NE` union `IsNull` is complete (#89). The answer is derived at query time
   from root presence (the `$` path's present row groups minus the path's present
-  row groups). The wire format stays v11, and existing v10 and v11 indexes are
-  fixed on read with no rebuild.
+  row groups). The wire format stays v11, and existing v11 indexes are fixed on
+  read with no rebuild.
 
 ## v1.4.0 (2026-10-06)
 
