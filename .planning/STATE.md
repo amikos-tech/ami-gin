@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-04-27)
 Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
 Plan: 8 of 8
 Status: Issue #54 shipped — PR #64 (self-review)
-Last activity: 2026-10-06 - Completed quick task 261006-hgl: issue #83 uncached bounded-memory encoder profile
+Last activity: 2026-10-06 - Completed quick task 261006-mlx: issue #89 uniform IsNull for row groups lacking the path
 
 Progress: [█████████░] 94%
 
@@ -205,6 +205,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260916-ee0 | Fix #63: precise NIN on multi-value row groups via sparse DistinctCounts in AggregateIndex; wire v10 -> v11; grilling ledger + E1-E12 hold-out validated; PR #75 review follow-up: container values count once, decode count bound, aggregated golden, adaptive/decoder tests | 2026-09-16 | 717e374 | Verified | [260916-ee0-precise-nin-on-multi-value-row-groups-is](./quick/260916-ee0-precise-nin-on-multi-value-row-groups-is/) |
 | 260925-kcs | PR #80 review findings on encoder profile (#79): trailing EncodeOption on WriteSidecar/EncodeToMetadata/RebuildWithIndex/S3 sidecar helpers, single-worker + lowMem assertion test, experiment -low-memory no-op warning, build/extract test hardening, memory numbers aligned to 34/560/42 MB, klauspost pin v1.19.2 | 2026-09-27 | 873c5e7 |  | [260925-kcs-address-pr-80-review-findings-on-encoder](./quick/260925-kcs-address-pr-80-review-findings-on-encoder/) |
 | 261006-hgl | Issue #83: opt-in `EncoderProfileBoundedMemoryUncached` (one-worker encoder built per call, never in the shared cache), tests for the 14 confirmed expectations, new benchmark doc section, README and CHANGELOG | 2026-10-06 | 6df7fe9 | Verified | [261006-hgl-validate-and-address-issue-83-bounded-me](./quick/261006-hgl-validate-and-address-issue-83-bounded-me/) |
+| 261006-mlx | Issue #89: uniform `IsNull` (absent counts as null in every row group, 1:1 indexes included) derived at query time from root `$` presence minus path presence; no wire format change, v11 indexes fixed on read; fail open on short or missing presence evidence; grilling ledger + prior-art research on absent vs null | 2026-10-06 | 361691d | Verified | [261006-mlx-fix-issue-89-isnull-misses-single-docume](./quick/261006-mlx-fix-issue-89-isnull-misses-single-docume/) |
 
 ## Deferred Items
 
