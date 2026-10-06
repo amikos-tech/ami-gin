@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.4.0 (2026-10-06)
 
 - Add `EncoderProfileBoundedMemoryUncached` (#83), a third encoder profile
   for batch jobs that encode once and must not keep the shared encoder live.
