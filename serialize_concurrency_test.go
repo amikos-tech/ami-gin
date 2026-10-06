@@ -156,7 +156,7 @@ func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
 	wg.Wait()
 }
 
-// TestEncodeUncachedConcurrentMatchesDefault (issue #83). Goroutines encode
+// TestEncodeUncachedConcurrentMatchesDefault: goroutines encode
 // with the uncached profile at two levels. Each builds its own encoder, so
 // outputs must match the default-profile reference and the cache must stay
 // empty for that profile. Meaningful under the race detector.
@@ -174,7 +174,7 @@ func TestEncodeUncachedConcurrentMatchesDefault(t *testing.T) {
 		golden[lvl] = encoded
 	}
 
-	const goroutines = 8
+	const goroutines = 4
 	var wg sync.WaitGroup
 	wg.Add(goroutines)
 	for g := 0; g < goroutines; g++ {

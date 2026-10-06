@@ -303,11 +303,11 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 // collapse, levels 10-19 would each retain a separate SpeedBestCompression
 // state. A default-profile encoder keeps the GOMAXPROCS-sized worker pool so
 // concurrent encodes at the same level run in parallel; a bounded-memory
-// encoder keeps one worker. The profiles never share an instance. The
-// uncached bounded-memory profile never enters the cache: sharedZstdEncoder
-// builds a fresh encoder for the call and drops it. Shared
-// instances are never Closed by production code; tests evict and Close
-// entries through evictSharedZstdEncoder.
+// encoder keeps one worker. The profiles never share an instance, and the
+// uncached bounded-memory profile never enters the cache: encodeWithLevel
+// builds its encoder for the call. Shared instances are never Closed by
+// production code; tests evict and Close entries through
+// evictSharedZstdEncoder.
 type zstdEncoderKey struct {
 	level   zstd.EncoderLevel
 	profile EncoderProfile
@@ -329,11 +329,6 @@ func sharedZstdEncoderKey(level CompressionLevel, profile EncoderProfile) zstdEn
 }
 
 func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.Encoder, error) {
-	if profile == EncoderProfileBoundedMemoryUncached {
-		// The uncached profile bypasses the cache: build an encoder for this
-		// call, never lock zstdEncoderMu, never write zstdEncoders.
-		return newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
-	}
 	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
@@ -527,7 +522,14 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
 	}
 
-	encoder, err := sharedZstdEncoder(level, profile)
+	var encoder *zstd.Encoder
+	var err error
+	if profile == EncoderProfileBoundedMemoryUncached {
+		// Built for this call and garbage once it returns.
+		encoder, err = newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
+	} else {
+		encoder, err = sharedZstdEncoder(level, profile)
+	}
 	if err != nil {
 		return nil, errors.Wrapf(err, "create zstd encoder (level %d, profile %s)", level, profile)
 	}

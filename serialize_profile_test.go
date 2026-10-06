@@ -47,8 +47,8 @@ func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) boo
 	return ok
 }
 
-// E1: bounded and default encodings are byte-identical at every level and
-// both decode to the original index. The small fixture fits in one zstd block
+// E1: bounded and uncached encodings are each byte-identical to the default at
+// every level and both decode to the original index. The small fixture fits in one zstd block
 // (EncodeAll's no-history path); the multi-block fixture exceeds the 128 KB
 // block size so the history-buffer path, where WithLowerEncoderMem changes
 // buffer sizing, is exercised too.
@@ -102,22 +102,31 @@ func buildHighCardinalityIndex(tb testing.TB, numRGs, docsPerRG int) *GINIndex {
 
 func assertEncoderProfilesByteIdentical(t *testing.T, idx *GINIndex) {
 	t.Helper()
+	for _, profile := range []EncoderProfile{EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached} {
+		t.Run(profile.String(), func(t *testing.T) {
+			assertProfileByteIdenticalToDefault(t, idx, profile)
+		})
+	}
+}
+
+func assertProfileByteIdenticalToDefault(t *testing.T, idx *GINIndex, profile EncoderProfile) {
+	t.Helper()
 	ctx := context.Background()
 	for _, level := range encoderProfileLevels {
 		want, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileDefault))
 		if err != nil {
 			t.Fatalf("default level %d: %v", level, err)
 		}
-		got, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileBoundedMemory))
+		got, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(profile))
 		if err != nil {
-			t.Fatalf("bounded level %d: %v", level, err)
+			t.Fatalf("%s level %d: %v", profile, level, err)
 		}
 		if !bytes.Equal(want, got) {
-			t.Fatalf("level %d: bounded output differs from default output", level)
+			t.Fatalf("level %d: %s output differs from default output", level, profile)
 		}
 		decoded, err := Decode(got)
 		if err != nil {
-			t.Fatalf("decode bounded level %d: %v", level, err)
+			t.Fatalf("decode %s level %d: %v", profile, level, err)
 		}
 		reEncoded, err := EncodeWithLevel(decoded, level)
 		if err != nil {
@@ -173,10 +182,20 @@ func TestEncoderProfileCacheKeyedByModeAndProfile(t *testing.T) {
 	}
 }
 
-// E5: a bounded config reaches every encode path that reads idx.Config, and
+// E5: a bounded or uncached config reaches every encode path that reads idx.Config, and
 // the profile is never serialized.
 func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
-	cfg, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemory))
+	for _, profile := range []EncoderProfile{EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached} {
+		t.Run(profile.String(), func(t *testing.T) {
+			testConfigReachesAllEncodePaths(t, profile)
+		})
+	}
+}
+
+// testConfigReachesAllEncodePaths checks that a cached profile leaves its
+// encoder in the cache after every path, and the uncached profile leaves none.
+func testConfigReachesAllEncodePaths(t *testing.T, profile EncoderProfile) {
+	cfg, err := NewConfig(WithEncoderProfile(profile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,22 +220,24 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 		}
 	})
 
-	paths := map[string]func(t *testing.T) []byte{
-		"Encode": func(t *testing.T) []byte {
+	paths := map[string]func(t *testing.T, checkCache func()) []byte{
+		"Encode": func(t *testing.T, checkCache func()) []byte {
 			data, err := Encode(idx)
 			if err != nil {
 				t.Fatal(err)
 			}
+			checkCache()
 			return data
 		},
-		"EncodeContext": func(t *testing.T) []byte {
+		"EncodeContext": func(t *testing.T, checkCache func()) []byte {
 			data, err := EncodeContext(context.Background(), idx)
 			if err != nil {
 				t.Fatal(err)
 			}
+			checkCache()
 			return data
 		},
-		"WriteSidecar": func(t *testing.T) []byte {
+		"WriteSidecar": func(t *testing.T, checkCache func()) []byte {
 			parquetFile := filepath.Join(t.TempDir(), "data.parquet")
 			// WriteSidecar only stats the parquet file to mirror its permissions.
 			if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
@@ -225,6 +246,7 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 			if err := WriteSidecar(parquetFile, idx); err != nil {
 				t.Fatal(err)
 			}
+			checkCache()
 			loaded, err := ReadSidecar(parquetFile)
 			if err != nil {
 				t.Fatal(err)
@@ -235,11 +257,12 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 			}
 			return data
 		},
-		"EncodeToMetadata": func(t *testing.T) []byte {
+		"EncodeToMetadata": func(t *testing.T, checkCache func()) []byte {
 			_, value, err := EncodeToMetadata(idx, DefaultParquetConfig())
 			if err != nil {
 				t.Fatal(err)
 			}
+			checkCache()
 			loaded, err := DecodeFromMetadata(value)
 			if err != nil {
 				t.Fatal(err)
@@ -254,11 +277,18 @@ func TestEncoderProfileConfigReachesAllEncodePaths(t *testing.T) {
 
 	for name, run := range paths {
 		t.Run(name, func(t *testing.T) {
-			evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
-			data := run(t)
-			if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
-				t.Errorf("%s did not use the bounded-memory encoder", name)
+			evictAllProfiles(CompressionBest)
+			// Checked right after the encode under test: the helpers below re-encode
+			// a decoded index, which carries the default profile and caches it.
+			checkCache := func() {
+				t.Helper()
+				if profile == EncoderProfileBoundedMemoryUncached {
+					assertNoCachedEncoder(t, CompressionBest)
+				} else if !sharedZstdEncoderCached(CompressionBest, profile) {
+					t.Errorf("%s did not use the %s encoder", name, profile)
+				}
 			}
+			data := run(t, checkCache)
 			decoded, err := Decode(data)
 			if err != nil {
 				t.Fatal(err)
@@ -315,19 +345,23 @@ func TestEncoderProfileLibraryHelpersAcceptPerCallOption(t *testing.T) {
 // missing field rather than passing silently -- see the failure messages
 // below for the exact field names to check.
 func TestEncoderProfileBoundedUsesSingleWorker(t *testing.T) {
-	bounded, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileBoundedMemory)
-	if err != nil {
-		t.Fatalf("newZstdEncoder(bounded): %v", err)
-	}
-	defer bounded.Close()
-	_ = bounded.EncodeAll([]byte("force lazy init"), nil)
+	for _, profile := range []EncoderProfile{EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached} {
+		t.Run(profile.String(), func(t *testing.T) {
+			bounded, err := newZstdEncoder(zstd.SpeedBestCompression, profile)
+			if err != nil {
+				t.Fatalf("newZstdEncoder(%s): %v", profile, err)
+			}
+			defer bounded.Close()
+			_ = bounded.EncodeAll([]byte("force lazy init"), nil)
 
-	boundedWorkers, boundedLowMem := inspectZstdEncoderInternals(t, bounded)
-	if boundedWorkers != 1 {
-		t.Errorf("bounded profile: encoders channel capacity = %d, want 1 (depends on klauspost/compress internal field `encoders`)", boundedWorkers)
-	}
-	if !boundedLowMem {
-		t.Error("bounded profile: o.lowMem = false, want true (depends on klauspost/compress internal field `o.lowMem`)")
+			boundedWorkers, boundedLowMem := inspectZstdEncoderInternals(t, bounded)
+			if boundedWorkers != 1 {
+				t.Errorf("%s profile: encoders channel capacity = %d, want 1 (depends on klauspost/compress internal field `encoders`)", profile, boundedWorkers)
+			}
+			if !boundedLowMem {
+				t.Errorf("%s profile: o.lowMem = false, want true (depends on klauspost/compress internal field `o.lowMem`)", profile)
+			}
+		})
 	}
 
 	def, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileDefault)
@@ -430,6 +464,19 @@ func TestEncoderProfileUnknownValueRejected(t *testing.T) {
 		t.Error("config validate accepted an unknown encoder profile")
 	}
 
+	validateErr := bogus.validate()
+	if validateErr == nil {
+		t.Fatal("validate accepted profile 200")
+	}
+	for _, want := range []string{"unknown encoder profile 200", "EncoderProfileDefault", "EncoderProfileBoundedMemory", "EncoderProfileBoundedMemoryUncached"} {
+		if !strings.Contains(validateErr.Error(), want) {
+			t.Errorf("error %q lacks %q", validateErr, want)
+		}
+	}
+	if _, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
+		t.Errorf("WithEncoderProfile rejected the uncached profile: %v", err)
+	}
+
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	if _, err := EncodeWithLevelContext(context.Background(), idx, CompressionBest, WithEncodeProfile(bogus)); err == nil {
 		t.Error("encode with unknown per-call profile returned nil error")
@@ -445,9 +492,10 @@ func TestEncoderProfileUnknownValueRejected(t *testing.T) {
 func TestEncoderProfileString(t *testing.T) {
 	t.Parallel()
 	cases := map[EncoderProfile]string{
-		EncoderProfileDefault:       "default",
-		EncoderProfileBoundedMemory: "bounded-memory",
-		EncoderProfile(7):           "EncoderProfile(7)",
+		EncoderProfileDefault:               "default",
+		EncoderProfileBoundedMemory:         "bounded-memory",
+		EncoderProfileBoundedMemoryUncached: "bounded-memory-uncached",
+		EncoderProfile(7):                   "EncoderProfile(7)",
 	}
 	for p, want := range cases {
 		if got := p.String(); got != want {
@@ -456,7 +504,7 @@ func TestEncoderProfileString(t *testing.T) {
 	}
 }
 
-// Uncached profile tests (issue #83).
+// Uncached profile tests.
 
 var allEncoderProfiles = []EncoderProfile{
 	EncoderProfileDefault, EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached,
@@ -477,107 +525,46 @@ func assertNoCachedEncoder(t *testing.T, level CompressionLevel) {
 	}
 }
 
-// E1: uncached output is byte-identical to default output for single-block
-// and multi-block payloads at every level.
-func TestEncoderProfileUncachedOutputIdenticalToDefault(t *testing.T) {
-	t.Parallel()
-	fixtures := map[string]*GINIndex{
-		"single-block": buildAdaptiveSerializationFixture(t, DefaultConfig()),
-		"multi-block":  buildHighCardinalityIndex(t, 200, 20),
-	}
-	ctx := context.Background()
-	for name, idx := range fixtures {
-		for _, level := range encoderProfileLevels {
-			want, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileDefault))
-			if err != nil {
-				t.Fatalf("%s default level %d: %v", name, level, err)
-			}
-			got, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileBoundedMemoryUncached))
-			if err != nil {
-				t.Fatalf("%s uncached level %d: %v", name, level, err)
-			}
-			if !bytes.Equal(want, got) {
-				t.Fatalf("%s level %d: uncached output differs from default output", name, level)
-			}
-			if _, err := Decode(got); err != nil {
-				t.Fatalf("%s level %d: decode: %v", name, level, err)
-			}
-		}
-	}
-}
-
-// E2 and E5: an uncached encode leaves no entry in the cache, whether chosen
-// per call over a default config or by the config itself. A per-call bounded
-// override over an uncached config does populate the bounded entry.
+// An uncached encode leaves no entry in the cache, whether chosen per call
+// over a default config or by the config itself. A per-call bounded override
+// over an uncached config does populate the bounded entry.
 func TestEncoderProfileUncachedLeavesCacheEmpty(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	ctx := context.Background()
-	for _, level := range encoderProfileLevels {
-		evictAllProfiles(level)
-		if _, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
+
+	t.Run("PerCallEncodeWithLevelAllLevels", func(t *testing.T) {
+		for _, level := range encoderProfileLevels {
+			evictAllProfiles(level)
+			if _, err := EncodeWithLevelContext(ctx, idx, level, WithEncodeProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
+				t.Fatal(err)
+			}
+			assertNoCachedEncoder(t, level)
+		}
+	})
+
+	t.Run("PerCallEncodeContext", func(t *testing.T) {
+		evictAllProfiles(CompressionBest)
+		if _, err := EncodeContext(ctx, idx, WithEncodeProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
 			t.Fatal(err)
 		}
-		assertNoCachedEncoder(t, level)
-	}
-	evictAllProfiles(CompressionBest)
-	if _, err := EncodeContext(ctx, idx, WithEncodeProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
-		t.Fatal(err)
-	}
-	assertNoCachedEncoder(t, CompressionBest)
+		assertNoCachedEncoder(t, CompressionBest)
+	})
 
-	cfg, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemoryUncached))
-	if err != nil {
-		t.Fatal(err)
-	}
-	uncachedCfgIdx := buildAdaptiveSerializationFixture(t, cfg)
-	if _, err := Encode(uncachedCfgIdx); err != nil {
-		t.Fatal(err)
-	}
-	assertNoCachedEncoder(t, CompressionBest)
-	if _, err := EncodeContext(ctx, uncachedCfgIdx, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
-		t.Fatal(err)
-	}
-	if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
-		t.Error("per-call bounded override should populate the bounded cache entry")
-	}
-	evictAllProfiles(CompressionBest)
-}
-
-// E6: an uncached config reaches every encode path and none caches an encoder.
-func TestEncoderProfileUncachedConfigReachesAllEncodePaths(t *testing.T) {
-	cfg, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemoryUncached))
-	if err != nil {
-		t.Fatal(err)
-	}
-	idx := buildAdaptiveSerializationFixture(t, cfg)
-	paths := map[string]func(t *testing.T){
-		"Encode": func(t *testing.T) {
-			if _, err := Encode(idx); err != nil {
-				t.Fatal(err)
-			}
-		},
-		"WriteSidecar": func(t *testing.T) {
-			parquetFile := filepath.Join(t.TempDir(), "data.parquet")
-			if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			if err := WriteSidecar(parquetFile, idx); err != nil {
-				t.Fatal(err)
-			}
-		},
-		"EncodeToMetadata": func(t *testing.T) {
-			if _, _, err := EncodeToMetadata(idx, DefaultParquetConfig()); err != nil {
-				t.Fatal(err)
-			}
-		},
-	}
-	for name, run := range paths {
-		t.Run(name, func(t *testing.T) {
-			evictAllProfiles(CompressionBest)
-			run(t)
-			assertNoCachedEncoder(t, CompressionBest)
-		})
-	}
+	t.Run("PerCallBoundedOverridesUncachedConfig", func(t *testing.T) {
+		cfg, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemoryUncached))
+		if err != nil {
+			t.Fatal(err)
+		}
+		uncachedCfgIdx := buildAdaptiveSerializationFixture(t, cfg)
+		evictAllProfiles(CompressionBest)
+		if _, err := EncodeContext(ctx, uncachedCfgIdx, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
+			t.Fatal(err)
+		}
+		if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
+			t.Error("per-call bounded override should populate the bounded cache entry")
+		}
+		evictAllProfiles(CompressionBest)
+	})
 }
 
 // encodeWithProfileNoRetain runs one level-15 encode. It is noinline and
@@ -591,11 +578,12 @@ func encodeWithProfileNoRetain(idx *GINIndex, profile EncoderProfile) {
 }
 
 func settledHeap() int64 {
+	// The first cycle queues finalizers and clears pool victims, so the second reading is stable.
 	heapAllocAfterGC()
 	return int64(heapAllocAfterGC())
 }
 
-// E3: after one level-15 uncached encode and GC, the heap is near the
+// After one level-15 uncached encode and GC, the heap is near the
 // baseline. A cached bounded encoder keeps about 42 MB, which the control
 // half of the test must see. Not parallel: it reads global heap state.
 func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
@@ -623,21 +611,7 @@ func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 	}
 }
 
-// E4: the encoder built for the uncached profile has one worker and low-memory buffers.
-func TestEncoderProfileUncachedUsesSingleWorker(t *testing.T) {
-	enc, err := newZstdEncoder(zstd.SpeedBestCompression, EncoderProfileBoundedMemoryUncached)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer enc.Close()
-	enc.EncodeAll([]byte("force lazy init"), nil)
-	workers, lowMem := inspectZstdEncoderInternals(t, enc)
-	if workers != 1 || !lowMem {
-		t.Errorf("workers = %d, lowMem = %v, want 1 and true", workers, lowMem)
-	}
-}
-
-// E7: the two older constants keep their values and still cache.
+// The two older constants keep their values and still cache.
 func TestEncoderProfileConstantValuesAndCachedProfiles(t *testing.T) {
 	if EncoderProfileDefault != 0 || EncoderProfileBoundedMemory != 1 || EncoderProfileBoundedMemoryUncached != 2 {
 		t.Fatal("encoder profile constants changed value")
@@ -654,34 +628,14 @@ func TestEncoderProfileConstantValuesAndCachedProfiles(t *testing.T) {
 	}
 }
 
-// E8: String, validation and error text for the new value.
-func TestEncoderProfileUncachedStringAndValidation(t *testing.T) {
-	t.Parallel()
-	if got := EncoderProfileBoundedMemoryUncached.String(); got != "bounded-memory-uncached" {
-		t.Errorf("String() = %q", got)
-	}
-	if _, err := NewConfig(WithEncoderProfile(EncoderProfileBoundedMemoryUncached)); err != nil {
-		t.Errorf("WithEncoderProfile rejected the uncached profile: %v", err)
-	}
-	err := EncoderProfile(200).validate()
-	if err == nil {
-		t.Fatal("validate accepted profile 200")
-	}
-	for _, want := range []string{"unknown encoder profile 200", "EncoderProfileDefault", "EncoderProfileBoundedMemory", "EncoderProfileBoundedMemoryUncached"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q lacks %q", err, want)
-		}
-	}
-}
-
-// E9: the profile is runtime-only. The wire format and decoded config stay unchanged.
+// The profile is runtime-only. The wire format and decoded config stay unchanged.
 func TestEncoderProfileUncachedWireFormat(t *testing.T) {
 	t.Parallel()
 	if Version != 11 {
 		t.Fatalf("Version = %d, want 11", Version)
 	}
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
-	data, err := EncodeContext(context.Background(), idx, WithEncodeProfile(EncoderProfileBoundedMemoryUncached))
+	data, err := EncodeWithLevelContext(context.Background(), idx, CompressionBalanced, WithEncodeProfile(EncoderProfileBoundedMemoryUncached))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +648,7 @@ func TestEncoderProfileUncachedWireFormat(t *testing.T) {
 	}
 }
 
-// E10: CompressionNone returns before any encoder call (encodeWithLevel), so
+// CompressionNone returns before any encoder call (encodeWithLevel), so
 // no encoder is reachable at level 0. The test checks the bytes, the empty
 // cache and that allocation stays far below the cost of one encoder.
 func TestEncoderProfileUncachedCompressionNone(t *testing.T) {
