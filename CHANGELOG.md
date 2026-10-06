@@ -11,8 +11,7 @@
   N concurrent calls build N encoders, about N x 44 MB at level 15, and the
   library sets no limit. Output is byte-identical at the same level and the
   wire format does not change. Select it with the existing `WithEncodeProfile`
-  and `WithEncoderProfile`. There is no new option and no CLI flag. This is
-  additive, so it fits a minor release.
+  and `WithEncoderProfile`. There is no new option and no CLI flag.
 
 ## v1.3.0 (2026-09-27)
 

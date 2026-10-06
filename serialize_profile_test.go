@@ -47,9 +47,10 @@ func sharedZstdEncoderCached(level CompressionLevel, profile EncoderProfile) boo
 	return ok
 }
 
-// E1: bounded and uncached encodings are each byte-identical to the default at
-// every level and both decode to the original index. The small fixture fits in one zstd block
-// (EncodeAll's no-history path); the multi-block fixture exceeds the 128 KB
+// E1: the bounded and the uncached encodings are byte-identical to the
+// default at every level, and each decodes to the original index. The small
+// fixture fits in one zstd block (EncodeAll's no-history path); the
+// multi-block fixture exceeds the 128 KB
 // block size so the history-buffer path, where WithLowerEncoderMem changes
 // buffer sizing, is exercised too.
 func TestEncoderProfileBoundedOutputIdenticalToDefault(t *testing.T) {
@@ -311,29 +312,58 @@ func testConfigReachesAllEncodePaths(t *testing.T, profile EncoderProfile) {
 func TestEncoderProfileLibraryHelpersAcceptPerCallOption(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 
-	t.Run("WriteSidecar", func(t *testing.T) {
-		evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
-		parquetFile := filepath.Join(t.TempDir(), "data.parquet")
-		if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := WriteSidecar(parquetFile, idx, WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
-			t.Fatal(err)
-		}
-		if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
-			t.Error("WriteSidecar with a per-call bounded profile did not use the bounded-memory encoder")
-		}
-	})
+	for _, profile := range []EncoderProfile{EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached} {
+		t.Run(profile.String(), func(t *testing.T) {
+			// The bounded profile must fill its cache entry. The uncached
+			// profile must leave both bounded keys empty.
+			assertCache := func(t *testing.T, name string) {
+				t.Helper()
+				if profile == EncoderProfileBoundedMemory {
+					if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
+						t.Errorf("%s with a per-call bounded profile did not use the bounded-memory encoder", name)
+					}
+					return
+				}
+				for _, p := range []EncoderProfile{EncoderProfileBoundedMemoryUncached, EncoderProfileBoundedMemory} {
+					if sharedZstdEncoderCached(CompressionBest, p) {
+						t.Errorf("%s with a per-call uncached profile cached an encoder for %s", name, p)
+					}
+				}
+			}
 
-	t.Run("EncodeToMetadata", func(t *testing.T) {
-		evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
-		if _, _, err := EncodeToMetadata(idx, DefaultParquetConfig(), WithEncodeProfile(EncoderProfileBoundedMemory)); err != nil {
-			t.Fatal(err)
-		}
-		if !sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemory) {
-			t.Error("EncodeToMetadata with a per-call bounded profile did not use the bounded-memory encoder")
-		}
-	})
+			t.Run("WriteSidecar", func(t *testing.T) {
+				evictAllProfiles(CompressionBest)
+				parquetFile := filepath.Join(t.TempDir(), "data.parquet")
+				if err := os.WriteFile(parquetFile, []byte("placeholder"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := WriteSidecar(parquetFile, idx, WithEncodeProfile(profile)); err != nil {
+					t.Fatal(err)
+				}
+				assertCache(t, "WriteSidecar")
+			})
+
+			t.Run("EncodeToMetadata", func(t *testing.T) {
+				evictAllProfiles(CompressionBest)
+				if _, _, err := EncodeToMetadata(idx, DefaultParquetConfig(), WithEncodeProfile(profile)); err != nil {
+					t.Fatal(err)
+				}
+				assertCache(t, "EncodeToMetadata")
+			})
+		})
+	}
+}
+
+// Rejection test for the shared cache guard.
+func TestSharedZstdEncoderRejectsUncachedProfile(t *testing.T) {
+	evictAllProfiles(CompressionBest)
+	enc, err := sharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemoryUncached)
+	if err == nil || enc != nil {
+		t.Fatalf("sharedZstdEncoder(uncached) = (%v, %v), want nil encoder and an error", enc, err)
+	}
+	if sharedZstdEncoderCached(CompressionBest, EncoderProfileBoundedMemoryUncached) {
+		t.Error("rejected uncached profile left a cache entry")
+	}
 }
 
 // I2: prove the bounded profile actually configures the underlying zstd
@@ -571,9 +601,10 @@ func TestEncoderProfileUncachedLeavesCacheEmpty(t *testing.T) {
 // returns nothing, so no stack slot in the caller keeps the encoder alive.
 //
 //go:noinline
-func encodeWithProfileNoRetain(idx *GINIndex, profile EncoderProfile) {
+func encodeWithProfileNoRetain(tb testing.TB, idx *GINIndex, profile EncoderProfile) {
+	tb.Helper()
 	if _, err := EncodeWithLevelContext(context.Background(), idx, CompressionBest, WithEncodeProfile(profile)); err != nil {
-		panic(err)
+		tb.Fatal(err)
 	}
 }
 
@@ -589,13 +620,14 @@ func settledHeap() int64 {
 func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	evictAllProfiles(CompressionBest)
-	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached) // warm up
-	// Evict again: an encoder the warm-up wrongly cached would otherwise sit
-	// in the baseline and hide the retention this test looks for.
+	// Warm up with the cached profile. An uncached warm-up would put a wrongly
+	// retained encoder (for example one kept in a package variable) into the
+	// baseline, and the measured call would then show no growth.
+	encodeWithProfileNoRetain(t, idx, EncoderProfileBoundedMemory)
 	evictAllProfiles(CompressionBest)
 
 	base := settledHeap()
-	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached)
+	encodeWithProfileNoRetain(t, idx, EncoderProfileBoundedMemoryUncached)
 	growth := settledHeap() - base
 	if growth > 8<<20 {
 		t.Errorf("uncached profile retained %d bytes after encode, want under 8 MiB", growth)
@@ -603,7 +635,7 @@ func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 
 	// Control: the cached bounded profile must show the retained encoder.
 	base = settledHeap()
-	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemory)
+	encodeWithProfileNoRetain(t, idx, EncoderProfileBoundedMemory)
 	controlGrowth := settledHeap() - base
 	evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
 	if controlGrowth < 20<<20 {
@@ -611,7 +643,7 @@ func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 	}
 }
 
-// The two older constants keep their values and still cache.
+// EncoderProfileDefault and EncoderProfileBoundedMemory keep the values 0 and 1 (public API) and still populate the shared cache.
 func TestEncoderProfileConstantValuesAndCachedProfiles(t *testing.T) {
 	if EncoderProfileDefault != 0 || EncoderProfileBoundedMemory != 1 || EncoderProfileBoundedMemoryUncached != 2 {
 		t.Fatal("encoder profile constants changed value")
@@ -648,9 +680,10 @@ func TestEncoderProfileUncachedWireFormat(t *testing.T) {
 	}
 }
 
-// CompressionNone returns before any encoder call (encodeWithLevel), so
-// no encoder is reachable at level 0. The test checks the bytes, the empty
-// cache and that allocation stays far below the cost of one encoder.
+// CompressionNone returns before any encoder call (encodeWithLevel). The test
+// checks that the output starts with GINu and matches the default profile
+// output, that no cache entry appears, and that the call allocates far less
+// than one encoder costs.
 func TestEncoderProfileUncachedCompressionNone(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	ctx := context.Background()

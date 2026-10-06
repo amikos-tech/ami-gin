@@ -156,10 +156,11 @@ func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
 	wg.Wait()
 }
 
-// TestEncodeUncachedConcurrentMatchesDefault: goroutines encode
-// with the uncached profile at two levels. Each builds its own encoder, so
-// outputs must match the default-profile reference and the cache must stay
-// empty for that profile. Meaningful under the race detector.
+// TestEncodeUncachedConcurrentMatchesDefault: four goroutines encode with the
+// uncached profile at two levels. Each builds its own encoder, so outputs must
+// match the default-profile reference. Neither the uncached key nor the
+// bounded-memory key may be cached afterwards. Meaningful under the race
+// detector.
 func TestEncodeUncachedConcurrentMatchesDefault(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	ctx := context.Background()
@@ -172,6 +173,12 @@ func TestEncodeUncachedConcurrentMatchesDefault(t *testing.T) {
 			t.Fatalf("golden level %d: %v", lvl, err)
 		}
 		golden[lvl] = encoded
+	}
+
+	// Clear the bounded-memory key so a leftover entry cannot hide a leak.
+	// The default key stays alone: the golden encode fills it.
+	for _, lvl := range levels {
+		evictSharedZstdEncoder(lvl, EncoderProfileBoundedMemory)
 	}
 
 	const goroutines = 4
@@ -197,6 +204,9 @@ func TestEncodeUncachedConcurrentMatchesDefault(t *testing.T) {
 	for _, lvl := range levels {
 		if sharedZstdEncoderCached(lvl, EncoderProfileBoundedMemoryUncached) {
 			t.Errorf("level %d: uncached profile left a cache entry", lvl)
+		}
+		if sharedZstdEncoderCached(lvl, EncoderProfileBoundedMemory) {
+			t.Errorf("level %d: uncached profile filled the bounded-memory cache entry", lvl)
 		}
 	}
 }

@@ -190,7 +190,7 @@ help:
 	@echo "  integration-test - Run integration test suite"
 	@echo "  bench     - Run all benchmarks in all packages (-benchmem; slow, takes minutes); override BENCHTIME/BENCH_TIMEOUT/COUNT, e.g. make bench BENCH_TIMEOUT=1h"
 	@echo "  bench-phase20 - Run BenchmarkPhase20RealisticJSON only; set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> to include the external corpus tier"
-	@echo "  bench-encoder-profile - Run BenchmarkEncoderProfile at GOMAXPROCS=1, 4 and 16 (default vs bounded-memory zstd encoder; retained MB, allocs, time, compressed size)"
+	@echo "  bench-encoder-profile - Run BenchmarkEncoderProfile at GOMAXPROCS=1, 4 and 16 (default, bounded-memory and bounded-memory-uncached zstd encoder profiles; retained MB, allocs, time, compressed size)"
 	@echo "  bench-simd - Run paired stdlib/SIMD typed-sink smoke fixtures by default; optionally set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> for the local external tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"

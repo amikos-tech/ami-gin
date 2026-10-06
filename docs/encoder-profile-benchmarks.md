@@ -95,19 +95,21 @@ Host: darwin/arm64, Apple M2 Max, GOMAXPROCS=4, go1.27.1, klauspost/compress v1.
 GOMAXPROCS=4 go test -run '^$' -bench 'BenchmarkEncoderProfile/bounded-memory/L(15|3)/(small|highcard)/(cold|repeated)' -benchmem -benchtime=10x -count=1 .
 ```
 
+The `bounded-memory` element of the `-bench` pattern is not anchored, so it also selects `bounded-memory-uncached`.
+
 | Profile | Level | Fixture | Allocated per call | Retained after the call | Time per call |
 |---|---:|---|---:|---:|---:|
-| bounded-memory | 15 | small | 44.4 MB | 42.2 MB | 0.9 ms |
-| bounded-memory-uncached | 15 | small | 44.7 MB | 0.001 MB | 2.7 ms |
-| bounded-memory | 15 | highcard | 46.0 MB | 42.5 MB | 20.2 ms |
-| bounded-memory-uncached | 15 | highcard | 50.0 MB | 0.001 MB | 29.0 ms |
-| bounded-memory | 3 | small | 1.5 MB | 1.3 MB | 0.3 ms |
-| bounded-memory-uncached | 3 | small | 1.9 MB | 0.001 MB | 0.4 ms |
-| bounded-memory | 3 | highcard | 11.7 MB | 9.8 MB | 6.1 ms |
-| bounded-memory-uncached | 3 | highcard | 15.7 MB | 0.001 MB | 7.2 ms |
+| bounded-memory | 15 | small | 44.4 MB | 42.2 MB | 1.0 ms |
+| bounded-memory-uncached | 15 | small | 44.7 MB | 0 MB | 3.6 ms |
+| bounded-memory | 15 | highcard | 46.0 MB | 42.5 MB | 27.7 ms |
+| bounded-memory-uncached | 15 | highcard | 50.0 MB | 0 MB | 31.0 ms |
+| bounded-memory | 3 | small | 1.5 MB | 1.3 MB | 0.4 ms |
+| bounded-memory-uncached | 3 | small | 1.9 MB | 0 MB | 0.4 ms |
+| bounded-memory | 3 | highcard | 11.7 MB | 9.8 MB | 6.3 ms |
+| bounded-memory-uncached | 3 | highcard | 15.7 MB | 0 MB | 7.2 ms |
 
-- Allocated per call is cumulative allocation (`Alloc/op`, decimal MB). It is a proxy for peak memory, not a measured peak. For the cached row it is the `cold` figure, the first call (construction plus encode), not the steady state. For the uncached row it is the `repeated` figure, which is every call.
-- Retained after the call is the live heap after a forced GC, in MiB, from the `retained_MB` metric of `repeated`. The uncached value is clamped at 0 when the heap ends below the baseline. The 0.001 MB figure is noise.
+- Allocated per call is cumulative allocation (`Alloc/op`, decimal MB). It is a proxy for peak memory, not a measured peak. For the cached row it is the `cold` figure, which is encoder construction plus one `EncodeAll` of an already serialized payload. It stands in for the first call and excludes index serialization. For the uncached row it is the `repeated` figure, which is every public call and includes index serialization. That explains the small difference between the paired rows.
+- Retained after the call is the live heap growth after a forced GC, in MiB, from the `retained_MB` metric of `repeated`. The value is a signed difference, so a value at or slightly below 0 for the uncached profile is noise.
 - Time per call is the `repeated` `ns/op`. For the uncached profile it includes encoder construction on every call. Single runs of 10 iterations are noisy.
 
 When to use it: if the process encodes often, use `EncoderProfileBoundedMemory`, which pays construction once. If the process encodes once per batch and must not keep 42 MB live, use the uncached profile.
