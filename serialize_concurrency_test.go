@@ -155,3 +155,48 @@ func TestEncodeDecodeConcurrentMixedProfiles(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestEncodeUncachedConcurrentMatchesDefault (issue #83). Goroutines encode
+// with the uncached profile at two levels. Each builds its own encoder, so
+// outputs must match the default-profile reference and the cache must stay
+// empty for that profile. Meaningful under the race detector.
+func TestEncodeUncachedConcurrentMatchesDefault(t *testing.T) {
+	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
+	ctx := context.Background()
+	levels := []CompressionLevel{CompressionBest, CompressionBalanced}
+
+	golden := make(map[CompressionLevel][]byte, len(levels))
+	for _, lvl := range levels {
+		encoded, err := EncodeWithLevelContext(ctx, idx, lvl, WithEncodeProfile(EncoderProfileDefault))
+		if err != nil {
+			t.Fatalf("golden level %d: %v", lvl, err)
+		}
+		golden[lvl] = encoded
+	}
+
+	const goroutines = 8
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			defer wg.Done()
+			for _, lvl := range levels {
+				encoded, err := EncodeWithLevelContext(ctx, idx, lvl, WithEncodeProfile(EncoderProfileBoundedMemoryUncached))
+				if err != nil {
+					t.Errorf("uncached level %d: %v", lvl, err)
+					return
+				}
+				if !bytes.Equal(encoded, golden[lvl]) {
+					t.Errorf("uncached level %d: output differs from default output", lvl)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	for _, lvl := range levels {
+		if sharedZstdEncoderCached(lvl, EncoderProfileBoundedMemoryUncached) {
+			t.Errorf("level %d: uncached profile left a cache entry", lvl)
+		}
+	}
+}

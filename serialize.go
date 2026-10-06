@@ -221,6 +221,18 @@ const (
 	// that one worker instead of running in parallel. See
 	// docs/encoder-profile-benchmarks.md for the measured tables.
 	EncoderProfileBoundedMemory
+	// EncoderProfileBoundedMemoryUncached builds a one-worker, low-memory zstd
+	// encoder for each call and drops it. Nothing stays in the shared encoder
+	// cache, so the heap that remains after the call is near zero, even at
+	// level 15. The output is byte-identical to the other profiles.
+	//
+	// Do not use it in a process that encodes often. Each call pays encoder
+	// construction: about 4 ms and 44 MB allocated at level 15. Use
+	// EncoderProfileBoundedMemory there. N concurrent calls build N encoders,
+	// so the peak is about N x 44 MB at level 15. The library sets no limit.
+	// The encoder is dropped for the garbage collector to reclaim. The call
+	// does not close it. See docs/encoder-profile-benchmarks.md for numbers.
+	EncoderProfileBoundedMemoryUncached
 )
 
 // String returns the profile name; unknown values render as their number.
@@ -230,6 +242,8 @@ func (p EncoderProfile) String() string {
 		return "default"
 	case EncoderProfileBoundedMemory:
 		return "bounded-memory"
+	case EncoderProfileBoundedMemoryUncached:
+		return "bounded-memory-uncached"
 	default:
 		return "EncoderProfile(" + strconv.Itoa(int(p)) + ")"
 	}
@@ -237,10 +251,10 @@ func (p EncoderProfile) String() string {
 
 func (p EncoderProfile) validate() error {
 	switch p {
-	case EncoderProfileDefault, EncoderProfileBoundedMemory:
+	case EncoderProfileDefault, EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached:
 		return nil
 	default:
-		return errors.Errorf("unknown encoder profile %d (want EncoderProfileDefault or EncoderProfileBoundedMemory)", uint8(p))
+		return errors.Errorf("unknown encoder profile %d (want EncoderProfileDefault, EncoderProfileBoundedMemory or EncoderProfileBoundedMemoryUncached)", uint8(p))
 	}
 }
 
@@ -289,7 +303,9 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 // collapse, levels 10-19 would each retain a separate SpeedBestCompression
 // state. A default-profile encoder keeps the GOMAXPROCS-sized worker pool so
 // concurrent encodes at the same level run in parallel; a bounded-memory
-// encoder keeps one worker. The two profiles never share an instance. Shared
+// encoder keeps one worker. The profiles never share an instance. The
+// uncached bounded-memory profile never enters the cache: sharedZstdEncoder
+// builds a fresh encoder for the call and drops it. Shared
 // instances are never Closed by production code; tests evict and Close
 // entries through evictSharedZstdEncoder.
 type zstdEncoderKey struct {
@@ -313,6 +329,11 @@ func sharedZstdEncoderKey(level CompressionLevel, profile EncoderProfile) zstdEn
 }
 
 func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.Encoder, error) {
+	if profile == EncoderProfileBoundedMemoryUncached {
+		// The uncached profile bypasses the cache: build an encoder for this
+		// call, never lock zstdEncoderMu, never write zstdEncoders.
+		return newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
+	}
 	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
@@ -328,7 +349,7 @@ func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.En
 }
 
 // newZstdEncoder constructs an uncached encoder for a collapsed level and
-// profile. The bounded profile only changes worker count and buffer sizing;
+// profile. The bounded profiles only change worker count and buffer sizing;
 // the window size stays at the level default so output is identical.
 // Benchmarks call it directly to measure cold construction cost without
 // touching the shared cache.
@@ -337,7 +358,7 @@ func newZstdEncoder(level zstd.EncoderLevel, profile EncoderProfile) (*zstd.Enco
 		return nil, err
 	}
 	opts := []zstd.EOption{zstd.WithEncoderLevel(level)}
-	if profile == EncoderProfileBoundedMemory {
+	if profile == EncoderProfileBoundedMemory || profile == EncoderProfileBoundedMemoryUncached {
 		opts = append(opts, zstd.WithEncoderConcurrency(1), zstd.WithLowerEncoderMem(true))
 	}
 	return zstd.NewWriter(nil, opts...)
