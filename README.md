@@ -341,7 +341,7 @@ gin.IsNull("$.optional_field")
 gin.IsNotNull("$.required_field")
 ```
 
-`IsNull` selects row groups holding an explicit JSON `null` for the path. When several documents share one `DocID`, it also selects row groups where at least one of those documents does not carry the path at all. A row group holding a single document keeps the historical reading: an absent key is not null.
+`IsNull` selects every row group holding at least one document with an explicit JSON `null` for the path, or without the path. An absent key counts as null, whatever the row group's document count: in a one-document row group and in a 1:1 index too. `NE` plus `IsNull` therefore covers a document that lacks the path.
 
 ### Nested Fields and Arrays
 
