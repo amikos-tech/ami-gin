@@ -1,8 +1,8 @@
 ---
 phase: 261006-hgl
 verified: 2026-10-06
-status: human_needed
-score: 13/14 expectations verified; E14 partial-by-design; 1 warning (E3 test is weak)
+status: passed
+score: 13/14 expectations verified; E14 open until the maintainer approves the draft follow-up issue. Status was human_needed after the first pass; the E3 warning (W1) is fixed in dbb9c71 and 6df7fe9, see the last section. E14 does not gate the code.
 gaps: []
 human_verification:
   - test: "Maintainer reviews the draft GitHub issue in 261006-hgl-DEFERRED.md before the orchestrator creates it"
