@@ -44,9 +44,9 @@ func buildAggregated(t *testing.T, numRGs int, docs []aggregatedDoc) *GINIndex {
 
 // docMatches is the document-level oracle for the row-group semantics ami-gin
 // implements: a path counts as present when the key exists, null included.
-// An absent key satisfies IsNull only when the row group aggregates several
-// documents (aggregated); a lone document keeps the historical reading.
-func docMatches(p Predicate, data map[string]any, aggregated bool) bool {
+// An absent key counts as null for IsNull, whatever the row group's document
+// count.
+func docMatches(p Predicate, data map[string]any) bool {
 	field := strings.TrimPrefix(p.Path, "$.")
 	value, present := data[field]
 	switch p.Operator {
@@ -59,7 +59,7 @@ func docMatches(p Predicate, data map[string]any, aggregated bool) bool {
 	case OpNIN:
 		return present && !scalarIn(value, p.Value)
 	case OpIsNull:
-		return (present && value == nil) || (!present && aggregated)
+		return !present || value == nil
 	case OpIsNotNull:
 		return present
 	case OpGT, OpGTE, OpLT, OpLTE:
@@ -161,13 +161,9 @@ func indexDocIDs(idx *GINIndex, p Predicate) docIDSet {
 }
 
 func oracleDocIDs(docs []aggregatedDoc, p Predicate) docIDSet {
-	perRG := map[int]int{}
-	for _, doc := range docs {
-		perRG[doc.rg]++
-	}
 	out := docIDSet{}
 	for _, doc := range docs {
-		if docMatches(p, doc.data, perRG[doc.rg] >= 2) {
+		if docMatches(p, doc.data) {
 			out[DocID(doc.rg)] = struct{}{}
 		}
 	}
@@ -480,10 +476,11 @@ func TestDistinctCountsAlignToMultiValueRGs(t *testing.T) {
 	}
 }
 
-// TestNegationSingleDocumentSemanticsUnchanged pins the one-document-per-DocID
+// TestNegationSingleDocumentSemantics pins the one-document-per-DocID
 // behaviour: an array-valued document still counts as "value appears", and a
-// document without the key is not null. No AggregateIndex is built.
-func TestNegationSingleDocumentSemanticsUnchanged(t *testing.T) {
+// document without the key IS null for IsNull (#89). No AggregateIndex is
+// built.
+func TestNegationSingleDocumentSemantics(t *testing.T) {
 	idx := buildAggregated(t, 3, []aggregatedDoc{
 		{0, map[string]any{"tags": []any{"a", "b"}}},
 		{1, map[string]any{"tags": []any{"b"}}},
@@ -495,8 +492,8 @@ func TestNegationSingleDocumentSemanticsUnchanged(t *testing.T) {
 	if got := idx.Evaluate([]Predicate{NE("$.tags[*]", "a")}).ToSlice(); !reflect.DeepEqual(got, []int{1}) {
 		t.Errorf("NE($.tags[*], a) = %v, want [1]", got)
 	}
-	if got := idx.Evaluate([]Predicate{IsNull("$.tags[*]")}).ToSlice(); len(got) != 0 {
-		t.Errorf("IsNull($.tags[*]) = %v, want [] for a 1:1 index", got)
+	if got := idx.Evaluate([]Predicate{IsNull("$.tags[*]")}).ToSlice(); !reflect.DeepEqual(got, []int{2}) {
+		t.Errorf("IsNull($.tags[*]) = %v, want [2]: the third row group holds a document without tags", got)
 	}
 }
 
