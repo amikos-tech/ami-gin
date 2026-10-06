@@ -150,6 +150,6 @@ RG0 `{"env":"prod"}`×2, RG1 `{"env":"prod"}`, RG2 `{"app":"x"}`,`{"app":"y"}`, 
 - A path with no NullIndex now fails open (`AllRGs`, was `NoRGs`). Built indexes never reach it; a crafted
   index could. Same no-under-select bar as the root branch (E12).
 - The E9 legacy oracle is derived from the documents, not from live index internals.
-- Kept as locked by D3 although two reviewers flagged repo style: CHANGELOG `### Changed` + `### Fixed`
-  subsections (earlier releases use flat bullets).
+- CHANGELOG: after shipping PR #90 the user chose flat bullets (repo style) over `### Changed` /
+  `### Fixed` subsections. Both entries (behavior change, #89 fix) stay as two bullets under Unreleased.
 - Skipped: Warn logging on the fail-open branches (low severity, new behavior).
