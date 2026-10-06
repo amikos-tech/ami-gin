@@ -341,7 +341,7 @@ gin.IsNull("$.optional_field")
 gin.IsNotNull("$.required_field")
 ```
 
-`IsNull` selects every row group holding at least one document with an explicit JSON `null` for the path, or without the path. An absent key counts as null, whatever the row group's document count: in a one-document row group and in a 1:1 index too. `NE` plus `IsNull` therefore covers a document that lacks the path.
+`IsNull` selects every row group holding at least one document with an explicit JSON `null` for the path, or without the path. An absent key counts as null, whatever the row group's document count: in a one-document row group and in a 1:1 index too. To cover a document that lacks the path, union the results of separate `NE` and `IsNull` evaluations. `Evaluate` ANDs its predicates, so one call with both would return their intersection.
 
 ### Nested Fields and Arrays
 

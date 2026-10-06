@@ -667,7 +667,7 @@ func isAbsent(v any) bool {
 // TestPropertyNegationUnderAggregation: for random aggregated corpora the
 // index never under-selects on any operator. IsNull is exact on every row
 // group that received documents and never selects fewer row groups than the
-// v1.4.0 rule. NE and NIN with one value are exact on row groups holding at
+// pre-#89 rule (v1.1.0-v1.4.0). NE and NIN with one value are exact on row groups holding at
 // least two documents.
 func TestPropertyNegationUnderAggregation(t *testing.T) {
 	const numRGs = 6
@@ -702,20 +702,19 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 				}
 			}
 			idx := builder.Finalize()
-			// The v1.4.0 IsNull rule: explicit null or multi-document absence.
-			// It repeats the old evaluateIsNull body on purpose, so the new rule
-			// is checked against it and never selects fewer row groups.
-			for _, path := range []string{"$.env", "$.n", "$.id"} {
-				id, ok := idx.pathLookup[path]
-				if !ok {
-					continue
-				}
-				legacy := idx.NullIndexes[id].NullRGBitmap.Union(idx.aggregateAbsentRGs(int(id)))
-				got := idx.Evaluate([]Predicate{IsNull(path)})
-				for _, rg := range legacy.ToSlice() {
-					if !got.IsSet(rg) {
-						return false, fmt.Errorf("IsNull(%s) drops RG %d the v1.4.0 rule selected: docs %v", path, rg, docs)
+			// The pre-#89 IsNull rule, derived from the documents: an explicit
+			// null, or a missing path in a row group holding two or more
+			// documents. The new rule never selects fewer row groups.
+			for _, key := range []string{"env", "n", "id"} {
+				legacy := docIDSet{}
+				for _, doc := range docs {
+					v, has := doc.data[key]
+					if (has && v == nil) || (!has && perRG[doc.rg] >= 2) {
+						legacy[DocID(doc.rg)] = struct{}{}
 					}
+				}
+				if got := indexDocIDs(idx, IsNull("$."+key)); !got.superset(legacy) {
+					return false, fmt.Errorf("IsNull($.%s) drops row groups the pre-#89 rule selected: index %v legacy %v docs %v", key, got.sorted(), legacy.sorted(), docs)
 				}
 			}
 			for _, p := range predicates {
