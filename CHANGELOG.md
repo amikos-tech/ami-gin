@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v1.5.0 (2026-10-06)
 
 - `IsNull` now selects a row group whose single document lacks the path, in
   aggregated indexes and in plain 1:1 indexes. An absent key counts as null
