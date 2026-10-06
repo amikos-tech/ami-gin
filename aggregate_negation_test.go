@@ -703,6 +703,8 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 			}
 			idx := builder.Finalize()
 			// The v1.4.0 IsNull rule: explicit null or multi-document absence.
+			// It repeats the old evaluateIsNull body on purpose, so the new rule
+			// is checked against it and never selects fewer row groups.
 			for _, path := range []string{"$.env", "$.n", "$.id"} {
 				id, ok := idx.pathLookup[path]
 				if !ok {

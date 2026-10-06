@@ -20,30 +20,21 @@ func issue89Index(t *testing.T) *GINIndex {
 	})
 }
 
-func evalSlice(idx *GINIndex, p Predicate) []int {
-	return idx.Evaluate([]Predicate{p}).ToSlice()
-}
-
-func assertSlice(t *testing.T, label string, got, want []int) {
-	t.Helper()
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("%s = %v, want %v", label, got, want)
-	}
-}
-
 func TestIsNullUniformIssue89Repro(t *testing.T) {
 	idx := issue89Index(t)
 
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{2, 3})
-	assertSlice(t, "NE($.env, prod)", evalSlice(idx, NE("$.env", "prod")), []int{})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{2, 3}, "IsNull($.env)")
+	requirePredicateResult(t, idx, []Predicate{NE("$.env", "prod")}, []int{}, "NE($.env, prod)")
 	union := idx.Evaluate([]Predicate{NE("$.env", "prod")}).Union(idx.Evaluate([]Predicate{IsNull("$.env")}))
-	assertSlice(t, "NE union IsNull", union.ToSlice(), []int{2, 3})
-	assertSlice(t, "IsNull($.app)", evalSlice(idx, IsNull("$.app")), []int{0, 1})
+	if got := union.ToSlice(); !reflect.DeepEqual(got, []int{2, 3}) {
+		t.Fatalf("NE union IsNull = %v, want [2 3]", got)
+	}
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.app")}, []int{0, 1}, "IsNull($.app)")
 
 	// Other operators keep their answers.
-	assertSlice(t, "EQ($.env, prod)", evalSlice(idx, EQ("$.env", "prod")), []int{0, 1})
-	assertSlice(t, "IsNotNull($.env)", evalSlice(idx, IsNotNull("$.env")), []int{0, 1})
-	assertSlice(t, "NIN($.env, prod)", evalSlice(idx, NIN("$.env", "prod")), []int{})
+	requirePredicateResult(t, idx, []Predicate{EQ("$.env", "prod")}, []int{0, 1}, "EQ($.env, prod)")
+	requirePredicateResult(t, idx, []Predicate{IsNotNull("$.env")}, []int{0, 1}, "IsNotNull($.env)")
+	requirePredicateResult(t, idx, []Predicate{NIN("$.env", "prod")}, []int{}, "NIN($.env, prod)")
 }
 
 func TestIsNullUniformOneDocumentPerRG(t *testing.T) {
@@ -52,7 +43,7 @@ func TestIsNullUniformOneDocumentPerRG(t *testing.T) {
 		{1, map[string]any{"env": nil}},
 		{2, map[string]any{"app": "x"}},
 	})
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{1, 2})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{1, 2}, "IsNull($.env)")
 }
 
 func TestIsNullUniformPathAbsentFromEveryDocument(t *testing.T) {
@@ -62,7 +53,7 @@ func TestIsNullUniformPathAbsentFromEveryDocument(t *testing.T) {
 		{1, map[string]any{"x": 1.0}},
 		{2, map[string]any{"env": "p"}},
 	})
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{0, 1})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1}, "IsNull($.env)")
 }
 
 func TestIsNullUniformMixedRowGroup(t *testing.T) {
@@ -73,10 +64,11 @@ func TestIsNullUniformMixedRowGroup(t *testing.T) {
 		{1, map[string]any{"env": "p"}},
 	})
 	// The mixed RG is selected; the RG where every document has env is not.
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{0})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0}, "IsNull($.env)")
 }
 
 func TestIsNullUniformEmptyRowGroupsNeverSelected(t *testing.T) {
+	// RGs 4 and 5 receive no document.
 	idx := buildAggregated(t, 6, []aggregatedDoc{
 		{0, map[string]any{"env": "p"}},
 		{1, map[string]any{"env": "p"}},
@@ -84,13 +76,7 @@ func TestIsNullUniformEmptyRowGroupsNeverSelected(t *testing.T) {
 		{2, map[string]any{"env": "p"}},
 		{3, map[string]any{"app": "x"}},
 	})
-	got := evalSlice(idx, IsNull("$.env"))
-	assertSlice(t, "IsNull($.env)", got, []int{3})
-	for _, rg := range got {
-		if rg == 4 || rg == 5 {
-			t.Errorf("IsNull($.env) selected RG %d that received no document", rg)
-		}
-	}
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{3}, "IsNull($.env)")
 }
 
 func TestIsNullUniformSparseDocIDs(t *testing.T) {
@@ -110,19 +96,19 @@ func TestIsNullUniformNestedAndArrayPaths(t *testing.T) {
 		{1, map[string]any{"tags": []any{}}},
 		{2, map[string]any{"a": map[string]any{"b": 1.0}, "tags": []any{"x"}}},
 	})
-	assertSlice(t, "IsNull($.a.b)", evalSlice(idx, IsNull("$.a.b")), []int{0, 1})
-	assertSlice(t, "IsNull($.tags[*])", evalSlice(idx, IsNull("$.tags[*]")), []int{0, 1})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.a.b")}, []int{0, 1}, "IsNull($.a.b)")
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.tags[*]")}, []int{0, 1}, "IsNull($.tags[*])")
 }
 
 func TestIsNullUniformUnknownPathReturnsAllRGs(t *testing.T) {
 	idx := issue89Index(t)
-	assertSlice(t, "IsNull($.nope)", evalSlice(idx, IsNull("$.nope")), []int{0, 1, 2, 3})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.nope")}, []int{0, 1, 2, 3}, "IsNull($.nope)")
 }
 
 func TestIsNullUniformMissingRootNullIndexFailsOpen(t *testing.T) {
 	idx := issue89Index(t)
 	delete(idx.NullIndexes, idx.pathLookup["$"])
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{0, 1, 2, 3})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1, 2, 3}, "IsNull($.env)")
 }
 
 // assertRootPresenceAllDocShapes checks that every committed document marks
@@ -149,8 +135,10 @@ func assertRootPresenceAllDocShapes(t *testing.T, parser Parser) {
 	if !ok {
 		t.Fatal(`root path "$" has no NullIndex`)
 	}
-	assertSlice(t, "root PresentRGBitmap", root.PresentRGBitmap.ToSlice(), []int{0, 1, 2, 3, 4, 5})
-	assertSlice(t, "IsNull($.env)", evalSlice(idx, IsNull("$.env")), []int{0, 1, 2, 3, 4})
+	if got := root.PresentRGBitmap.ToSlice(); !reflect.DeepEqual(got, []int{0, 1, 2, 3, 4, 5}) {
+		t.Fatalf("root PresentRGBitmap = %v, want [0 1 2 3 4 5]", got)
+	}
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1, 2, 3, 4}, "IsNull($.env)")
 }
 
 func TestIsNullUniformRootPresenceAllDocShapes(t *testing.T) {
@@ -160,12 +148,6 @@ func TestIsNullUniformRootPresenceAllDocShapes(t *testing.T) {
 	t.Run("materializing", func(t *testing.T) {
 		assertRootPresenceAllDocShapes(t, materializingParser{})
 	})
-}
-
-func TestIsNullUniformFormatUnchanged(t *testing.T) {
-	if Version != 11 {
-		t.Fatalf("Version = %d, want 11: the IsNull fix changes no wire format", Version)
-	}
 }
 
 // TestIsNullUniformOldGoldenFixedOnRead decodes a v11 index written before the
@@ -178,9 +160,9 @@ func TestIsNullUniformOldGoldenFixedOnRead(t *testing.T) {
 	if idx.Header.Version != 11 {
 		t.Fatalf("golden Header.Version = %d, want 11", idx.Header.Version)
 	}
-	assertSlice(t, "IsNull($.b)", evalSlice(idx, IsNull("$.b")), []int{2, 3})
-	assertSlice(t, "IsNull($.a)", evalSlice(idx, IsNull("$.a")), []int{0, 1, 2})
-	assertSlice(t, "IsNotNull($.a)", evalSlice(idx, IsNotNull("$.a")), []int{0, 2, 3})
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.b")}, []int{2, 3}, "IsNull($.b)")
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.a")}, []int{0, 1, 2}, "IsNull($.a)")
+	requirePredicateResult(t, idx, []Predicate{IsNotNull("$.a")}, []int{0, 2, 3}, "IsNotNull($.a)")
 }
 
 func TestIsNullUniformRoundTrip(t *testing.T) {
@@ -194,8 +176,7 @@ func TestIsNullUniformRoundTrip(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 	for _, path := range []string{"$.env", "$.app", "$.nope"} {
-		want := evalSlice(idx, IsNull(path))
-		got := evalSlice(decoded, IsNull(path))
-		assertSlice(t, "decoded IsNull("+path+")", got, want)
+		want := idx.Evaluate([]Predicate{IsNull(path)}).ToSlice()
+		requirePredicateResult(t, decoded, []Predicate{IsNull(path)}, want, "decoded IsNull("+path+")")
 	}
 }

@@ -235,9 +235,7 @@ type NullIndex struct {
 // AggregateIndex records, per path, evidence that only exists when several
 // documents share one DocID (for example through RowGroupCodec). The negation
 // operators NE, NIN and IsNull consult it; every other operator ignores it.
-// A path without an entry has no multi-document row group of that kind. IsNull
-// still selects one-document row groups that lack the path, because it derives
-// them from root presence at query time.
+// A path without an entry has no multi-document row group of that kind.
 type AggregateIndex struct {
 	// MultiValueRGs marks row groups where at least two documents carry the
 	// path and the path holds at least two distinct values. Such a row group
