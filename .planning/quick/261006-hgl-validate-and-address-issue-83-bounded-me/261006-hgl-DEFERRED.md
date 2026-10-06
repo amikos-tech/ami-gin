@@ -10,7 +10,7 @@
 
 ## Draft GitHub issue
 
-The executor did NOT create this issue. The orchestrator creates it after the maintainer approves the draft.
+The maintainer approved this draft on 2026-10-06. It is filed as https://github.com/amikos-tech/ami-gin/issues/87.
 
 **Title:** Measure and possibly bound the heap retained by the shared zstd decoder
 

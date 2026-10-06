@@ -1,7 +1,7 @@
 # Quick Task 261006-hgl: validate and address issue 83 - Context
 
 **Gathered:** 2026-10-06
-**Status:** Implemented and verified on 2026-10-06. E14 is open until the maintainer approves the draft issue in `261006-hgl-DEFERRED.md`.
+**Status:** Implemented and verified on 2026-10-06. E14 is closed: the maintainer approved the draft and it is filed as issue 87. Shipped as PR 86.
 **Issue:** https://github.com/amikos-tech/ami-gin/issues/83
 **Research:** `261006-hgl-RESEARCH.md`
 **Grilling log (all proposed answers and recommendations):** `261006-hgl-GRILLING.jsonl`
