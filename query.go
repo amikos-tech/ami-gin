@@ -701,12 +701,29 @@ func (idx *GINIndex) negateTerms(pathID int, presentRGs *RGSet, terms map[string
 	return result
 }
 
+// evaluateIsNull unions three sets: row groups with an explicit null, row
+// groups with a multi-document absence (AbsentRGs), and row groups that
+// received a document where the path is not present. The last set is root
+// presence minus path presence. It relies on every committed document marking
+// "$" present, whatever its JSON type. AbsentRGs stays needed for mixed row
+// groups, where the path is present in one document and absent in another.
+// When the root evidence is missing the result fails open to every row group.
 func (idx *GINIndex) evaluateIsNull(pathID int) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
-	if ni, ok := idx.NullIndexes[uint16(pathID)]; ok {
-		return ni.NullRGBitmap.Union(idx.aggregateAbsentRGs(pathID))
+	ni, ok := idx.NullIndexes[uint16(pathID)]
+	if !ok {
+		return NoRGs(numRGs)
 	}
-	return NoRGs(numRGs)
+	rootID, ok := idx.pathLookup["$"]
+	if !ok {
+		return AllRGs(numRGs)
+	}
+	root, ok := idx.NullIndexes[rootID]
+	if !ok || root.PresentRGBitmap == nil || ni.PresentRGBitmap == nil || ni.NullRGBitmap == nil {
+		return AllRGs(numRGs)
+	}
+	lacking := root.PresentRGBitmap.Intersect(ni.PresentRGBitmap.Invert())
+	return ni.NullRGBitmap.Union(idx.aggregateAbsentRGs(pathID)).Union(lacking)
 }
 
 func (idx *GINIndex) evaluateIsNotNull(pathID int) *RGSet {
@@ -910,6 +927,12 @@ func NIN(path string, values ...any) Predicate {
 	return Predicate{Path: path, Operator: OpNIN, Value: values}
 }
 
+// IsNull selects every row group holding at least one document whose value for
+// path is an explicit JSON null, or that does not carry the path. It does so
+// whatever the row group's document count. Combine it with NE or NIN to keep a
+// row group whose document lacks the path. Indexes written by v10 and v11
+// builders give the same answer, because one-document row groups are derived
+// at query time from root presence.
 func IsNull(path string) Predicate {
 	return Predicate{Path: path, Operator: OpIsNull}
 }
