@@ -420,6 +420,22 @@ gin-index build -c attributes -low-memory data.parquet
 gin-index extract -low-memory -o data.parquet.gin data.parquet
 ```
 
+To keep nothing live after the call, use `EncoderProfileBoundedMemoryUncached`:
+
+```go
+data, err := gin.EncodeContext(ctx, idx, gin.WithEncodeProfile(gin.EncoderProfileBoundedMemoryUncached))
+
+cfg, err := gin.NewConfig(gin.WithEncoderProfile(gin.EncoderProfileBoundedMemoryUncached))
+```
+
+The library builds the encoder for the call and drops it, so the heap retained
+after a level-15 encode is near zero (about 0.001 MB measured). Do not use it
+in a service that encodes often. Each call pays encoder construction, about
+2 ms and 44 MB allocated at level 15 on a small index. N concurrent calls
+build N encoders, about N x 44 MB at level 15, and the library sets no limit.
+Output is byte-identical and the wire format (v11) does not change. See
+[docs/encoder-profile-benchmarks.md](docs/encoder-profile-benchmarks.md#uncached-bounded-memory-profile-issue-83).
+
 A per-call `WithEncodeProfile` overrides the config profile, including an
 explicit `EncoderProfileDefault`. The profile is runtime-only and never
 serialized; a decoded index always reads `EncoderProfileDefault`.

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Add `EncoderProfileBoundedMemoryUncached` (#83), a third encoder profile
+  for batch jobs that encode once and must not keep the shared encoder live.
+  It builds a one-worker, low-memory zstd encoder for each call and drops it,
+  so the heap retained after a level-15 encode is near zero instead of about
+  42 MB. Do not use it in a process that encodes often: each call pays
+  construction, about 2 ms and 44 MB allocated at level 15 on a small index.
+  N concurrent calls build N encoders, about N x 44 MB at level 15, and the
+  library sets no limit. Output is byte-identical at the same level and the
+  wire format does not change. Select it with the existing `WithEncodeProfile`
+  and `WithEncoderProfile`. There is no new option and no CLI flag. This is
+  additive, so it fits a minor release.
+
 ## v1.3.0 (2026-09-27)
 
 - Opt-in bounded-memory zstd encoder profile (#79). The shared encoder that
