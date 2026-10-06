@@ -111,6 +111,29 @@ func TestIsNullUniformMissingRootNullIndexFailsOpen(t *testing.T) {
 	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1, 2, 3}, "IsNull($.env)")
 }
 
+func TestIsNullUniformMissingPathNullIndexFailsOpen(t *testing.T) {
+	idx := issue89Index(t)
+	delete(idx.NullIndexes, idx.pathLookup["$.env"])
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1, 2, 3}, "IsNull($.env)")
+}
+
+func TestIsNullUniformMissingRootPathFailsOpen(t *testing.T) {
+	idx := issue89Index(t)
+	delete(idx.pathLookup, "$")
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{0, 1, 2, 3}, "IsNull($.env)")
+}
+
+// A decoded path bitmap may carry fewer row groups than the header; the
+// complement must still cover the high row groups.
+func TestIsNullUniformShortPathBitmapKeepsHighRowGroups(t *testing.T) {
+	idx := issue89Index(t)
+	short := MustNewRGSet(2)
+	short.Set(0)
+	short.Set(1)
+	idx.NullIndexes[idx.pathLookup["$.env"]].PresentRGBitmap = short
+	requirePredicateResult(t, idx, []Predicate{IsNull("$.env")}, []int{2, 3}, "IsNull($.env)")
+}
+
 // assertRootPresenceAllDocShapes checks that every committed document marks
 // the root path present, whatever its JSON type, for the given parser.
 func assertRootPresenceAllDocShapes(t *testing.T, parser Parser) {

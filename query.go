@@ -703,13 +703,13 @@ func (idx *GINIndex) negateTerms(pathID int, presentRGs *RGSet, terms map[string
 
 // evaluateIsNull adds root presence minus path presence to the explicit nulls
 // and AbsentRGs: every committed document marks "$" present, so the difference
-// is the row groups whose documents all lack the path. Without root evidence
-// it fails open.
+// is the row groups whose documents all lack the path. Without a NullIndex for
+// the path or root evidence it fails open.
 func (idx *GINIndex) evaluateIsNull(pathID int) *RGSet {
 	numRGs := int(idx.Header.NumRowGroups)
 	ni, ok := idx.NullIndexes[uint16(pathID)]
 	if !ok {
-		return NoRGs(numRGs)
+		return AllRGs(numRGs)
 	}
 	rootID, ok := idx.pathLookup["$"]
 	if !ok {
@@ -719,7 +719,10 @@ func (idx *GINIndex) evaluateIsNull(pathID int) *RGSet {
 	if !ok {
 		return AllRGs(numRGs)
 	}
-	result := root.PresentRGBitmap.Intersect(ni.PresentRGBitmap.Invert())
+	// Complement against the header count: a decoded bitmap may be shorter.
+	result := AllRGs(numRGs)
+	result.Roaring().AndNot(ni.PresentRGBitmap.Roaring())
+	result.Roaring().And(root.PresentRGBitmap.Roaring())
 	result.UnionWith(ni.NullRGBitmap)
 	result.UnionWith(idx.aggregateAbsentRGs(pathID))
 	return result
@@ -928,8 +931,9 @@ func NIN(path string, values ...any) Predicate {
 
 // IsNull selects every row group holding at least one document whose value for
 // path is an explicit JSON null, or that does not carry the path, whatever the
-// row group's document count. Combine it with NE or NIN to keep row groups
-// whose documents lack the path.
+// row group's document count. Union its result with a separate NE or NIN
+// evaluation to keep row groups whose documents lack the path; Evaluate ANDs
+// its predicates.
 func IsNull(path string) Predicate {
 	return Predicate{Path: path, Operator: OpIsNull}
 }
