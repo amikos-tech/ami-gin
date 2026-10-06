@@ -665,8 +665,10 @@ func isAbsent(v any) bool {
 }
 
 // TestPropertyNegationUnderAggregation: for random aggregated corpora the
-// index never under-selects on any operator, and NE, NIN with one value and
-// IsNull are exact on row groups holding at least two documents.
+// index never under-selects on any operator. IsNull is exact on every row
+// group that received documents and never selects fewer row groups than the
+// v1.4.0 rule. NE and NIN with one value are exact on row groups holding at
+// least two documents.
 func TestPropertyNegationUnderAggregation(t *testing.T) {
 	const numRGs = 6
 	properties := gopter.NewProperties(propertyTestParametersWithBudgets(300, 60))
@@ -700,13 +702,30 @@ func TestPropertyNegationUnderAggregation(t *testing.T) {
 				}
 			}
 			idx := builder.Finalize()
+			// The v1.4.0 IsNull rule: explicit null or multi-document absence.
+			for _, path := range []string{"$.env", "$.n", "$.id"} {
+				id, ok := idx.pathLookup[path]
+				if !ok {
+					continue
+				}
+				legacy := idx.NullIndexes[id].NullRGBitmap.Union(idx.aggregateAbsentRGs(int(id)))
+				got := idx.Evaluate([]Predicate{IsNull(path)})
+				for _, rg := range legacy.ToSlice() {
+					if !got.IsSet(rg) {
+						return false, fmt.Errorf("IsNull(%s) drops RG %d the v1.4.0 rule selected: docs %v", path, rg, docs)
+					}
+				}
+			}
 			for _, p := range predicates {
 				got := indexDocIDs(idx, p)
 				want := oracleDocIDs(docs, p)
 				if !got.superset(want) {
 					return false, fmt.Errorf("%s under-selects: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
 				}
-				exact := p.Operator == OpNE || p.Operator == OpIsNull ||
+				if p.Operator == OpIsNull && !got.equals(want) {
+					return false, fmt.Errorf("%s not exact: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
+				}
+				exact := p.Operator == OpNE ||
 					(p.Operator == OpNIN && (p.Path == "$.env" || len(p.Value.([]any)) == 1))
 				if exact && !got.intersect(multiDoc).equals(want.intersect(multiDoc)) {
 					return false, fmt.Errorf("%s not exact on aggregated row groups: index %v oracle %v docs %v", p, got.sorted(), want.sorted(), docs)
