@@ -602,6 +602,9 @@ func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	evictAllProfiles(CompressionBest)
 	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached) // warm up
+	// Evict again: an encoder the warm-up wrongly cached would otherwise sit
+	// in the baseline and hide the retention this test looks for.
+	evictAllProfiles(CompressionBest)
 
 	base := settledHeap()
 	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached)
