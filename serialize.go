@@ -199,7 +199,9 @@ type encodeRuntime struct {
 // intentionally unexported.
 type EncodeOption func(*encodeRuntime)
 
-// EncoderProfile selects how much memory the shared zstd encoder retains.
+// EncoderProfile selects how the zstd encoder for an encode call is built and
+// whether it stays in the shared cache, which sets how much memory the process
+// retains after the call.
 // The profile never changes the compressed bytes: for a given index and
 // compression level every profile produces identical output. It is a
 // runtime-only setting and is not written into the serialized index.
@@ -221,6 +223,21 @@ const (
 	// that one worker instead of running in parallel. See
 	// docs/encoder-profile-benchmarks.md for the measured tables.
 	EncoderProfileBoundedMemory
+	// EncoderProfileBoundedMemoryUncached builds a one-worker, low-memory zstd
+	// encoder for each call and drops it. Nothing stays in the shared encoder
+	// cache, so the heap that remains after the call is near zero, even at
+	// level 15. The output is byte-identical to the other profiles.
+	//
+	// Do not use it in a process that encodes often. Each call pays encoder
+	// construction: about 2 ms and 44 MB allocated at level 15 on a small index. Use
+	// EncoderProfileBoundedMemory there. N concurrent calls build N encoders,
+	// which allocate about N x 44 MB at level 15 (this is allocation, not a
+	// measured peak). The library sets no limit. The encoder is dropped for the
+	// garbage collector to reclaim. The call does not close it. A decoded index
+	// carries the default profile, so pass WithEncodeProfile on each call when
+	// you re-encode a loaded index. See docs/encoder-profile-benchmarks.md for
+	// numbers.
+	EncoderProfileBoundedMemoryUncached
 )
 
 // String returns the profile name; unknown values render as their number.
@@ -230,6 +247,8 @@ func (p EncoderProfile) String() string {
 		return "default"
 	case EncoderProfileBoundedMemory:
 		return "bounded-memory"
+	case EncoderProfileBoundedMemoryUncached:
+		return "bounded-memory-uncached"
 	default:
 		return "EncoderProfile(" + strconv.Itoa(int(p)) + ")"
 	}
@@ -237,10 +256,10 @@ func (p EncoderProfile) String() string {
 
 func (p EncoderProfile) validate() error {
 	switch p {
-	case EncoderProfileDefault, EncoderProfileBoundedMemory:
+	case EncoderProfileDefault, EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached:
 		return nil
 	default:
-		return errors.Errorf("unknown encoder profile %d (want EncoderProfileDefault or EncoderProfileBoundedMemory)", uint8(p))
+		return errors.Errorf("unknown encoder profile %d (want EncoderProfileDefault, EncoderProfileBoundedMemory or EncoderProfileBoundedMemoryUncached)", uint8(p))
 	}
 }
 
@@ -289,9 +308,11 @@ func WithDecodeSignals(signals telemetry.Signals) DecodeOption {
 // collapse, levels 10-19 would each retain a separate SpeedBestCompression
 // state. A default-profile encoder keeps the GOMAXPROCS-sized worker pool so
 // concurrent encodes at the same level run in parallel; a bounded-memory
-// encoder keeps one worker. The two profiles never share an instance. Shared
-// instances are never Closed by production code; tests evict and Close
-// entries through evictSharedZstdEncoder.
+// encoder keeps one worker. The profiles never share an instance, and the
+// uncached bounded-memory profile never enters the cache: encodeWithLevel
+// builds its encoder for the call. Shared instances are never Closed by
+// production code; tests evict and Close entries through
+// evictSharedZstdEncoder.
 type zstdEncoderKey struct {
 	level   zstd.EncoderLevel
 	profile EncoderProfile
@@ -312,7 +333,13 @@ func sharedZstdEncoderKey(level CompressionLevel, profile EncoderProfile) zstdEn
 	return zstdEncoderKey{level: zstd.EncoderLevelFromZstd(int(level)), profile: profile}
 }
 
+// sharedZstdEncoder returns the cached encoder for (level, profile) and builds
+// it on first use. It rejects EncoderProfileBoundedMemoryUncached, which
+// encodeWithLevel routes to newZstdEncoder so the encoder never enters the cache.
 func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.Encoder, error) {
+	if profile == EncoderProfileBoundedMemoryUncached {
+		return nil, errors.New("uncached encoder profile must not use the shared encoder cache")
+	}
 	key := sharedZstdEncoderKey(level, profile)
 	zstdEncoderMu.Lock()
 	defer zstdEncoderMu.Unlock()
@@ -327,17 +354,18 @@ func sharedZstdEncoder(level CompressionLevel, profile EncoderProfile) (*zstd.En
 	return enc, nil
 }
 
-// newZstdEncoder constructs an uncached encoder for a collapsed level and
-// profile. The bounded profile only changes worker count and buffer sizing;
-// the window size stays at the level default so output is identical.
-// Benchmarks call it directly to measure cold construction cost without
-// touching the shared cache.
+// newZstdEncoder constructs a new encoder for a collapsed level and profile
+// and does not store it in the shared cache. The bounded profiles only change
+// worker count and buffer sizing. The window size stays at the level default,
+// so the output is identical. encodeWithLevel calls it directly for
+// EncoderProfileBoundedMemoryUncached. Benchmarks call it directly to measure
+// cold construction cost.
 func newZstdEncoder(level zstd.EncoderLevel, profile EncoderProfile) (*zstd.Encoder, error) {
 	if err := profile.validate(); err != nil {
 		return nil, err
 	}
 	opts := []zstd.EOption{zstd.WithEncoderLevel(level)}
-	if profile == EncoderProfileBoundedMemory {
+	if profile == EncoderProfileBoundedMemory || profile == EncoderProfileBoundedMemoryUncached {
 		opts = append(opts, zstd.WithEncoderConcurrency(1), zstd.WithLowerEncoderMem(true))
 	}
 	return zstd.NewWriter(nil, opts...)
@@ -506,7 +534,14 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 		return append([]byte(uncompressedMagic), buf.Bytes()...), nil
 	}
 
-	encoder, err := sharedZstdEncoder(level, profile)
+	var encoder *zstd.Encoder
+	var err error
+	if profile == EncoderProfileBoundedMemoryUncached {
+		// Built for this call and garbage once it returns.
+		encoder, err = newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
+	} else {
+		encoder, err = sharedZstdEncoder(level, profile)
+	}
 	if err != nil {
 		return nil, errors.Wrapf(err, "create zstd encoder (level %d, profile %s)", level, profile)
 	}

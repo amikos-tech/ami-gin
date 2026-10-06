@@ -4689,16 +4689,18 @@ func BenchmarkEvaluateWithTracer(b *testing.B) {
 }
 
 // BenchmarkEncoderProfile compares the default and bounded-memory zstd
-// encoder profiles (issue #79). Run it at several worker-pool sizes:
+// encoder profiles (issues #79, #83). Run it at several worker-pool sizes:
 //
 //	make bench-encoder-profile            # GOMAXPROCS=1, 4, 16
 //
 // Sub-benchmarks: profile / level / fixture / cold|repeated.
-//   - cold: constructs an uncached encoder per iteration and encodes the
-//     serialized payload once; retained_MB is the heap still held after GC
-//     while that encoder is alive (the cost the shared cache keeps forever).
-//   - repeated: the public EncodeWithLevelContext path against the shared
-//     cache; retained_MB is measured once for the cache entry the loop uses.
+//   - cold: constructs a fresh encoder per iteration (never in the shared
+//     cache) and encodes the serialized payload once; retained_MB is the heap
+//     still held after GC while that encoder is alive.
+//   - repeated: the public EncodeWithLevelContext path; retained_MB is
+//     measured once after the first call. It is the shared cache entry for
+//     the cached profiles. For EncoderProfileBoundedMemoryUncached, which
+//     builds an encoder per call, it is the heap still live after the call.
 //
 // Both report compressed_bytes; -benchmem supplies allocs/op and B/op.
 func BenchmarkEncoderProfile(b *testing.B) {
@@ -4714,7 +4716,7 @@ func BenchmarkEncoderProfile(b *testing.B) {
 		fixtures[i].payload = uncompressedPayload(b, fixtures[i].idx)
 	}
 	levels := []CompressionLevel{CompressionBest, CompressionBalanced}
-	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory}
+	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached}
 
 	for _, profile := range profiles {
 		for _, level := range levels {
@@ -4730,6 +4732,7 @@ func BenchmarkEncoderProfile(b *testing.B) {
 						// Forced GCs are measurement overhead, not construction
 						// cost, so keep them out of the timed region.
 						b.StopTimer()
+						heapAllocAfterGC()
 						before := heapAllocAfterGC()
 						b.StartTimer()
 						enc, err := newZstdEncoder(encLevel, profile)
@@ -4739,7 +4742,8 @@ func BenchmarkEncoderProfile(b *testing.B) {
 						out := enc.EncodeAll(payload, nil)
 						compressed = float64(len(out))
 						b.StopTimer()
-						retained += float64(heapAllocAfterGC()-before) / (1 << 20)
+						heapAllocAfterGC()
+						retained += heapGrowthMB(before, heapAllocAfterGC())
 						runtime.KeepAlive(enc)
 						b.StartTimer()
 						enc.Close()
@@ -4754,12 +4758,16 @@ func BenchmarkEncoderProfile(b *testing.B) {
 					opts := []EncodeOption{WithEncodeProfile(profile)}
 					// Measure what the shared cache retains for this key by
 					// evicting it, then constructing it through the public path.
+					// For the uncached profile there is nothing to evict, and the
+					// delta is the heap still live after the public call returns.
 					evictSharedZstdEncoder(level, profile)
+					heapAllocAfterGC()
 					before := heapAllocAfterGC()
 					if _, err := EncodeWithLevelContext(ctx, fixture.idx, level, opts...); err != nil {
 						b.Fatal(err)
 					}
-					retained := float64(heapAllocAfterGC()-before) / (1 << 20)
+					heapAllocAfterGC()
+					retained := heapGrowthMB(before, heapAllocAfterGC())
 					var compressed int
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
@@ -4787,6 +4795,13 @@ func uncompressedPayload(b *testing.B, idx *GINIndex) []byte {
 		b.Fatal(err)
 	}
 	return data[len(uncompressedMagic):]
+}
+
+// heapGrowthMB returns after-before in MiB as a signed value. It does not clamp
+// at 0: a negative value shows an unsettled baseline instead of hiding
+// retention as 0.
+func heapGrowthMB(before, after uint64) float64 {
+	return float64(int64(after)-int64(before)) / (1 << 20)
 }
 
 func heapAllocAfterGC() uint64 {

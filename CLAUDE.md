@@ -29,7 +29,7 @@ go run ./examples/basic/main.go
 1. **Builder** (`builder.go`) - Ingests JSON documents via `AddDocument(rgID, jsonDoc)`, walks JSON structure, extracts paths/values
 2. **Index** (`gin.go`) - Final immutable index created by `Finalize()`, contains all index structures
 3. **Query** (`query.go`) - Evaluates predicates against index, returns `RGSet` bitmap of matching row groups
-4. **Serialize** (`serialize.go`) - Binary encoding with zstd compression via `Encode()`/`Decode()`. zstd encoders are shared per (zstd mode, `EncoderProfile`); `EncoderProfileBoundedMemory` (via `WithEncoderProfile` config option or `WithEncodeProfile` per call) keeps one worker instead of one per `GOMAXPROCS` with byte-identical output
+4. **Serialize** (`serialize.go`) - Binary encoding with zstd compression via `Encode()`/`Decode()`. zstd encoders are shared per (zstd mode, `EncoderProfile`); `EncoderProfileBoundedMemory` (via `WithEncoderProfile` config option or `WithEncodeProfile` per call) keeps one worker instead of one per `GOMAXPROCS` with byte-identical output; `EncoderProfileBoundedMemoryUncached` builds the same one-worker encoder in `encodeWithLevel` for each call and never stores it in the shared cache
 
 ### Index Structures (all keyed by pathID)
 
