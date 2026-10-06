@@ -580,17 +580,14 @@ func TestEncoderProfileUncachedConfigReachesAllEncodePaths(t *testing.T) {
 	}
 }
 
-// E3: after one level-15 uncached encode and GC, the heap is near the
-// baseline. A cached bounded encoder keeps about 42 MB, which the control
-// half of the test must see. Not parallel: it reads global heap state.
+// encodeWithProfileNoRetain runs one level-15 encode. It is noinline and
+// returns nothing, so no stack slot in the caller keeps the encoder alive.
 //
 //go:noinline
-func encodeLenWithProfile(idx *GINIndex, profile EncoderProfile) int {
-	data, err := EncodeWithLevelContext(context.Background(), idx, CompressionBest, WithEncodeProfile(profile))
-	if err != nil {
+func encodeWithProfileNoRetain(idx *GINIndex, profile EncoderProfile) {
+	if _, err := EncodeWithLevelContext(context.Background(), idx, CompressionBest, WithEncodeProfile(profile)); err != nil {
 		panic(err)
 	}
-	return len(data)
 }
 
 func settledHeap() int64 {
@@ -598,13 +595,16 @@ func settledHeap() int64 {
 	return int64(heapAllocAfterGC())
 }
 
+// E3: after one level-15 uncached encode and GC, the heap is near the
+// baseline. A cached bounded encoder keeps about 42 MB, which the control
+// half of the test must see. Not parallel: it reads global heap state.
 func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 	idx := buildAdaptiveSerializationFixture(t, DefaultConfig())
 	evictAllProfiles(CompressionBest)
-	encodeLenWithProfile(idx, EncoderProfileBoundedMemoryUncached) // warm up
+	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached) // warm up
 
 	base := settledHeap()
-	encodeLenWithProfile(idx, EncoderProfileBoundedMemoryUncached)
+	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemoryUncached)
 	growth := settledHeap() - base
 	if growth > 8<<20 {
 		t.Errorf("uncached profile retained %d bytes after encode, want under 8 MiB", growth)
@@ -612,7 +612,7 @@ func TestEncoderProfileUncachedDoesNotRetainEncoder(t *testing.T) {
 
 	// Control: the cached bounded profile must show the retained encoder.
 	base = settledHeap()
-	encodeLenWithProfile(idx, EncoderProfileBoundedMemory)
+	encodeWithProfileNoRetain(idx, EncoderProfileBoundedMemory)
 	controlGrowth := settledHeap() - base
 	evictSharedZstdEncoder(CompressionBest, EncoderProfileBoundedMemory)
 	if controlGrowth < 20<<20 {
