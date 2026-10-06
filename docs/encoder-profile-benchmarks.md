@@ -82,3 +82,34 @@ The L3 columns above are sourced from the `highcard` fixture (matching the `high
 - Cold construction of the default level-15 encoder is the expensive step at high GOMAXPROCS (hundreds of MB allocated and zeroed once). Repeated encodes through the shared cache allocate only the per-call serialization buffers under either profile.
 - Repeated-encode time is within noise between profiles for a single caller. The bounded profile serializes concurrent same-level encodes on its one worker, so a process that encodes many indexes in parallel loses that parallelism.
 - Level 3 retains 1 to 2 MB on the small fixture and 10 to 37 MB on the high-cardinality fixture under either profile. Its output is about 8% larger than level 15 on the high-cardinality fixture and slightly smaller on the small one, so dropping the level is a different trade-off from bounding the workers.
+
+## Uncached bounded-memory profile (issue #83)
+
+`EncoderProfileBoundedMemoryUncached` builds a one-worker, low-memory encoder for each call and drops it. Nothing stays in the shared cache.
+
+This section was measured on a different host than the tables above. Those tables name klauspost/compress v1.19.2 in their header, while go.mod now pins v1.20.0. The numbers here are not directly comparable with them.
+
+Host: darwin/arm64, Apple M2 Max, GOMAXPROCS=4, go1.27.1, klauspost/compress v1.20.0, benchtime=10x, 2026-10-06.
+
+```
+GOMAXPROCS=4 go test -run '^$' -bench 'BenchmarkEncoderProfile/bounded-memory/L(15|3)/(small|highcard)/(cold|repeated)' -benchmem -benchtime=10x -count=1 .
+```
+
+| Profile | Level | Fixture | Allocated per call | Retained after the call | Time per call |
+|---|---:|---|---:|---:|---:|
+| bounded-memory | 15 | small | 44.4 MB | 42.2 MB | 0.9 ms |
+| bounded-memory-uncached | 15 | small | 44.7 MB | 0.001 MB | 2.7 ms |
+| bounded-memory | 15 | highcard | 46.0 MB | 42.5 MB | 20.2 ms |
+| bounded-memory-uncached | 15 | highcard | 50.0 MB | 0.001 MB | 29.0 ms |
+| bounded-memory | 3 | small | 1.5 MB | 1.3 MB | 0.3 ms |
+| bounded-memory-uncached | 3 | small | 1.9 MB | 0.001 MB | 0.4 ms |
+| bounded-memory | 3 | highcard | 11.7 MB | 9.8 MB | 6.1 ms |
+| bounded-memory-uncached | 3 | highcard | 15.7 MB | 0.001 MB | 7.2 ms |
+
+- Allocated per call is cumulative allocation (`Alloc/op`, decimal MB). It is a proxy for peak memory, not a measured peak. For the cached row it is the `cold` figure, the first call (construction plus encode), not the steady state. For the uncached row it is the `repeated` figure, which is every call.
+- Retained after the call is the live heap after a forced GC, in MiB, from the `retained_MB` metric of `repeated`. The uncached value is clamped at 0 when the heap ends below the baseline. The 0.001 MB figure is noise.
+- Time per call is the `repeated` `ns/op`. For the uncached profile it includes encoder construction on every call. Single runs of 10 iterations are noisy.
+
+When to use it: if the process encodes often, use `EncoderProfileBoundedMemory`, which pays construction once. If the process encodes once per batch and must not keep 42 MB live, use the uncached profile.
+
+Concurrent calls each build their own encoder. N concurrent level-15 calls allocate about N x 44 MB at once. The library sets no limit. The encoder is dropped for the garbage collector to reclaim. The profile does not close it.

@@ -227,7 +227,7 @@ const (
 	// level 15. The output is byte-identical to the other profiles.
 	//
 	// Do not use it in a process that encodes often. Each call pays encoder
-	// construction: about 4 ms and 44 MB allocated at level 15. Use
+	// construction: about 2 ms and 44 MB allocated at level 15 on a small index. Use
 	// EncoderProfileBoundedMemory there. N concurrent calls build N encoders,
 	// so the peak is about N x 44 MB at level 15. The library sets no limit.
 	// The encoder is dropped for the garbage collector to reclaim. The call

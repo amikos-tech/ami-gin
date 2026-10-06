@@ -4714,7 +4714,7 @@ func BenchmarkEncoderProfile(b *testing.B) {
 		fixtures[i].payload = uncompressedPayload(b, fixtures[i].idx)
 	}
 	levels := []CompressionLevel{CompressionBest, CompressionBalanced}
-	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory}
+	profiles := []EncoderProfile{EncoderProfileDefault, EncoderProfileBoundedMemory, EncoderProfileBoundedMemoryUncached}
 
 	for _, profile := range profiles {
 		for _, level := range levels {
@@ -4739,7 +4739,7 @@ func BenchmarkEncoderProfile(b *testing.B) {
 						out := enc.EncodeAll(payload, nil)
 						compressed = float64(len(out))
 						b.StopTimer()
-						retained += float64(heapAllocAfterGC()-before) / (1 << 20)
+						retained += heapGrowthMB(before, heapAllocAfterGC())
 						runtime.KeepAlive(enc)
 						b.StartTimer()
 						enc.Close()
@@ -4754,12 +4754,14 @@ func BenchmarkEncoderProfile(b *testing.B) {
 					opts := []EncodeOption{WithEncodeProfile(profile)}
 					// Measure what the shared cache retains for this key by
 					// evicting it, then constructing it through the public path.
+					// For the uncached profile there is nothing to evict, and the
+					// delta is the heap still live after the public call returns.
 					evictSharedZstdEncoder(level, profile)
 					before := heapAllocAfterGC()
 					if _, err := EncodeWithLevelContext(ctx, fixture.idx, level, opts...); err != nil {
 						b.Fatal(err)
 					}
-					retained := float64(heapAllocAfterGC()-before) / (1 << 20)
+					retained := heapGrowthMB(before, heapAllocAfterGC())
 					var compressed int
 					b.ResetTimer()
 					for i := 0; i < b.N; i++ {
@@ -4787,6 +4789,15 @@ func uncompressedPayload(b *testing.B, idx *GINIndex) []byte {
 		b.Fatal(err)
 	}
 	return data[len(uncompressedMagic):]
+}
+
+// heapGrowthMB returns after-before in MiB, clamped at 0. The heap can end
+// below the baseline, and a uint64 subtraction would underflow.
+func heapGrowthMB(before, after uint64) float64 {
+	if after <= before {
+		return 0
+	}
+	return float64(after-before) / (1 << 20)
 }
 
 func heapAllocAfterGC() uint64 {
