@@ -181,7 +181,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 
 - **License**: MIT — simple, permissive, compatible with all dependency licenses
 - **Module path**: Must be `github.com/amikos-tech/ami-gin` to match the GitHub repo URL
-- **Go version**: 1.25.5 (already current)
+- **Go version**: 1.26.0 (go.mod floor; raised in #97 by OpenTelemetry v1.47.0)
 - **No breaking API changes**: Existing API surface is clean — preserve it through the OSS transition
 <!-- GSD:project-end -->
 
@@ -189,10 +189,10 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 ## Technology Stack
 
 ## Languages
-- Go 1.25.5 - Entire codebase (library + CLI tool)
+- Go 1.26.0 - Entire codebase (library + CLI tool)
 - None
 ## Runtime
-- Go toolchain 1.25.5 (specified in `go.mod`)
+- Go toolchain 1.26.0 (specified in `go.mod`)
 - No `.go-version` or `.tool-versions` file detected
 - Go modules (`go.mod` + `go.sum`)
 - Lockfile: `go.sum` present (67KB)
@@ -241,7 +241,7 @@ GIN Index is a Generalized Inverted Index library for JSON data, designed for ro
 - `.golangci.yml` - Linter configuration
 - `Makefile` - Build targets: `build`, `test`, `lint`, `lint-fix`, `clean`, `help`
 ## Platform Requirements
-- Go 1.25.5+
+- Go 1.26.0+
 - `golangci-lint` for linting
 - `gotestsum` (auto-installed by `make test`)
 - No CGo dependencies - pure Go
