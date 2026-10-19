@@ -223,7 +223,7 @@ Plans:
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 5/5 | Complete    | 2026-07-23 |
-| 22. SIMD Validation, Benchmarks & CI | v1.3 | 8/8 | Complete   | 2026-10-19 |
+| 22. SIMD Validation, Benchmarks & CI | v1.3 | 8/8 | Complete    | 2026-10-19 |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
 | 25. Follow-On Profiling & Measurement-Backed Optimizations | v1.3 | 0/- | Planned | - |

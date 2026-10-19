@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: "Issue #54 shipped — PR #64 (self-review)"
-stopped_at: Completed 22-06-PLAN.md
-last_updated: "2026-09-14T14:28:04.041Z"
+status: ready_to_plan
+stopped_at: Phase 22 complete (8/8) — ready to discuss Phase 999.7
+last_updated: 2026-10-19T09:40:04.844Z
 last_activity: 2026-09-14
 progress:
   total_phases: 8
   completed_phases: 3
   total_plans: 16
-  completed_plans: 15
+  completed_plans: 47
   percent: 38
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-04-27)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 22 — simd-validation-benchmarks-ci
+**Current focus:** Phase 999.7 — simd parser runtime fallback dx
 
 ## Current Position
 
-Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 8 of 8
-Status: Issue #54 shipped — PR #64 (self-review)
-Last activity: 2026-10-06 - Completed quick task 261006-mlx: issue #89 uniform IsNull for row groups lacking the path
+Phase: 999.7
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-10-19
 
 Progress: [█████████░] 94%
 
