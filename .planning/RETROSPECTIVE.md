@@ -101,6 +101,57 @@
 
 ---
 
+## Milestone: v1.3 — SIMD-First Performance
+
+**Shipped:** 2026-10-19
+**Phases:** 4 (19-22) | **Plans:** 16 | **Tasks:** 32
+**Timeline:** 2026-04-27 → 2026-10-19 (Phases 19-21 by 2026-07-23; Phase 22 plans 01-07 on 2026-08-01; Plan 22-08 waited on an admin ruleset change until 2026-10-19)
+
+### What Was Built
+
+- **SIMD strategy** (Phase 19): `pure-simdjson` pin, MIT/NOTICE posture, upstream loading delegation, `NewSIMDParser()` behind `//go:build simdjson`, hard/soft stop policy.
+- **Benchmark dataset foundation** (Phase 20): governed deterministic JSONL fixtures, offline Build/Encode/Query benchmarks, opt-in local external tier.
+- **SIMD adapter** (Phase 21): typed scalar routes, exact-int semantics, last-key-wins traversal, default-graph isolation, cleanup failures that poison the builder exactly once.
+- **Validation and CI** (Phase 22): parity hard gate, five-seed differential fuzz, drift-checked deployment guide, five-platform required/advisory matrix with native cache and explicit-path replay, dual `govulncheck`, controlled 80-sample benchmark, Main ruleset bound to the two required legs.
+
+### What Worked
+
+- **Parity first, performance second.** Byte-identical index and equal query results were the hard gate; the benchmark was allowed to say "no". It did, and the project kept stdlib as the default without debate.
+- **Decide on evidence, not thresholds.** `COUNT=10` controlled captures were authoritative and shared-runner output was trend-only. The defer decision rests on one committed document.
+- **Required/advisory CI split.** Two required race legs gate merge; three advisory legs record platform evidence. The windows leg failed once on the PR run and later passed on main without blocking anything.
+- **Quick tasks absorbed real production work.** Five releases (v1.1.1 to v1.5.0) shipped from issue-driven quick tasks while the milestone's last plan waited.
+
+### What Was Inefficient
+
+- **Phase 22 stalled 2.5 months on one admin action.** Plan 22-08 needed a ruleset change the agent was not allowed to make. The todo was filed on 2026-08-02 and acted on 2026-10-19.
+- **The SIMD performance bet did not pay.** Three phases of adapter work produced a parity-proven path that is slower than stdlib on every fixture. A smaller spike before Phase 21 might have surfaced that earlier, though parity and CI assets remain useful.
+- **Phases 23-25 were planned into the milestone but never had a chance.** They added 18 requirements that stayed `Planned` for six months and were deferred at close.
+- **Planning state drifted from releases.** STATE.md stopped at 2026-09-14 while v1.3.0, v1.4.0 and v1.5.0 shipped. The planning milestone name `v1.3` now collides with the release tag `v1.3.0`.
+- **Toolchain pin masked a green gate.** Running `make security-scan` under `GOTOOLCHAIN=go1.25.5` reported eight already-fixed stdlib advisories; CI on Go 1.26 was clean.
+
+### Patterns Established
+
+- **Qualified parity claim.** "Identical encoded indexes and query results for documents that ingest without a parser-layer error" is the exact wording in tests, docs and evidence; the malformed-attribution asymmetry is the named exclusion.
+- **External policy is inspected read-only, mutated under separate authority.** Ruleset changes live in a todo and are verified after the fact.
+- **Drift guards for pinned versions.** `check-simd-docs` derives the effective module version via `go list` and fails lint on stale references.
+- **Evidence documents have one recommendation class.** `ship | defer | narrow`, no threshold, traceable to raw samples.
+
+### Key Lessons
+
+1. **Name planning milestones so they cannot collide with release tags.** Use a codename or the next real release version.
+2. **Keep a milestone to the phases that can start now.** Park follow-on phases in the backlog from day one instead of carrying unstarted requirements to close.
+3. **Spike the performance claim before building the adapter.** A one-day paired benchmark on a throwaway adapter would have set expectations for Phases 21-22.
+4. **Admin-gated checkpoints need an owner and a date.** A blocking human-action with no deadline stalls the whole phase.
+5. **Run gates on the CI toolchain version.** Pin the local toolchain to match CI, not to the go.mod floor.
+
+### Cost Observations
+
+- Model mix: quality profile (opus-class orchestration, sonnet executors and verifiers); no explicit budget tracking
+- Sessions: Phase 19-22 execution sessions plus ~25 issue-driven quick tasks between 2026-07-22 and 2026-10-06
+- Notable: The controlled benchmark and the five-platform CI matrix were the highest-value artifacts; they settled the SIMD question with evidence rather than opinion.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -110,6 +161,7 @@
 | v0.1.0 (OSS launch) | 5 | — | Treat planning dir as private (`.planning/` gitignored, force-add for commits) |
 | v1.0 (Query & Index Quality) | 7 | 19 | Added evidence reconciliation as a numbered phase; external PR review for doc-only changes |
 | v1.2 (Ingest Correctness) | 3 | 12 | Established per-document ingest atomicity, unified failure modes, and structured ingest error reporting |
+| v1.3 (SIMD-First Performance) | 4 | 16 | Evidence-first performance work: parity hard gate, controlled COUNT=10 benchmarks, required/advisory CI; outcome was a documented defer |
 
 ### Cumulative Quality
 
@@ -118,6 +170,7 @@
 | v0.1.0 | ~12,000 | 12 | 5 | v8 | ~8 |
 | v1.0 | ~25,500 | 12 | 13 + 3 helpers | v9 | ~15 |
 | v1.2 | ~36,000 | 12 | 13 + 3 helpers | v9 | ~25 |
+| v1.3 | ~47,600 | 12 | 13 + 3 helpers | v11 | 65 |
 
 ### Top Lessons (Verified Across Milestones)
 
