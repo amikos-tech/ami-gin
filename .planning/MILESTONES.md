@@ -70,3 +70,36 @@
 - Phase verification passed 8/8, 15/15, and 16/16 must-haves for Phases 16, 17, and 18 respectively.
 
 ---
+
+## v1.3 SIMD-First Performance (Shipped: 2026-10-19)
+
+**Phases completed:** 4 phases (19-22), 16 plans, 32 tasks
+**Known deferred items at close:** 3 phases (23-25) with 15 requirements, 1 dormant seed, 36 quick-task directories flagged `missing` by `audit-open` (see STATE.md Deferred Items)
+**Git tag:** _none for the planning milestone; releases v1.3.0, v1.4.0 and v1.5.0 shipped during it_
+
+**Archived artifacts:**
+
+- [`milestones/v1.3-ROADMAP.md`](./milestones/v1.3-ROADMAP.md)
+- [`milestones/v1.3-REQUIREMENTS.md`](./milestones/v1.3-REQUIREMENTS.md)
+
+**Key accomplishments:**
+
+- `19-SIMD-STRATEGY.md` locked the `pure-simdjson` pin, MIT/NOTICE posture, upstream loading delegation, `NewSIMDParser()` behind `//go:build simdjson`, explicit `WithParser` opt-in, and the hard/soft stop policy.
+- Governed, deterministic JSONL benchmark fixtures (nested high-cardinality, mixed wildcard arrays, numeric boundaries) drive offline Build, Encode, and Query benchmarks with an opt-in local external tier.
+- Build-tagged SIMD adapter with typed scalar routes, exact-int semantics, last-key-wins traversal, default-graph isolation, and native cleanup failures that poison the builder exactly once.
+- Byte-identical encoded indexes and equal query results across 12 authored goldens, 4 realistic fixtures and 24 Evaluate cases, plus a five-seed bounded differential fuzz target.
+- Five-platform SIMD CI matrix (two required race legs, three advisory legs) with an effective-version native cache, explicit-path replay, dual `govulncheck` call graphs, and the Main ruleset bound to exactly the two required contexts.
+- Controlled 80-sample paired benchmark: parity passed, but SIMD was slower on every fixture (geomean +64.57% time, +28.50% Go-heap bytes, +56.12% allocations). Recommendation class **defer** accepted; stdlib stays the default.
+
+**Shipped outside GSD during the milestone:** v1.3.0 (bounded-memory zstd encoder profile, #79), v1.4.0 (uncached bounded-memory profile, #83), v1.5.0 (uniform `IsNull`, #89), plus precise NIN on multi-value row groups (#63, wire v11), the O(2^depth) nested-array staging fix (#54), and regex literal composition and Unicode fold fixes (#68, #70).
+
+### Known Gaps
+
+Deferred unplanned phases, moved to the roadmap backlog at close:
+
+- Phase 23 Row-Level Pruning Positioning: POS-01, POS-02
+- Phase 24 Developer Quality Gates & Janitorial Clarity: QG-01, CLAR-01
+- Phase 25 Follow-On Profiling & Measurement-Backed Optimizations: PROF-01..05, ENC-01..03, ING-01..03 (ENC partly superseded by the shipped encoder profiles; ING-02/03 remain parked)
+- Backlog Phase 999.7 SIMD runtime fallback DX: dropped, moot under the defer decision
+
+---

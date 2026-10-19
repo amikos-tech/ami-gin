@@ -22,3 +22,7 @@ The three advisory SIMD contexts must remain non-required, unrelated rules and r
 ## Solution
 
 An authorized repository administrator should update the active default-branch ruleset to require exactly the two named SIMD contexts. Then inspect the rules read-only, confirm the binding, and resume `$gsd-execute-phase 22` so Plan 22-08 can complete Task 2 and begin the final controlled-evidence approval checkpoint.
+
+## Resolution (2026-10-19)
+
+A repository administrator added a `required_status_checks` rule to the active `Main` ruleset (id 14266305) binding exactly `SIMD (linux/amd64, required)` and `SIMD (darwin/arm64, required)` (GitHub Actions integration 15368, non-strict). The three advisory contexts stay non-required. Unrelated rules are unchanged. Plan 22-08 resumed the same day.

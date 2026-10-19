@@ -2,35 +2,33 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: SIMD-First Performance
-status: "Issue #54 shipped — PR #64 (self-review)"
-stopped_at: Completed 22-06-PLAN.md
-last_updated: "2026-09-14T14:28:04.041Z"
-last_activity: 2026-09-14
+status: Awaiting next milestone
+stopped_at: Milestone v1.3 closed 2026-10-19; next milestone not defined
+last_updated: "2026-10-19T09:40:11.305Z"
+last_activity: 2026-10-19 — Milestone v1.3 completed and archived
 progress:
-  total_phases: 8
-  completed_phases: 3
+  total_phases: 4
+  completed_phases: 4
   total_plans: 16
-  completed_plans: 15
-  percent: 38
+  completed_plans: 16
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-04-27)
+See: `.planning/PROJECT.md` (updated 2026-10-19)
 
 **Core value:** Material pruning quality and hot-path efficiency gains without turning the library into a heavyweight database or document store
-**Current focus:** Phase 22 — simd-validation-benchmarks-ci
+**Current focus:** Planning the next milestone (v1.3 closed 2026-10-19; candidates listed in ROADMAP.md)
 
 ## Current Position
 
-Phase: 22 (simd-validation-benchmarks-ci) — EXECUTING
-Plan: 8 of 8
-Status: Issue #54 shipped — PR #64 (self-review)
-Last activity: 2026-10-06 - Completed quick task 261006-mlx: issue #89 uniform IsNull for row groups lacking the path
-
-Progress: [█████████░] 94%
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-10-19 — Milestone v1.3 completed and archived
 
 ## Performance Metrics
 
@@ -140,10 +138,11 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
   - Phase 23: Row-Level Pruning Positioning — POS-01..02
   - Phase 24: Developer Quality Gates & Janitorial Clarity — QG-01, CLAR-01
   - Phase 25: Follow-On Profiling & Measurement-Backed Optimizations — PROF-01..05, ENC-01..03, ING-01..03
+- v1.3 closed 2026-10-19 after Phase 22 Plan 22-08: the Main ruleset was bound to the two required SIMD contexts, the `defer` recommendation was accepted, Phases 23-25 (never started) moved to backlog 999.8-999.10, and backlog 999.7 was dropped as moot. Releases v1.3.0, v1.4.0 and v1.5.0 shipped from quick tasks during the milestone.
 
 ### Pending Todos
 
-- [Bind required SIMD checks in ruleset](todos/pending/2026-08-02-bind-required-simd-checks-in-ruleset.md) — Phase 22 Plan 22-08 is blocked until exactly the two required SIMD contexts bind the default branch.
+- None. The ruleset todo was resolved on 2026-10-19 and moved to `todos/completed/`.
 
 ### Blockers/Concerns
 
@@ -152,6 +151,7 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 - Phase 17 integration gate is green: `go test ./...`, `make test`, `make lint`, and `go build ./...` passed. Advisory review warnings are documented in `17-REVIEW.md` and residual risks in `17-VERIFICATION.md`.
 - `bloom.AddString`, `hll.AddString`, `trigram.Add`, and `RGSet.Set` are presumed infallible — explicit audit is included in 16-01.
 - Phase 19 resolved the v1.3 SIMD dependency blockers; Phase 21 must consume `19-SIMD-STRATEGY.md` before adding product code.
+- Phase 22 code review (`22-REVIEW.md`, 2026-10-19) is advisory: 0 critical, 4 warnings (tagged files never linted with `-tags simdjson`; `always()` on the explicit-path step; `strings.Replace` count 1 in the docs drift guard; `softSkipped` read order in the fuzz harness), 10 info. Not fixed at milestone close; folded into backlog 999.9.
 
 ### Quick Tasks Completed (v1.1, retained for reference)
 
@@ -221,11 +221,27 @@ Items deferred to current or later milestones:
 | feature | `zap` logger adapter | on-demand | Ship `slog`/`stdlib` only; add `zap` on explicit user request |
 | feature | Two-file index diff (CLI) | on-demand | Low value vs. complexity; wait for user signal |
 | feature | Experimentation CLI REPL/TUI | out-of-scope | Charter excludes interactive modes |
+| feature | SIMD parser as a shippable performance option | deferred (Phase 22) | Parity passed; every controlled fixture favored stdlib. Needs new controlled profiling or a materially different workload. Adapter stays opt-in behind `-tags simdjson` |
+| phase | 999.8 Row-Level Pruning Positioning (POS-01..02) | backlog | Deferred from v1.3 Phase 23 at close 2026-10-19 |
+| phase | 999.9 Developer Quality Gates & Janitorial Clarity (QG-01, CLAR-01) | backlog | Deferred from v1.3 Phase 24 at close 2026-10-19; include a `-tags simdjson` lint pass (22-REVIEW WR-01) |
+| phase | 999.10 Profiling & Measurement-Backed Optimizations (PROF-01..05, ENC-01..03, ING-01..03) | backlog | Deferred from v1.3 Phase 25 at close 2026-10-19; ENC partly superseded by shipped encoder profiles (#79, #83) |
+
+Items acknowledged and deferred at milestone close on 2026-10-19 (`gsd-sdk query audit-open`):
+
+| Category | Item | Status |
+|----------|------|--------|
+| quick_task | 36 quick-task directories under `.planning/quick/` reported as `missing` (no SDK-recognized summary marker); all are recorded as completed in the Quick Tasks tables above | acknowledged |
+| seed | SEED-001-simdjson-test-datasets | dormant; activated by Phase 20, seed file not updated |
+| todo | 2026-08-02-bind-required-simd-checks-in-ruleset | resolved 2026-10-19, moved to completed |
 
 ## Session Continuity
 
-Last session: 2026-08-01T10:11:51.812Z
-Stopped at: Completed 22-06-PLAN.md
+Last session: 2026-10-19
+Stopped at: Milestone v1.3 closed (Phase 22 verified 4/4; archives in `milestones/`)
 Resume file: None
 
-**Next step:** Execute Phase 22 Plan 08.
+**Next step:** Define the next milestone with `/gsd:new-milestone`. Suggested scope: regex pruning precision (#93, #94, #95) first.
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
