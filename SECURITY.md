@@ -55,7 +55,7 @@ Security support currently applies to the latest development line on main and, o
 | T18-10 | Denial of Service | mitigate | CLOSED | `recordExperimentIngestFailure` in `cmd/gin-index/experiment.go` increments failure counts before enforcing the sample cap; `TestRecordExperimentIngestFailureCapsSamplesInArrivalOrder` verifies counts accumulate while samples stay capped. |
 | T18-11 | Repudiation | mitigate | CLOSED | `experimentIngestFailureGroups` and `experimentIngestLayerRank` pin parser/transformer/numeric/schema/resource/unknown ordering; `TestExperimentIngestFailureGroupsDeterministic` and `TestRunExperimentMaxStagedPathsReportsResourceFailureWithoutValue` assert stable order and resource grouping. |
 | T18-12 | Information Disclosure | mitigate | CLOSED | `IngestError.Value` documents verbatim, caller-owned document-data values and empty resource values; see the IngestError type doc (ingest_error.go:31-45) for where resource diagnostics live. The Unreleased changelog repeats the release-facing contract. |
-| T18-13 | Repudiation | mitigate | CLOSED | `.planning/phases/18-structured-ingesterror-cli-integration/18-VALIDATION.md:22`, `:23`, `:81`, and `:84` record focused and full verification commands plus execution results. |
+| T18-13 | Repudiation | mitigate | CLOSED | `docs/structured-ingesterror-validation.md:22`, `:23`, `:81`, and `:84` record focused and full verification commands plus execution results. |
 
 #### Threat Flags
 
