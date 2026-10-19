@@ -4,7 +4,7 @@ milestone: v1.3
 milestone_name: SIMD-First Performance
 status: Awaiting next milestone
 stopped_at: Milestone v1.3 closed 2026-10-19; next milestone not defined
-last_updated: "2026-10-19T09:40:11.305Z"
+last_updated: "2026-10-19T11:40:00.000Z"
 last_activity: 2026-10-19 — Milestone v1.3 completed and archived
 progress:
   total_phases: 4
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-10-19)
 Phase: Milestone v1.3 complete
 Plan: —
 Status: Awaiting next milestone
-Last activity: 2026-10-19 — Milestone v1.3 completed and archived
+Last activity: 2026-10-19 — Completed quick task 261019-jzd: Go version references in CLAUDE.md updated to 1.26.0
 
 ## Performance Metrics
 
@@ -206,6 +206,13 @@ Key decisions shaping v1.2 (from brainstorming, 2026-04-23):
 | 260925-kcs | PR #80 review findings on encoder profile (#79): trailing EncodeOption on WriteSidecar/EncodeToMetadata/RebuildWithIndex/S3 sidecar helpers, single-worker + lowMem assertion test, experiment -low-memory no-op warning, build/extract test hardening, memory numbers aligned to 34/560/42 MB, klauspost pin v1.19.2 | 2026-09-27 | 873c5e7 |  | [260925-kcs-address-pr-80-review-findings-on-encoder](./quick/260925-kcs-address-pr-80-review-findings-on-encoder/) |
 | 261006-hgl | Issue #83: opt-in `EncoderProfileBoundedMemoryUncached` (one-worker encoder built per call, never in the shared cache), tests for the 14 confirmed expectations, new benchmark doc section, README and CHANGELOG | 2026-10-06 | 6df7fe9 | Verified | [261006-hgl-validate-and-address-issue-83-bounded-me](./quick/261006-hgl-validate-and-address-issue-83-bounded-me/) |
 | 261006-mlx | Issue #89: uniform `IsNull` (absent counts as null in every row group, 1:1 indexes included) derived at query time from root `$` presence minus path presence; no wire format change, v11 indexes fixed on read; fail open on short or missing presence evidence; grilling ledger + prior-art research on absent vs null | 2026-10-06 | 361691d | Verified | [261006-mlx-fix-issue-89-isnull-misses-single-docume](./quick/261006-mlx-fix-issue-89-isnull-misses-single-docume/) |
+
+### Quick Tasks Completed (post-v1.3 maintenance)
+
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 261019-jzd | Update the four stale Go 1.25.5 references in CLAUDE.md to the go.mod floor 1.26.0 (raised in #97 by OpenTelemetry v1.47.0) | 2026-10-19 | cb32eb1 |  | [261019-jzd-update-go-version-references-in-claude-m](./quick/261019-jzd-update-go-version-references-in-claude-m/) |
+
 
 ## Deferred Items
 
