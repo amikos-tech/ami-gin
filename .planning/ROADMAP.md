@@ -42,7 +42,7 @@ Full details: [`milestones/v1.2-ROADMAP.md`](./milestones/v1.2-ROADMAP.md)
 - [x] **Phase 19: SIMD Dependency Decision & Integration Strategy** — Resolve the `pure-simdjson` license/tag/distribution questions and lock the integration approach so implementation can start immediately.
 - [x] **Phase 20: Realistic Benchmark Dataset Foundation** — Activate SEED-001 with fixture governance, dataset acquisition rules, and smoke-scale benchmark inputs for SIMD and non-SIMD performance work.
 - [x] **Phase 21: SIMD Parser Adapter** — Land the opt-in same-package SIMD parser behind the Phase 13 parser seam. (completed 2026-07-23)
-- [ ] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path.
+- [x] **Phase 22: SIMD Validation, Benchmarks & CI** — Validate parity, performance, dataset handling, and build-tag CI for the SIMD path. (completed 2026-10-19)
 - [ ] **Phase 23: Row-Level Pruning Positioning** — Promote row-level pruning (`rg=1`) as a supported usage pattern across README, CLI/docs, and experimentation guidance.
 - [ ] **Phase 24: Developer Quality Gates & Janitorial Clarity** — Add local pre-push quality gates and close the low-risk Phase 06 code clarity backlog.
 - [ ] **Phase 25: Follow-On Profiling & Measurement-Backed Optimizations** — Profile encode and ingest hotspots, then implement only the encode strategy or ingest optimizations justified by measurements.
@@ -128,7 +128,7 @@ Plans:
 3. CI covers default builds and `-tags simdjson` builds with explicit skip/fail behavior when platform or shared-library requirements are unmet.
 4. Runtime loading and release/distribution guidance explains how consumers enable SIMD without guesswork.
 
-**Plans:** 7/8 plans executed
+**Plans:** 8/8 plans complete
 
 Plans:
 **Wave 1**
@@ -161,7 +161,7 @@ Plans:
 
 **Wave 8** *(blocked on Wave 7 completion)*
 
-- [ ] 22-08-PLAN.md — Verify merge-rule bindings and approve controlled performance evidence
+- [x] 22-08-PLAN.md — Verify merge-rule bindings and approve controlled performance evidence
 
 ### Phase 23: Row-Level Pruning Positioning
 
@@ -223,7 +223,7 @@ Plans:
 | 19. SIMD Dependency Decision & Integration Strategy | v1.3 | 1/1 | Complete | 2026-04-27 |
 | 20. Realistic Benchmark Dataset Foundation | v1.3 | 2/2 | Complete    | 2026-07-21 |
 | 21. SIMD Parser Adapter | v1.3 | 5/5 | Complete    | 2026-07-23 |
-| 22. SIMD Validation, Benchmarks & CI | v1.3 | 7/8 | In Progress|  |
+| 22. SIMD Validation, Benchmarks & CI | v1.3 | 8/8 | Complete   | 2026-10-19 |
 | 23. Row-Level Pruning Positioning | v1.3 | 0/- | Planned | - |
 | 24. Developer Quality Gates & Janitorial Clarity | v1.3 | 0/- | Planned | - |
 | 25. Follow-On Profiling & Measurement-Backed Optimizations | v1.3 | 0/- | Planned | - |
