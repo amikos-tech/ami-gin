@@ -490,11 +490,8 @@ func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.Parque
 // The version comes from the index file, so anything other than printable
 // ASCII is quoted to keep terminal escapes out of the output.
 func formatTrigramUnicodeVersion(version string, supported bool) string {
-	for i := 0; i < len(version); i++ {
-		if version[i] < 0x20 || version[i] > 0x7e {
-			version = strconv.Quote(version)
-			break
-		}
+	if strings.IndexFunc(version, func(r rune) bool { return r < 0x20 || r > 0x7e }) >= 0 {
+		version = strconv.Quote(version)
 	}
 	if supported {
 		return version
