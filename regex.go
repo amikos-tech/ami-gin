@@ -12,9 +12,9 @@ const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 // least one returned literal as a substring, so callers must treat the list
 // as OR. A case-folded literal run ((?i)) is dropped entirely — contributing
 // no literal — when any rune in it has a unicode.SimpleFold orbit member
-// whose unicode.ToLower differs from that rune's own ToLower; the drop
-// applies to the whole merged literal node, not just the offending rune (see
-// foldsUnderToLower). Returns nil when no literal is guaranteed or the
+// whose frozen trigram lowercase (trigramLowerRune, Unicode 15.0.0) differs
+// from that rune's own; the drop applies to the whole merged literal node,
+// not just the offending rune (see foldsUnderToLower). Returns nil when no literal is guaranteed or the
 // expansion exceeds maxLiteralExpansion.
 //
 //	"foo|bar"          -> ["foo", "bar"]
@@ -107,14 +107,17 @@ func extractConcatLiterals(subs []*syntax.Regexp) literalSet {
 	return literalSet{literals: append(groups, run...), whole: whole}
 }
 
-// foldsUnderToLower reports whether strings.ToLower, which TrigramIndex applies
-// to both sides, equates every rune in a (?i) literal with its whole fold orbit.
-// "s" fails: regexp folds it with "ſ" (long s), which ToLower keeps as is.
+// foldsUnderToLower reports whether the frozen trigram lowercase
+// (trigramLowerRune, Unicode 15.0.0), which TrigramIndex applies to both
+// sides, equates every rune in a (?i) literal with its whole fold orbit. The
+// orbit comes from the toolchain's unicode.SimpleFold because the reader's
+// regexp does the real match. "s" fails: regexp folds it with "ſ" (long s),
+// which the lowercase keeps as is.
 func foldsUnderToLower(runes []rune) bool {
 	for _, r := range runes {
-		lower := unicode.ToLower(r)
+		lower := trigramLowerRune(r)
 		for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
-			if unicode.ToLower(f) != lower {
+			if trigramLowerRune(f) != lower {
 				return false
 			}
 		}
