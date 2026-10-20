@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- Trigram grams no longer depend on the Go toolchain (#99). `Contains`,
+  `Regex`, `GenerateNGrams`, `GenerateTrigrams`, `GenerateBigrams` and
+  `ExtractTrigrams` now lowercase text and drop whitespace-only and
+  punctuation-or-symbol-only grams with in-tree tables frozen at Unicode
+  15.0.0. Before, an index built with Go 1.26 (Unicode 15.0.0) and queried
+  with Go 1.27 (Unicode 17.0.0), or the reverse, could prune a matching row
+  group. Go 1.21-1.26 already used Unicode 15.0.0, so existing indexes and
+  encoded bytes do not change. The wire format stays v11.
+- The index config can record `trigram_unicode_version`. A fresh index writes
+  no key, and an absent key means 15.0.0. When a reader does not know the
+  recorded version, it skips trigram pruning for that index only. `Contains`
+  and `Regex` return all row groups, and the other operators still prune.
+- Reader-version boundary: ami-gin v1.5.x and older readers ignore the field
+  and cannot apply that fallback. A future table upgrade therefore requires
+  that you upgrade all readers before any writer records a new version.
+- Rebuild note: rebuild indexes that ami-gin v1.5.x or older built with a
+  binary compiled by Go 1.27 or newer, if the data can hold Unicode 16 or 17
+  characters (`gin-index build` or `BuildFromParquet`). Indexes that these
+  versions built with Go 1.21-1.26 are not affected.
+- `gin-index info` prints the trigram Unicode version, and marks an unknown
+  version as unsupported. The new read-only `GINIndex.TrigramUnicodeVersion()`
+  accessor returns it (additive API).
+- The `ToLower`, `EmailDomain` and `URLHost` transformers still lowercase with
+  the builder's toolchain. #102 tracks this risk.
+
 ## v1.5.0 (2026-10-06)
 
 - `IsNull` now selects a row group whose single document lacks the path, in
