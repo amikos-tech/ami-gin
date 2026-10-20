@@ -2,7 +2,7 @@ package gin
 
 import (
 	"bytes"
-	"os"
+	"encoding/json"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -14,19 +14,21 @@ var trigramUnicodeUnknownGolden = filepath.Join("testdata", "trigram-unicode", "
 // not know, as written by a future ami-gin.
 const trigramUnicodeForeignToken = "17.0.0"
 
-var trigramUnicodeVersionDocs = []string{
-	`{"v":"hello world","k":"a"}`,
-	`{"v":"other text","k":"b"}`,
+var trigramUnicodeVersionDocs = []map[string]string{
+	{"v": "hello world", "k": "a"},
+	{"v": "other text", "k": "b"},
 }
 
-func buildTrigramUnicodeVersionIndex(t *testing.T, cfg GINConfig) *GINIndex {
+// buildTrigramUnicodeIndex builds an index with one document per row group.
+func buildTrigramUnicodeIndex(t *testing.T, cfg GINConfig, docs []map[string]string) *GINIndex {
 	t.Helper()
-	builder, err := NewBuilder(cfg, len(trigramUnicodeVersionDocs))
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	for i, doc := range trigramUnicodeVersionDocs {
-		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+	builder := mustNewBuilder(t, cfg, len(docs))
+	for i, fields := range docs {
+		doc, err := json.Marshal(fields)
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if err := builder.AddDocument(DocID(i), doc); err != nil {
 			t.Fatalf("AddDocument(%d): %v", i, err)
 		}
 	}
@@ -37,7 +39,7 @@ func buildTrigramUnicodeVersionIndex(t *testing.T, cfg GINConfig) *GINIndex {
 // foreign writer would, and encodes it.
 func encodeWithTrigramToken(t *testing.T, token string) []byte {
 	t.Helper()
-	idx := buildTrigramUnicodeVersionIndex(t, DefaultConfig())
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs)
 	idx.trigramUnicodeToken = token
 	encoded, err := Encode(idx)
 	if err != nil {
@@ -64,49 +66,29 @@ func encodedConfigJSON(t *testing.T, idx *GINIndex) []byte {
 	return buf.Bytes()
 }
 
-func trigramIndexFor(t *testing.T, idx *GINIndex, path string) *TrigramIndex {
+// requireTrigramSearch checks a direct TrigramIndex.Search on $.v; an empty
+// want matches an empty result.
+func requireTrigramSearch(t *testing.T, idx *GINIndex, pattern string, want []int) {
 	t.Helper()
-	pathID, ok := idx.pathLookup[path]
+	ti, ok := idx.TrigramIndexes[requirePathID(t, idx, "$.v")]
 	if !ok {
-		t.Fatalf("path %s not in index", path)
+		t.Fatal("no trigram index for $.v")
 	}
-	ti, ok := idx.TrigramIndexes[pathID]
-	if !ok {
-		t.Fatalf("no trigram index for %s", path)
+	if got := ti.Search(pattern).ToSlice(); !slices.Equal(got, want) {
+		t.Fatalf("Search(%q) = %v, want %v", pattern, got, want)
 	}
-	return ti
 }
 
 // trigramPruningQueries all prune on a supported index. Every regex literal
 // is at least N runes long, so evaluateRegex reaches TrigramIndex.Search.
 var trigramPruningQueries = []struct {
-	name   string
-	run    func(idx *GINIndex) []int
+	pred   Predicate
 	pruned []int
 }{
-	{"contains hello", evalPreds(Contains("$.v", "hello")), []int{0}},
-	{"regex hello|xyzzy", evalPreds(Regex("$.v", "hello|xyzzy")), []int{0}},
-	{"regex hello.*world", evalPreds(Regex("$.v", "hello.*world")), []int{0}},
-	{"contains zzzzzz", evalPreds(Contains("$.v", "zzzzzz")), nil},
-	{"direct search zzzzzz", func(idx *GINIndex) []int {
-		return idx.TrigramIndexes[idx.pathLookup["$.v"]].Search("zzzzzz").ToSlice()
-	}, nil},
-}
-
-func evalPreds(preds ...Predicate) func(idx *GINIndex) []int {
-	return func(idx *GINIndex) []int {
-		return idx.Evaluate(preds).ToSlice()
-	}
-}
-
-func assertRGs(t *testing.T, label string, got, want []int) {
-	t.Helper()
-	if len(got) == 0 && len(want) == 0 {
-		return
-	}
-	if !slices.Equal(got, want) {
-		t.Errorf("%s: got RGs %v, want %v", label, got, want)
-	}
+	{Contains("$.v", "hello"), []int{0}},
+	{Regex("$.v", "hello|xyzzy"), []int{0}},
+	{Regex("$.v", "hello.*world"), []int{0}},
+	{Contains("$.v", "zzzzzz"), nil},
 }
 
 func TestTrigramUnicodeVersionFreshIndexWritesNoKey(t *testing.T) {
@@ -117,7 +99,7 @@ func TestTrigramUnicodeVersionFreshIndexWritesNoKey(t *testing.T) {
 	if bytes.Contains(encodedConfigJSON(t, &GINIndex{Config: &cfg}), []byte("trigram_unicode_version")) {
 		t.Errorf("writeConfig(DefaultConfig) wrote trigram_unicode_version")
 	}
-	idx := buildTrigramUnicodeVersionIndex(t, DefaultConfig())
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs)
 	if bytes.Contains(encodedConfigJSON(t, idx), []byte("trigram_unicode_version")) {
 		t.Errorf("writeConfig of a freshly built index wrote trigram_unicode_version")
 	}
@@ -143,9 +125,12 @@ func TestTrigramUnicodeVersionUnknownTokenDisablesTrigramPruning(t *testing.T) {
 		"explicit": decodeWithTrigramToken(t, trigramUnicodeVersion),
 	}
 	for name, idx := range controls {
-		for _, q := range trigramPruningQueries {
-			assertRGs(t, name+" control "+q.name, q.run(idx), q.pruned)
-		}
+		t.Run(name, func(t *testing.T) {
+			for _, q := range trigramPruningQueries {
+				requireRows(t, idx, q.pred, q.pruned)
+			}
+			requireTrigramSearch(t, idx, "zzzzzz", nil)
+		})
 	}
 
 	unknown := decodeWithTrigramToken(t, trigramUnicodeForeignToken)
@@ -153,14 +138,15 @@ func TestTrigramUnicodeVersionUnknownTokenDisablesTrigramPruning(t *testing.T) {
 		t.Errorf("TrigramUnicodeVersion() = (%q, %t), want (%q, false)", v, ok, trigramUnicodeForeignToken)
 	}
 	for _, q := range trigramPruningQueries {
-		assertRGs(t, "unknown "+q.name, q.run(unknown), []int{0, 1})
+		requireRows(t, unknown, q.pred, []int{0, 1})
 	}
+	requireTrigramSearch(t, unknown, "zzzzzz", []int{0, 1})
 
 	// The fallback is per predicate: EQ keeps pruning on its own and when
 	// intersected with a disabled Contains, in either order.
-	assertRGs(t, "unknown EQ", evalPreds(EQ("$.k", "a"))(unknown), []int{0})
-	assertRGs(t, "unknown EQ AND Contains", evalPreds(EQ("$.k", "a"), Contains("$.v", "hello"))(unknown), []int{0})
-	assertRGs(t, "unknown Contains AND EQ", evalPreds(Contains("$.v", "hello"), EQ("$.k", "a"))(unknown), []int{0})
+	requireRows(t, unknown, EQ("$.k", "a"), []int{0})
+	requirePredicateResult(t, unknown, []Predicate{EQ("$.k", "a"), Contains("$.v", "hello")}, []int{0}, "unknown EQ AND Contains")
+	requirePredicateResult(t, unknown, []Predicate{Contains("$.v", "hello"), EQ("$.k", "a")}, []int{0}, "unknown Contains AND EQ")
 }
 
 func TestTrigramUnicodeVersionRoundTripKeepsUnknownToken(t *testing.T) {
@@ -189,7 +175,7 @@ func TestTrigramUnicodeVersionRoundTripKeepsUnknownToken(t *testing.T) {
 
 func TestTrigramUnicodeVersionSupportedTokensKeepPruning(t *testing.T) {
 	explicit := decodeWithTrigramToken(t, trigramUnicodeVersion)
-	assertRGs(t, "explicit 15.0.0", evalPreds(Contains("$.v", "hello"))(explicit), []int{0})
+	requireRows(t, explicit, Contains("$.v", "hello"), []int{0})
 	if v, ok := explicit.TrigramUnicodeVersion(); v != trigramUnicodeVersion || !ok {
 		t.Errorf("explicit TrigramUnicodeVersion() = (%q, %t)", v, ok)
 	}
@@ -200,7 +186,7 @@ func TestTrigramUnicodeVersionSupportedTokensKeepPruning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
-	fresh, err := Encode(buildTrigramUnicodeVersionIndex(t, DefaultConfig()))
+	fresh, err := Encode(buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs))
 	if err != nil {
 		t.Fatalf("Encode fresh: %v", err)
 	}
@@ -212,7 +198,7 @@ func TestTrigramUnicodeVersionSupportedTokensKeepPruning(t *testing.T) {
 	}
 
 	// Nil config: Encode writes a zero-length config section.
-	idx := buildTrigramUnicodeVersionIndex(t, DefaultConfig())
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs)
 	idx.Config = nil
 	encoded, err := Encode(idx)
 	if err != nil {
@@ -225,7 +211,7 @@ func TestTrigramUnicodeVersionSupportedTokensKeepPruning(t *testing.T) {
 	if nilCfg.Config != nil {
 		t.Fatalf("decoded Config = %+v, want nil", nilCfg.Config)
 	}
-	assertRGs(t, "nil config", evalPreds(Contains("$.v", "hello"))(nilCfg), []int{0})
+	requireRows(t, nilCfg, Contains("$.v", "hello"), []int{0})
 	if v, ok := nilCfg.TrigramUnicodeVersion(); v != trigramUnicodeVersion || !ok {
 		t.Errorf("nil config TrigramUnicodeVersion() = (%q, %t)", v, ok)
 	}
@@ -233,7 +219,7 @@ func TestTrigramUnicodeVersionSupportedTokensKeepPruning(t *testing.T) {
 
 func TestTrigramUnicodeVersionFreshBuildFromForeignConfig(t *testing.T) {
 	foreign := decodeWithTrigramToken(t, trigramUnicodeForeignToken)
-	rebuilt := buildTrigramUnicodeVersionIndex(t, *foreign.Config)
+	rebuilt := buildTrigramUnicodeIndex(t, *foreign.Config, trigramUnicodeVersionDocs)
 	if bytes.Contains(encodedConfigJSON(t, rebuilt), []byte("trigram_unicode_version")) {
 		t.Errorf("fresh build from a foreign config wrote trigram_unicode_version")
 	}
@@ -247,41 +233,30 @@ func TestTrigramUnicodeVersionFreshBuildFromForeignConfig(t *testing.T) {
 	if v, ok := rebuilt.TrigramUnicodeVersion(); v != trigramUnicodeVersion || !ok {
 		t.Errorf("TrigramUnicodeVersion() = (%q, %t), want (%q, true)", v, ok, trigramUnicodeVersion)
 	}
-	assertRGs(t, "rebuilt contains", evalPreds(Contains("$.v", "hello"))(rebuilt), []int{0})
+	requireRows(t, rebuilt, Contains("$.v", "hello"), []int{0})
 	decoded, err := Decode(encoded)
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	assertRGs(t, "rebuilt decoded contains", evalPreds(Contains("$.v", "hello"))(decoded), []int{0})
+	requireRows(t, decoded, Contains("$.v", "hello"), []int{0})
 	if v, ok := foreign.TrigramUnicodeVersion(); v != trigramUnicodeForeignToken || ok {
 		t.Errorf("after NewBuilder the decoded index reports (%q, %t), want (%q, false)", v, ok, trigramUnicodeForeignToken)
 	}
 }
 
 func TestTrigramUnicodeVersionUnknownGolden(t *testing.T) {
-	data, err := os.ReadFile(trigramUnicodeUnknownGolden)
-	if err != nil {
-		t.Fatalf("read %s: %v", trigramUnicodeUnknownGolden, err)
-	}
-	idx, err := Decode(data)
-	if err != nil {
-		t.Fatalf("Decode(%s): %v", trigramUnicodeUnknownGolden, err)
-	}
+	idx := decodeTrigramUnicodeUnknownGolden(t)
 	if v, ok := idx.TrigramUnicodeVersion(); v != trigramUnicodeForeignToken || ok {
 		t.Errorf("TrigramUnicodeVersion() = (%q, %t), want (%q, false)", v, ok, trigramUnicodeForeignToken)
 	}
-	assertRGs(t, "golden contains", evalPreds(Contains("$.v", "hello"))(idx), []int{0, 1})
-	assertRGs(t, "golden direct search", trigramIndexFor(t, idx, "$.v").Search("hello").ToSlice(), []int{0, 1})
-	assertRGs(t, "golden EQ", evalPreds(EQ("$.k", "a"))(idx), []int{0})
+	requireRows(t, idx, Contains("$.v", "hello"), []int{0, 1})
+	requireTrigramSearch(t, idx, "hello", []int{0, 1})
+	requireRows(t, idx, EQ("$.k", "a"), []int{0})
 }
 
 func decodeTrigramUnicodeUnknownGolden(t *testing.T) *GINIndex {
 	t.Helper()
-	data, err := os.ReadFile(trigramUnicodeUnknownGolden)
-	if err != nil {
-		t.Fatalf("read %s: %v", trigramUnicodeUnknownGolden, err)
-	}
-	idx, err := Decode(data)
+	idx, err := Decode(readTestFile(t, trigramUnicodeUnknownGolden))
 	if err != nil {
 		t.Fatalf("Decode(%s): %v", trigramUnicodeUnknownGolden, err)
 	}
@@ -309,18 +284,14 @@ func TestTrigramUnicodeVersionReplacedConfigKeepsToken(t *testing.T) {
 	if v, ok := again.TrigramUnicodeVersion(); v != trigramUnicodeForeignToken || ok {
 		t.Errorf("TrigramUnicodeVersion() = (%q, %t), want (%q, false)", v, ok, trigramUnicodeForeignToken)
 	}
-	assertRGs(t, "re-encoded contains", evalPreds(Contains("$.v", "hello"))(again), []int{0, 1})
-	assertRGs(t, "re-encoded direct search", trigramIndexFor(t, again, "$.v").Search("hello").ToSlice(), []int{0, 1})
+	requireRows(t, again, Contains("$.v", "hello"), []int{0, 1})
+	requireTrigramSearch(t, again, "hello", []int{0, 1})
 }
 
 // An unknown token must survive Decode -> Encode -> Decode even when the
 // index has no TrigramIndex to carry it.
 func TestTrigramUnicodeVersionRoundTripWithoutTrigramPaths(t *testing.T) {
-	builder := mustNewBuilder(t, DefaultConfig(), 1)
-	if err := builder.AddDocument(0, []byte(`{"n":1}`)); err != nil {
-		t.Fatalf("AddDocument: %v", err)
-	}
-	idx := builder.Finalize()
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), []map[string]string{{"n": "ab"}})
 	if len(idx.TrigramIndexes) != 0 {
 		t.Fatalf("fixture has %d trigram indexes, want 0", len(idx.TrigramIndexes))
 	}
@@ -355,7 +326,7 @@ func TestTrigramUnicodeVersionEncodeToken(t *testing.T) {
 		}
 	})
 	t.Run("explicit 15.0.0 matches absent", func(t *testing.T) {
-		idx := buildTrigramUnicodeVersionIndex(t, DefaultConfig())
+		idx := buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs)
 		fresh, err := Encode(idx)
 		if err != nil {
 			t.Fatalf("Encode fresh: %v", err)

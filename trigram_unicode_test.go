@@ -2,9 +2,7 @@ package gin
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -87,10 +85,7 @@ func formatTrigramUnicodeGrams(t *testing.T) []byte {
 }
 
 func TestTrigramUnicodeGramGolden(t *testing.T) {
-	want, err := os.ReadFile(trigramUnicodeGramsGolden)
-	if err != nil {
-		t.Fatalf("read %s: %v", trigramUnicodeGramsGolden, err)
-	}
+	want := readTestFile(t, trigramUnicodeGramsGolden)
 	got := formatTrigramUnicodeGrams(t)
 	if bytes.Equal(got, want) {
 		return
@@ -114,47 +109,22 @@ func TestTrigramUnicodeGramGolden(t *testing.T) {
 
 // trigramUnicodeDriftDocs is one document per row group. RG3 holds plain
 // ASCII so that every drift query must prune it.
-var trigramUnicodeDriftDocs = []string{
-	"\uA7DCab xyz",
-	"x\U0001FAE9\U0001FAE9\U0001FAE9y",
-	"\U00016EA0\U00016EA1\U00016EA2 tail",
-	"plain ascii",
-}
-
-func buildTrigramUnicodeDriftIndex(t *testing.T) *GINIndex {
-	t.Helper()
-	builder, err := NewBuilder(DefaultConfig(), len(trigramUnicodeDriftDocs))
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	for i, v := range trigramUnicodeDriftDocs {
-		doc, err := json.Marshal(map[string]string{"v": v})
-		if err != nil {
-			t.Fatalf("json.Marshal: %v", err)
-		}
-		if err := builder.AddDocument(DocID(i), doc); err != nil {
-			t.Fatalf("AddDocument(%d): %v", i, err)
-		}
-	}
-	return builder.Finalize()
+var trigramUnicodeDriftDocs = []map[string]string{
+	{"v": "\uA7DCab xyz"},
+	{"v": "x\U0001FAE9\U0001FAE9\U0001FAE9y"},
+	{"v": "\U00016EA0\U00016EA1\U00016EA2 tail"},
+	{"v": "plain ascii"},
 }
 
 // encodeTrigramUnicodeDriftIndex encodes without compression, so the golden
 // depends only on the gram path and the wire format, not on zstd output.
 func encodeTrigramUnicodeDriftIndex(t *testing.T) []byte {
 	t.Helper()
-	encoded, err := EncodeWithLevel(buildTrigramUnicodeDriftIndex(t), CompressionNone)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	return encoded
+	return mustEncodeUncompressed(t, buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeDriftDocs))
 }
 
 func TestTrigramUnicodeDriftIndexGolden(t *testing.T) {
-	want, err := os.ReadFile(trigramUnicodeDriftGolden)
-	if err != nil {
-		t.Fatalf("read %s: %v", trigramUnicodeDriftGolden, err)
-	}
+	want := readTestFile(t, trigramUnicodeDriftGolden)
 	if got := encodeTrigramUnicodeDriftIndex(t); !bytes.Equal(got, want) {
 		t.Errorf("encoded drift index (%d bytes) differs from %s (%d bytes)", len(got), trigramUnicodeDriftGolden, len(want))
 	}
@@ -163,27 +133,16 @@ func TestTrigramUnicodeDriftIndexGolden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode(%s): %v", trigramUnicodeDriftGolden, err)
 	}
-	exact := []struct {
-		name string
-		pred Predicate
-		want []int
-	}{
-		{"contains U+A7DC", Contains("$.v", "\uA7DCab"), []int{0}},
-		{"contains U+1FAE9", Contains("$.v", "\U0001FAE9\U0001FAE9\U0001FAE9"), []int{1}},
-		{"contains U+16EA0", Contains("$.v", "\U00016EA0\U00016EA1\U00016EA2"), []int{2}},
-		{"regex alternation", Regex("$.v", "\uA7DCab|zzzz"), []int{0}},
-	}
-	for _, c := range exact {
-		if got := idx.Evaluate([]Predicate{c.pred}).ToSlice(); !slices.Equal(got, c.want) {
-			t.Errorf("%s: got RGs %v, want %v", c.name, got, c.want)
-		}
-	}
+	requireRows(t, idx, Contains("$.v", "\uA7DCab"), []int{0})
+	requireRows(t, idx, Contains("$.v", "\U0001FAE9\U0001FAE9\U0001FAE9"), []int{1})
+	requireRows(t, idx, Contains("$.v", "\U00016EA0\U00016EA1\U00016EA2"), []int{2})
+	requireRows(t, idx, Regex("$.v", "\uA7DCab|zzzz"), []int{0})
 
 	if !idx.Evaluate([]Predicate{Regex("$.v", "(?i)\uA7DCab")}).IsSet(0) {
 		t.Errorf("Regex((?i)\\uA7DCab) pruned RG0")
 	}
 	folded := "(?i)\u019Bab"
-	if regexp.MustCompile(folded).MatchString(trigramUnicodeDriftDocs[0]) {
+	if regexp.MustCompile(folded).MatchString(trigramUnicodeDriftDocs[0]["v"]) {
 		if !idx.Evaluate([]Predicate{Regex("$.v", folded)}).IsSet(0) {
 			t.Errorf("Regex(%q) pruned RG0, which regexp matches on this toolchain", folded)
 		}
@@ -243,10 +202,7 @@ func TestTrigramUnicodeTablesMatchStdlib(t *testing.T) {
 			}
 		}
 	case trigramUnicodeStdlibDiffVersion:
-		want, err := os.ReadFile(trigramUnicodeStdlibDiff)
-		if err != nil {
-			t.Fatalf("read %s: %v", trigramUnicodeStdlibDiff, err)
-		}
+		want := readTestFile(t, trigramUnicodeStdlibDiff)
 		if got := formatTrigramUnicodeStdlibDiff(); !bytes.Equal(got, want) {
 			t.Fatalf("frozen-vs-stdlib diff on Unicode %s (%d lines) differs from %s (%d lines)",
 				unicode.Version, bytes.Count(got, []byte("\n")), trigramUnicodeStdlibDiff, bytes.Count(want, []byte("\n")))
