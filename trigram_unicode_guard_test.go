@@ -33,6 +33,8 @@ var trigramGuardRequiredRoots = []string{
 	"GINIndex.evaluateContains", "GINIndex.evaluateRegex",
 }
 
+const trigramGuardUnicodePkg = "unicode"
+
 // trigramGuardTablesFile holds the frozen tables; only its package vars may
 // be passed to unicode.Is and unicode.In.
 const trigramGuardTablesFile = "trigram_unicode_tables.go"
@@ -288,7 +290,7 @@ func checkTrigramUnicodeGuard(fset *token.FileSet, files []*trigramGuardFile) (t
 		if !importsChecked[gf] {
 			importsChecked[gf] = true
 			for _, path := range gf.dots {
-				if path == "unicode" || path == "strings" || path == "bytes" {
+				if path == trigramGuardUnicodePkg || path == "strings" || path == "bytes" {
 					report(gf.ast.Package, "file dot-imports "+path)
 				}
 			}
@@ -305,7 +307,7 @@ func checkTrigramUnicodeGuard(fset *token.FileSet, files []*trigramGuardFile) (t
 				return "", false
 			}
 			x, ok := sel.X.(*ast.Ident)
-			if !ok || gf.imports[x.Name] != "unicode" {
+			if !ok || gf.imports[x.Name] != trigramGuardUnicodePkg {
 				return "", false
 			}
 			return sel.Sel.Name, true
@@ -339,7 +341,7 @@ func checkTrigramUnicodeGuard(fset *token.FileSet, files []*trigramGuardFile) (t
 					if path, isImport := gf.imports[x.Name]; isImport {
 						sel := e.Sel.Name
 						switch path {
-						case "unicode":
+						case trigramGuardUnicodePkg:
 							simpleFold := sel == "SimpleFold" && node.name == "foldsUnderToLower" && gf.name == "regex.go"
 							if !trigramGuardUnicodeAllowed[sel] && !simpleFold {
 								report(e.Pos(), "uses unicode."+sel)
