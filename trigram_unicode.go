@@ -44,7 +44,8 @@ func trigramUnicodeWireToken(token string) string {
 
 // trigramLowerRune lowercases r with the frozen trigramLowerRanges table. It
 // is the simple per-rune mapping of unicode.ToLower at trigramUnicodeVersion.
-// unicode.SpecialCase is not used: it falls back to the toolchain tables.
+// Locale special cases (unicode.SpecialCase) are not applied: strings.ToLower
+// never applied them, and SpecialCase falls back to the toolchain tables.
 func trigramLowerRune(r rune) rune {
 	if r < utf8.RuneSelf {
 		if 'A' <= r && r <= 'Z' {
@@ -83,7 +84,7 @@ func trigramIsSpace(r rune) bool {
 
 // trigramASCIIPunctOrSymbol is trigramPunctOrSymbolTable below utf8.RuneSelf
 // as a bitmask. It is built from the frozen table, so it cannot drift from
-// it, and spares ASCII text the binary search in unicode.Is.
+// it, and spares ASCII text the range scan in unicode.Is.
 var trigramASCIIPunctOrSymbol = func() (mask [2]uint64) {
 	for r := rune(0); r < utf8.RuneSelf; r++ {
 		if unicode.Is(trigramPunctOrSymbolTable, r) {

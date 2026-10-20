@@ -8,8 +8,9 @@
   punctuation-or-symbol-only grams with in-tree tables frozen at Unicode
   15.0.0. Before, an index built with Go 1.26 (Unicode 15.0.0) and queried
   with Go 1.27 (Unicode 17.0.0), or the reverse, could prune a matching row
-  group. Go 1.21-1.26 already used Unicode 15.0.0, so existing indexes and
-  encoded bytes do not change. The wire format stays v11.
+  group. Go 1.21-1.26 already used Unicode 15.0.0, so indexes built with Go
+  1.21-1.26, and their encoded bytes, do not change. The wire format stays
+  v11.
 - The index config can record `trigram_unicode_version`. A fresh index writes
   no key, and an absent key means 15.0.0. When a reader does not know the
   recorded version, it skips trigram pruning for that index only. `Contains`

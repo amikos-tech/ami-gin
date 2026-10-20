@@ -16,7 +16,8 @@
 // outside the module and copy the output in.
 //
 // When a Go release changes unicode.Version, TestTrigramUnicodeTablesMatchStdlib
-// skips with a message: add an expected diff for that version, like
+// skips with a message: set trigramUnicodeStdlibDiffVersion to that version
+// (or add a case for it) and commit its diff, like
 // testdata/trigram-unicode/stdlib-17.0.0-diff.txt. These tables never
 // change. A second table set needs a new trigram_unicode_version token, and
 // every reader must be upgraded before any writer emits it (see

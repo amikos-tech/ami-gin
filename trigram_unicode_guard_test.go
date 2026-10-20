@@ -19,7 +19,8 @@ import (
 // must come from the frozen helpers in trigram_unicode.go. A flat scan has no
 // call graph to get wrong: moving a forbidden call into a helper, an option
 // func or a builder method does not hide it. Code that never feeds
-// TrigramIndex.Add or Search may opt out through trigramGuardAllowlist.
+// TrigramIndex.Add or Search, or a known exception with a tracking issue, may
+// opt out through trigramGuardAllowlist.
 
 const (
 	trigramGuardUnicodePkg = "unicode"
@@ -49,11 +50,11 @@ var trigramGuardCaseDenied = map[string]bool{
 type trigramGuardAllow struct{ file, decl, sel, reason string }
 
 var trigramGuardAllowlist = []trigramGuardAllow{
-	{"transformers.go", "ToLower", "strings.ToLower", "D3: derived companion transformer, out of scope (#102)"},
-	{"transformers.go", "EmailDomain", "strings.ToLower", "D3: derived companion transformer, out of scope (#102)"},
-	{"transformers.go", "URLHost", "strings.ToLower", "D3: derived companion transformer, out of scope (#102)"},
+	{"transformers.go", "ToLower", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
+	{"transformers.go", "EmailDomain", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
+	{"transformers.go", "URLHost", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
 	{"transformers.go", "BoolNormalize", "strings.ToLower", "matches ASCII keywords and returns a bool, never a gram"},
-	{"regex.go", "foldsUnderToLower", "unicode.SimpleFold", "D4: the orbit must match the reader's regexp, not the frozen tables"},
+	{"regex.go", "foldsUnderToLower", "unicode.SimpleFold", "foldsUnderToLower: toolchain SimpleFold orbit checked against the frozen lowercase (#99)"},
 }
 
 type trigramGuardFile struct {
