@@ -37,6 +37,9 @@ func trigramUnicodeWireToken(token string) string {
 	return token
 }
 
+// The directive needs a POSIX env; see gen_trigram_unicode.go for Windows
+// and for what to do when a Go release changes unicode.Version.
+//
 //go:generate env GOTOOLCHAIN=go1.26.9 go run gen_trigram_unicode.go
 
 // trigramLowerRune lowercases r with the frozen trigramLowerRanges table. It

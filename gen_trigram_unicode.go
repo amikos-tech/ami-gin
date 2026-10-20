@@ -2,10 +2,25 @@
 
 // gen_trigram_unicode.go writes trigram_unicode_tables.go: the lowercase,
 // White_Space and Punct-or-Symbol tables that TrigramIndex uses, frozen at
-// Unicode 15.0.0 (#99). It reads the stdlib unicode package, so it must run
-// on a toolchain that ships Unicode 15.0.0 (Go 1.21-1.26):
+// Unicode 15.0.0 (#99). It reads the stdlib unicode package and aborts unless
+// unicode.Version is "15.0.0". go1.26.9 is pinned only because its stdlib
+// carries Unicode 15.0.0; any toolchain with that version gives the same
+// output (Go 1.21-1.26):
 //
 //	GOTOOLCHAIN=go1.26.9 go generate ./...
+//
+// The //go:generate directive needs a POSIX env command. On Windows, run
+// GOTOOLCHAIN=go1.26.9 go run gen_trigram_unicode.go by hand (in PowerShell,
+// set $env:GOTOOLCHAIN first). The generator imports only the stdlib, so if
+// go.mod ever requires a newer Go than go1.26.9, run it from a directory
+// outside the module and copy the output in.
+//
+// When a Go release changes unicode.Version, TestTrigramUnicodeTablesMatchStdlib
+// skips with a message: add an expected diff for that version, like
+// testdata/trigram-unicode/stdlib-17.0.0-diff.txt. These tables never
+// change. A second table set needs a new trigram_unicode_version token, and
+// every reader must be upgraded before any writer emits it (see
+// trigramUnicodeVersion).
 package main
 
 import (
