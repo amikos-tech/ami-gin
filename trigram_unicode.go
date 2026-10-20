@@ -21,6 +21,22 @@ import (
 // every reader must be upgraded before any writer emits a new token.
 const trigramUnicodeVersion = "15.0.0"
 
+// trigramUnicodeTokenSupported reports whether this reader has the tables for
+// a serialized trigram_unicode_version token. "" means absent, which is
+// trigramUnicodeVersion.
+func trigramUnicodeTokenSupported(token string) bool {
+	return token == "" || token == trigramUnicodeVersion
+}
+
+// trigramUnicodeWireToken returns the token to serialize: absent for the
+// frozen version, any other token verbatim.
+func trigramUnicodeWireToken(token string) string {
+	if token == trigramUnicodeVersion {
+		return ""
+	}
+	return token
+}
+
 //go:generate env GOTOOLCHAIN=go1.26.9 go run gen_trigram_unicode.go
 
 // trigramLowerRune lowercases r with the frozen trigramLowerRanges table. It

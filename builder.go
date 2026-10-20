@@ -236,6 +236,9 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	}
 	config.ParserFailureMode = normalizeIngestFailureMode(config.ParserFailureMode)
 	config.NumericFailureMode = normalizeIngestFailureMode(config.NumericFailureMode)
+	// A fresh build always uses the frozen trigramUnicodeVersion tables, so a
+	// config copied from a decoded foreign index must not relabel its grams.
+	config.trigramUnicodeToken = ""
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)
 	if err != nil {
 		return nil, errors.Wrap(err, "create bloom filter")

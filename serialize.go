@@ -128,6 +128,9 @@ type SerializedConfig struct {
 	AdaptiveBucketCount     int               `json:"adaptive_bucket_count"`
 	FTSPaths                []string          `json:"fts_paths,omitempty"`
 	Transformers            []TransformerSpec `json:"transformers,omitempty"`
+	// TrigramUnicodeVersion is the Unicode version of the trigram tables.
+	// Absent means trigramUnicodeVersion; see trigram_unicode.go (#99).
+	TrigramUnicodeVersion string `json:"trigram_unicode_version,omitempty"`
 }
 
 func transformerFailureModeWireToken(mode IngestFailureMode) IngestFailureMode {
@@ -680,6 +683,13 @@ func decodeCore(data []byte) (*GINIndex, error) {
 		return nil, errors.Wrap(err, "read config")
 	}
 	idx.Config = cfg
+	// The config follows the trigram section, so the trigram indexes learn
+	// their table version only here.
+	if cfg != nil {
+		for _, ti := range idx.TrigramIndexes {
+			ti.unicodeToken = cfg.trigramUnicodeToken
+		}
+	}
 	representations, err := readRepresentations(buf)
 	if err != nil {
 		return nil, errors.Wrap(err, "read representations")
@@ -1892,6 +1902,7 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 		AdaptiveCoverageCeiling: cfg.AdaptiveCoverageCeiling,
 		AdaptiveBucketCount:     cfg.AdaptiveBucketCount,
 		FTSPaths:                cfg.ftsPaths,
+		TrigramUnicodeVersion:   trigramUnicodeWireToken(cfg.trigramUnicodeToken),
 	}
 
 	transformerPaths := make([]string, 0, len(cfg.representationSpecs))
@@ -1967,6 +1978,9 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		AdaptivePromotedTermCap: sc.AdaptivePromotedTermCap,
 		AdaptiveCoverageCeiling: sc.AdaptiveCoverageCeiling,
 		AdaptiveBucketCount:     sc.AdaptiveBucketCount,
+		// Kept verbatim: an unknown token disables trigram pruning in
+		// TrigramIndex.Search instead of failing the decode (#99).
+		trigramUnicodeToken: sc.TrigramUnicodeVersion,
 	}
 
 	if len(sc.FTSPaths) > 0 {

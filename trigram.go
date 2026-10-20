@@ -36,6 +36,9 @@ type TrigramIndex struct {
 	N         int
 	Padding   string
 	MinLength int
+	// unicodeToken is the table version token copied from the decoded
+	// config; "" means trigramUnicodeVersion.
+	unicodeToken string
 }
 
 func NewTrigramIndex(numRGs int, opts ...NGramOption) (*TrigramIndex, error) {
@@ -78,6 +81,10 @@ func (ti *TrigramIndex) Add(value string, rgID int) {
 }
 
 func (ti *TrigramIndex) Search(pattern string) *RGSet {
+	// Grams written with unknown tables cannot be matched safely.
+	if !trigramUnicodeTokenSupported(ti.unicodeToken) {
+		return AllRGs(ti.NumRGs)
+	}
 	runes := trigramLowerRunes(pattern)
 	if len(runes) < ti.N {
 		return AllRGs(ti.NumRGs)

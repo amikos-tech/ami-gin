@@ -32,3 +32,12 @@ func TestRegenerateTrigramUnicodeStdlibDiff(t *testing.T) {
 		t.Fatalf("write %s: %v", trigramUnicodeStdlibDiff, err)
 	}
 }
+
+func TestRegenerateTrigramUnicodeUnknownVersionGolden(t *testing.T) {
+	if unicode.Version != trigramUnicodeVersion {
+		t.Fatalf("unicode.Version is %s; regenerate the trigram goldens with Unicode %s (GOTOOLCHAIN=go1.26.9)", unicode.Version, trigramUnicodeVersion)
+	}
+	if err := os.WriteFile(trigramUnicodeUnknownGolden, encodeWithTrigramToken(t, trigramUnicodeForeignToken), 0o644); err != nil {
+		t.Fatalf("write %s: %v", trigramUnicodeUnknownGolden, err)
+	}
+}

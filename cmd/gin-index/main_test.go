@@ -990,3 +990,41 @@ func TestRunBuildLowMemoryProducesDecodableIndex(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteIndexInfoTrigramUnicodeVersion(t *testing.T) {
+	t.Parallel()
+
+	builder, err := gin.NewBuilder(gin.DefaultConfig(), 1)
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	if err := builder.AddDocument(0, []byte(`{"v":"hello world"}`)); err != nil {
+		t.Fatalf("AddDocument: %v", err)
+	}
+
+	var buf bytes.Buffer
+	writeIndexInfo(&buf, builder.Finalize())
+	if out := buf.String(); !strings.Contains(out, "  Trigram Unicode: 15.0.0\n") {
+		t.Fatalf("writeIndexInfo output missing the trigram Unicode line:\n%s", out)
+	}
+}
+
+func TestWriteIndexInfoUnknownTrigramUnicodeVersion(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("..", "..", "testdata", "trigram-unicode", "unknown-version.gin"))
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	idx, err := gin.Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+
+	var buf bytes.Buffer
+	writeIndexInfo(&buf, idx)
+	want := "  Trigram Unicode: 17.0.0 (unsupported; trigram pruning disabled)\n"
+	if out := buf.String(); !strings.Contains(out, want) {
+		t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
+	}
+}
