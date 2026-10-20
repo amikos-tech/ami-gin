@@ -465,6 +465,10 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")
 	}
+	config, err := configForEncode(idx)
+	if err != nil {
+		return nil, errors.Wrap(err, "trigram unicode version")
+	}
 
 	var buf bytes.Buffer
 
@@ -526,7 +530,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 		}
 	}
 
-	if err := writeConfig(&buf, idx.Config); err != nil {
+	if err := writeConfig(&buf, config); err != nil {
 		return nil, errors.Wrap(err, "write config")
 	}
 	if err := writeRepresentations(&buf, idx); err != nil {
@@ -538,7 +542,6 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 	}
 
 	var encoder *zstd.Encoder
-	var err error
 	if profile == EncoderProfileBoundedMemoryUncached {
 		// Built for this call and garbage once it returns.
 		encoder, err = newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
@@ -1883,6 +1886,46 @@ func readDocIDMapping(r io.Reader, maxDocs uint64) ([]DocID, error) {
 		mapping[i] = DocID(docID)
 	}
 	return mapping, nil
+}
+
+// configForEncode returns the config that Encode writes for idx. After Decode
+// the trigram_unicode_version token lives both in idx.Config and in every
+// TrigramIndex. idx.Config is exported and can be replaced or removed, so a
+// token that only the trigram indexes still carry is written back: foreign
+// grams must never be relabelled as trigramUnicodeVersion (#99). Tokens that
+// disagree, or a foreign token with a nil config (which writes a zero-length
+// config section), are errors. idx is not modified.
+func configForEncode(idx *GINIndex) (*GINConfig, error) {
+	trigramToken, seen := "", false
+	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
+		ti := idx.TrigramIndexes[pathID]
+		if ti == nil {
+			continue
+		}
+		token := trigramUnicodeWireToken(ti.unicodeToken)
+		if seen && token != trigramToken {
+			return nil, errors.Errorf("trigram indexes carry different tokens %q and %q", trigramToken, token)
+		}
+		trigramToken, seen = token, true
+	}
+
+	cfg := idx.Config
+	if cfg == nil {
+		if trigramToken != "" {
+			return nil, errors.Errorf("trigram indexes carry token %q but the index has no config to record it", trigramToken)
+		}
+		return nil, nil
+	}
+	configToken := trigramUnicodeWireToken(cfg.trigramUnicodeToken)
+	if trigramToken == "" || trigramToken == configToken {
+		return cfg, nil
+	}
+	if configToken != "" {
+		return nil, errors.Errorf("trigram indexes carry token %q but the config carries %q", trigramToken, configToken)
+	}
+	withToken := *cfg
+	withToken.trigramUnicodeToken = trigramToken
+	return &withToken, nil
 }
 
 func writeConfig(w io.Writer, cfg *GINConfig) error {

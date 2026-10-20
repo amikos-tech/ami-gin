@@ -274,3 +274,95 @@ func TestTrigramUnicodeVersionUnknownGolden(t *testing.T) {
 	assertRGs(t, "golden direct search", trigramIndexFor(t, idx, "$.v").Search("hello").ToSlice(), []int{0, 1})
 	assertRGs(t, "golden EQ", evalPreds(EQ("$.k", "a"))(idx), []int{0})
 }
+
+func decodeTrigramUnicodeUnknownGolden(t *testing.T) *GINIndex {
+	t.Helper()
+	data, err := os.ReadFile(trigramUnicodeUnknownGolden)
+	if err != nil {
+		t.Fatalf("read %s: %v", trigramUnicodeUnknownGolden, err)
+	}
+	idx, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode(%s): %v", trigramUnicodeUnknownGolden, err)
+	}
+	return idx
+}
+
+// A caller may replace the exported Config of a decoded foreign index. The
+// trigram indexes still carry the token, so Encode must write it back rather
+// than relabel the foreign grams as trigramUnicodeVersion.
+func TestTrigramUnicodeVersionReplacedConfigKeepsToken(t *testing.T) {
+	idx := decodeTrigramUnicodeUnknownGolden(t)
+	cfg := DefaultConfig()
+	idx.Config = &cfg
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode with replaced config: %v", err)
+	}
+	if cfg.trigramUnicodeToken != "" {
+		t.Errorf("Encode changed the caller's config token to %q", cfg.trigramUnicodeToken)
+	}
+	again, err := Decode(encoded)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if v, ok := again.TrigramUnicodeVersion(); v != trigramUnicodeForeignToken || ok {
+		t.Errorf("TrigramUnicodeVersion() = (%q, %t), want (%q, false)", v, ok, trigramUnicodeForeignToken)
+	}
+	assertRGs(t, "re-encoded contains", evalPreds(Contains("$.v", "hello"))(again), []int{0, 1})
+	assertRGs(t, "re-encoded direct search", trigramIndexFor(t, again, "$.v").Search("hello").ToSlice(), []int{0, 1})
+}
+
+func TestTrigramUnicodeVersionEncodeRejectsTokenConflicts(t *testing.T) {
+	t.Run("nil config", func(t *testing.T) {
+		idx := decodeTrigramUnicodeUnknownGolden(t)
+		idx.Config = nil
+		if _, err := Encode(idx); err == nil {
+			t.Fatal("Encode with nil config and a foreign trigram token succeeded")
+		}
+	})
+	t.Run("config disagrees with trigram indexes", func(t *testing.T) {
+		idx := decodeTrigramUnicodeUnknownGolden(t)
+		idx.Config.trigramUnicodeToken = "16.0.0"
+		if _, err := Encode(idx); err == nil {
+			t.Fatal("Encode with config token 16.0.0 and trigram token 17.0.0 succeeded")
+		}
+	})
+	t.Run("trigram indexes disagree", func(t *testing.T) {
+		idx := decodeTrigramUnicodeUnknownGolden(t)
+		extra := MustNewTrigramIndex(int(idx.Header.NumRowGroups))
+		extra.Add("hello", 0)
+		var free uint16
+		for idx.TrigramIndexes[free] != nil {
+			free++
+		}
+		idx.TrigramIndexes[free] = extra
+		cfg := DefaultConfig()
+		idx.Config = &cfg
+		if _, err := Encode(idx); err == nil {
+			t.Fatal("Encode with trigram tokens 17.0.0 and 15.0.0 succeeded")
+		}
+	})
+	t.Run("explicit 15.0.0 matches absent", func(t *testing.T) {
+		idx := buildTrigramUnicodeVersionIndex(t, DefaultConfig())
+		fresh, err := Encode(idx)
+		if err != nil {
+			t.Fatalf("Encode fresh: %v", err)
+		}
+		for _, ti := range idx.TrigramIndexes {
+			ti.unicodeToken = trigramUnicodeVersion
+		}
+		idx.Config.trigramUnicodeToken = ""
+		labelled, err := Encode(idx)
+		if err != nil {
+			t.Fatalf("Encode with explicit 15.0.0 trigram tokens: %v", err)
+		}
+		if !bytes.Equal(fresh, labelled) {
+			t.Error("explicit 15.0.0 trigram tokens changed the encoded bytes")
+		}
+		idx.Config = nil
+		if _, err := Encode(idx); err != nil {
+			t.Errorf("Encode with nil config and 15.0.0 trigram tokens: %v", err)
+		}
+	})
+}
