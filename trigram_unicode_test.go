@@ -215,8 +215,21 @@ func TestTrigramUnicodeTablesMatchStdlib(t *testing.T) {
 }
 
 // The ASCII fast paths must agree with the frozen tables on every toolchain.
+// The frozen lowercase table starts at utf8.RuneSelf, so trigramLowerRune has
+// no table lookup for ASCII to compare against: its fast path is checked
+// against the ASCII rule, 'A'..'Z' to 'a'..'z' and every other rune unchanged.
 func TestTrigramUnicodeASCIIFastPaths(t *testing.T) {
+	if lo := trigramLowerRanges[0].Lo; lo < utf8.RuneSelf {
+		t.Fatalf("trigramLowerRanges starts at %U, below the ASCII fast path", lo)
+	}
 	for r := rune(0); r < utf8.RuneSelf; r++ {
+		want := r
+		if 'A' <= r && r <= 'Z' {
+			want = r + 32
+		}
+		if got := trigramLowerRune(r); got != want {
+			t.Errorf("trigramLowerRune(%U) = %U, want %U", r, got, want)
+		}
 		if got, want := trigramIsSpace(r), unicode.Is(trigramSpaceTable, r); got != want {
 			t.Errorf("trigramIsSpace(%U) = %t, frozen table = %t", r, got, want)
 		}

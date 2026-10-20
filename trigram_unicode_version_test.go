@@ -318,12 +318,48 @@ func TestTrigramUnicodeVersionRoundTripWithoutTrigramPaths(t *testing.T) {
 	}
 }
 
+func TestTrigramUnicodeTokenSupported(t *testing.T) {
+	cases := []struct {
+		token     string
+		supported bool
+	}{
+		{"", true},
+		{"15.0.0", true},
+		{"15.0", false},
+		{"15.0.0 ", false},
+		{" 15.0.0", false},
+		{"v15.0.0", false},
+		{"15.1.0", false},
+		{"15.0.1", false},
+		{"16.0.0", false},
+		{"17.0.0", false},
+	}
+	for _, c := range cases {
+		if got := trigramUnicodeTokenSupported(c.token); got != c.supported {
+			t.Errorf("trigramUnicodeTokenSupported(%q) = %t, want %t", c.token, got, c.supported)
+		}
+		want := c.token
+		if c.token == trigramUnicodeVersion {
+			want = ""
+		}
+		if got := trigramUnicodeWireToken(c.token); got != want {
+			t.Errorf("trigramUnicodeWireToken(%q) = %q, want %q", c.token, got, want)
+		}
+	}
+}
+
 func TestTrigramUnicodeVersionEncodeToken(t *testing.T) {
 	t.Run("nil config rejects a foreign token", func(t *testing.T) {
 		idx := decodeTrigramUnicodeUnknownGolden(t)
 		idx.Config = nil
-		if _, err := Encode(idx); err == nil {
+		_, err := Encode(idx)
+		if err == nil {
 			t.Fatal("Encode with nil config and a foreign trigram token succeeded")
+		}
+		for _, want := range []string{trigramUnicodeForeignToken, "needs a config to record it"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("Encode error %q does not contain %q", err, want)
+			}
 		}
 	})
 	t.Run("explicit 15.0.0 matches absent", func(t *testing.T) {
