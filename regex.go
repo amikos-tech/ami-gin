@@ -14,8 +14,8 @@ const maxLiteralExpansion = 100 // Limit Cartesian product explosion
 // no literal — when any rune in it has a unicode.SimpleFold orbit member
 // whose frozen trigram lowercase (trigramLowerRune, Unicode 15.0.0) differs
 // from that rune's own; the drop applies to the whole merged literal node,
-// not just the offending rune (see foldsUnderToLower). Returns nil when no literal is guaranteed or the
-// expansion exceeds maxLiteralExpansion.
+// not just the offending rune (see foldsUnderToLower). Returns nil when no
+// literal is guaranteed or the expansion exceeds maxLiteralExpansion.
 //
 //	"foo|bar"          -> ["foo", "bar"]
 //	"(error|warn)_msg" -> ["error_msg", "warn_msg"]
