@@ -5,6 +5,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/leanovate/gopter"
 	"github.com/leanovate/gopter/gen"
@@ -56,6 +57,30 @@ func TestRegexNeverPrunesAMatch(t *testing.T) {
 				t.Errorf("Regex(%q) pruned the row group holding %q", c.pattern, c.value)
 			}
 		})
+	}
+}
+
+// TestRegexFoldSoundAcrossUnicodeVersions pins #99 for (?i) literals. U+A7DC
+// lowers to U+019B only in Unicode 17.0.0, and the two fold together only in
+// Go 1.27's regexp. The frozen trigram lowercase keeps them apart, so a (?i)
+// literal must be dropped wherever regexp folds them, and the row group kept
+// whenever regexp matches on this toolchain.
+func TestRegexFoldSoundAcrossUnicodeVersions(t *testing.T) {
+	for _, pattern := range []string{"(?i)\uA7DCab", "(?i)\u019Bab"} {
+		for _, value := range []string{"\uA7DCab", "\u019Bab"} {
+			t.Run(pattern+"/"+value, func(t *testing.T) {
+				if !regexp.MustCompile(pattern).MatchString(value) {
+					t.Logf("regexp %q does not match %q on this toolchain; pruning is sound", pattern, value)
+					return
+				}
+				if !regexKeepsMatch(t, pattern, value) {
+					t.Errorf("Regex(%q) pruned the row group holding %q", pattern, value)
+				}
+			})
+		}
+	}
+	if got, want := foldsUnderToLower([]rune{0xA7DC}), unicode.SimpleFold(0xA7DC) == 0xA7DC; got != want {
+		t.Errorf("foldsUnderToLower(U+A7DC) = %t, want %t (SimpleFold(U+A7DC) = %U)", got, want, unicode.SimpleFold(0xA7DC))
 	}
 }
 
