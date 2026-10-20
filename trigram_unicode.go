@@ -54,7 +54,7 @@ func trigramLowerRune(r rune) rune {
 	if i < len(trigramLowerRanges) {
 		e := trigramLowerRanges[i]
 		if u >= e.Lo && (u-e.Lo)%e.Stride == 0 {
-			return rune(int32(r) + e.Delta)
+			return r + e.Delta
 		}
 	}
 	return r
