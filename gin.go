@@ -97,9 +97,10 @@ type GINIndex struct {
 	representationInfos   map[string][]RepresentationInfo
 	representations       []RepresentationSpec
 	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
-	// means absent (= trigramUnicodeVersion). The index is its only owner:
-	// Decode sets it and copies it into each TrigramIndex for Search, and
-	// Encode writes it back from here (#99).
+	// means absent (= trigramUnicodeVersion). The index owns the serialized
+	// token: Decode sets it, and Encode writes it back from here. Each
+	// TrigramIndex keeps a copy for Search, and Encode refuses a TrigramIndex
+	// whose foreign copy differs, so it never relabels foreign grams (#99).
 	trigramUnicodeToken string
 }
 

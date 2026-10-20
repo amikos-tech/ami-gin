@@ -465,6 +465,9 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")
 	}
+	if err := validateTrigramUnicodeTokens(idx); err != nil {
+		return nil, errors.Wrap(err, "validate trigram unicode version")
+	}
 
 	var buf bytes.Buffer
 
@@ -1882,6 +1885,36 @@ func readDocIDMapping(r io.Reader, maxDocs uint64) ([]DocID, error) {
 		mapping[i] = DocID(docID)
 	}
 	return mapping, nil
+}
+
+// validateTrigramUnicodeTokens rejects a TrigramIndex whose table version
+// differs from the token the index serializes. The exported TrigramIndexes
+// map lets a caller move a TrigramIndex decoded from a foreign-version index
+// into another index; writeConfig would then record the wrong version and
+// relabel the foreign grams (#99). A TrigramIndex with the frozen version
+// inside a foreign-version index is allowed: its Search only loses pruning.
+func validateTrigramUnicodeTokens(idx *GINIndex) error {
+	indexToken := trigramUnicodeWireToken(idx.trigramUnicodeToken)
+	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
+		ti := idx.TrigramIndexes[pathID]
+		if ti == nil {
+			continue
+		}
+		token := trigramUnicodeWireToken(ti.unicodeToken)
+		if token != "" && token != indexToken {
+			return errors.Errorf("trigram index for path ID %d has unicode version %q, but the index records %q",
+				pathID, token, trigramUnicodeTokenOrDefault(indexToken))
+		}
+	}
+	return nil
+}
+
+// trigramUnicodeTokenOrDefault names the version that an absent token means.
+func trigramUnicodeTokenOrDefault(token string) string {
+	if token == "" {
+		return trigramUnicodeVersion
+	}
+	return token
 }
 
 // writeConfig writes cfg and the index's trigram_unicode_version token. A

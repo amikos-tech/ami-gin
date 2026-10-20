@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -344,4 +345,25 @@ func TestTrigramUnicodeVersionEncodeToken(t *testing.T) {
 			t.Errorf("Encode with nil config and 15.0.0 token: %v", err)
 		}
 	})
+}
+
+// A caller may move a TrigramIndex decoded from a foreign-version index into a
+// native index through the exported map. Encode must refuse it: the native
+// index writes no token, so the next Decode would relabel the foreign grams
+// as trigramUnicodeVersion and prune matching row groups.
+func TestTrigramUnicodeVersionEncodeRejectsSplicedForeignTrigramIndex(t *testing.T) {
+	foreign := decodeTrigramUnicodeUnknownGolden(t)
+	native := buildTrigramUnicodeIndex(t, DefaultConfig(), trigramUnicodeVersionDocs)
+	pathID := requirePathID(t, native, "$.v")
+	native.TrigramIndexes[pathID] = foreign.TrigramIndexes[requirePathID(t, foreign, "$.v")]
+
+	_, err := Encode(native)
+	if err == nil {
+		t.Fatal("Encode of a native index with a spliced foreign TrigramIndex succeeded")
+	}
+	for _, want := range []string{trigramUnicodeForeignToken, trigramUnicodeVersion, "trigram index for path ID"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("Encode error %q does not contain %q", err, want)
+		}
+	}
 }
