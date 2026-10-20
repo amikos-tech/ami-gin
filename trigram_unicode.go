@@ -66,20 +66,38 @@ func trigramLowerRune(r rune) rune {
 // trigramLowerRunes returns the frozen lowercase runes of s. Each invalid
 // UTF-8 byte becomes U+FFFD, exactly like []rune(strings.ToLower(s)).
 func trigramLowerRunes(s string) []rune {
-	out := make([]rune, 0, len(s))
-	for _, r := range s {
-		out = append(out, trigramLowerRune(r))
+	out := []rune(s)
+	for i, r := range out {
+		out[i] = trigramLowerRune(r)
 	}
 	return out
 }
 
 // trigramIsSpace is unicode.IsSpace at trigramUnicodeVersion.
 func trigramIsSpace(r rune) bool {
+	if uint32(r) < utf8.RuneSelf {
+		return r == ' ' || '\t' <= r && r <= '\r'
+	}
 	return unicode.Is(trigramSpaceTable, r)
 }
+
+// trigramASCIIPunctOrSymbol is trigramPunctOrSymbolTable below utf8.RuneSelf
+// as a bitmask. It is built from the frozen table, so it cannot drift from
+// it, and spares ASCII text the binary search in unicode.Is.
+var trigramASCIIPunctOrSymbol = func() (mask [2]uint64) {
+	for r := rune(0); r < utf8.RuneSelf; r++ {
+		if unicode.Is(trigramPunctOrSymbolTable, r) {
+			mask[r>>6] |= 1 << (r & 63)
+		}
+	}
+	return mask
+}()
 
 // trigramIsPunctOrSymbol is unicode.IsPunct || unicode.IsSymbol at
 // trigramUnicodeVersion.
 func trigramIsPunctOrSymbol(r rune) bool {
+	if uint32(r) < utf8.RuneSelf {
+		return trigramASCIIPunctOrSymbol[r>>6]&(1<<(r&63)) != 0
+	}
 	return unicode.Is(trigramPunctOrSymbolTable, r)
 }

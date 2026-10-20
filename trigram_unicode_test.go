@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 var (
@@ -210,6 +211,18 @@ func TestTrigramUnicodeTablesMatchStdlib(t *testing.T) {
 	default:
 		t.Skipf("unicode.Version is %s: the frozen tables are checked exhaustively against Unicode %s and against the committed diff for Unicode %s only",
 			unicode.Version, trigramUnicodeVersion, trigramUnicodeStdlibDiffVersion)
+	}
+}
+
+// The ASCII fast paths must agree with the frozen tables on every toolchain.
+func TestTrigramUnicodeASCIIFastPaths(t *testing.T) {
+	for r := rune(0); r < utf8.RuneSelf; r++ {
+		if got, want := trigramIsSpace(r), unicode.Is(trigramSpaceTable, r); got != want {
+			t.Errorf("trigramIsSpace(%U) = %t, frozen table = %t", r, got, want)
+		}
+		if got, want := trigramIsPunctOrSymbol(r), unicode.Is(trigramPunctOrSymbolTable, r); got != want {
+			t.Errorf("trigramIsPunctOrSymbol(%U) = %t, frozen table = %t", r, got, want)
+		}
 	}
 }
 
