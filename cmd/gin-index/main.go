@@ -486,6 +486,22 @@ func infoSingleFile(stdout, stderr io.Writer, indexPath string, pqCfg gin.Parque
 	return nil
 }
 
+// formatTrigramUnicodeVersion renders the trigram Unicode version for info.
+// The version comes from the index file, so anything other than printable
+// ASCII is quoted to keep terminal escapes out of the output.
+func formatTrigramUnicodeVersion(version string, supported bool) string {
+	for i := 0; i < len(version); i++ {
+		if version[i] < 0x20 || version[i] > 0x7e {
+			version = strconv.Quote(version)
+			break
+		}
+	}
+	if supported {
+		return version
+	}
+	return version + " (unsupported; trigram pruning disabled)"
+}
+
 func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
 	fmt.Fprintf(w, "GIN Index Info:\n")
 	fmt.Fprintf(w, "  Version: %d\n", idx.Header.Version)
@@ -493,12 +509,7 @@ func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
 	fmt.Fprintf(w, "  Documents: %d\n", idx.Header.NumDocs)
 	fmt.Fprintf(w, "  Paths: %d\n", idx.Header.NumPaths)
 	fmt.Fprintf(w, "  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
-	trigramVersion, supported := idx.TrigramUnicodeVersion()
-	if supported {
-		fmt.Fprintf(w, "  Trigram Unicode: %s\n", trigramVersion)
-	} else {
-		fmt.Fprintf(w, "  Trigram Unicode: %s (unsupported; trigram pruning disabled)\n", trigramVersion)
-	}
+	fmt.Fprintf(w, "  Trigram Unicode: %s\n", formatTrigramUnicodeVersion(idx.TrigramUnicodeVersion()))
 	fmt.Fprintf(w, "\nPaths:\n")
 	for _, pe := range idx.PathDirectory {
 		if strings.HasPrefix(pe.PathName, "__derived:") {

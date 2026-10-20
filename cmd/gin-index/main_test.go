@@ -1028,3 +1028,29 @@ func TestWriteIndexInfoUnknownTrigramUnicodeVersion(t *testing.T) {
 		t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
 	}
 }
+
+func TestFormatTrigramUnicodeVersionQuotesUntrustedTokens(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		version   string
+		supported bool
+		want      string
+	}{
+		{"15.0.0", true, "15.0.0"},
+		{"17.0.0", false, "17.0.0 (unsupported; trigram pruning disabled)"},
+		{"16.0.0-rc+foreign", false, "16.0.0-rc+foreign (unsupported; trigram pruning disabled)"},
+		{"\x1b[31m17.0.0", false, `"\x1b[31m17.0.0" (unsupported; trigram pruning disabled)`},
+		{"17.0.0\n", false, `"17.0.0\n" (unsupported; trigram pruning disabled)`},
+		{"17.0.0é", false, `"17.0.0é" (unsupported; trigram pruning disabled)`},
+	}
+	for _, c := range cases {
+		got := formatTrigramUnicodeVersion(c.version, c.supported)
+		if got != c.want {
+			t.Errorf("formatTrigramUnicodeVersion(%q, %t) = %q, want %q", c.version, c.supported, got, c.want)
+		}
+		if strings.ContainsRune(got, '\x1b') {
+			t.Errorf("formatTrigramUnicodeVersion(%q) output contains a raw escape: %q", c.version, got)
+		}
+	}
+}
