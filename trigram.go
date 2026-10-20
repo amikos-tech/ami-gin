@@ -36,8 +36,8 @@ type TrigramIndex struct {
 	N         int
 	Padding   string
 	MinLength int
-	// unicodeToken is the table version token copied from the decoded
-	// config; "" means trigramUnicodeVersion.
+	// unicodeToken is Decode's copy of GINIndex.trigramUnicodeToken, the
+	// table version Search must honour; "" means trigramUnicodeVersion.
 	unicodeToken string
 }
 

@@ -96,6 +96,11 @@ type GINIndex struct {
 	representationLookup  map[string]map[string]uint16
 	representationInfos   map[string][]RepresentationInfo
 	representations       []RepresentationSpec
+	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
+	// means absent (= trigramUnicodeVersion). The index is its only owner:
+	// Decode sets it and copies it into each TrigramIndex for Search, and
+	// Encode writes it back from here (#99).
+	trigramUnicodeToken string
 }
 
 type Header struct {
@@ -447,10 +452,6 @@ type GINConfig struct {
 	ftsPaths                   []string                              // paths to enable FTS on; empty means all paths
 	representationSpecs        map[string][]RepresentationSpec       // canonical source path -> companion registrations
 	representationTransformers map[string][]registeredRepresentation // canonical source path -> runtime companion transformers
-	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
-	// means absent (= trigramUnicodeVersion). Set only by readConfig and never
-	// exposed as a config option.
-	trigramUnicodeToken string
 
 	// Runtime-only observability fields. These are never serialized into the
 	// on-wire config payload (see SerializedConfig and writeConfig/readConfig).
@@ -1108,11 +1109,10 @@ func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map
 // index was built with and whether this reader supports it. An unsupported
 // version is returned verbatim; trigram pruning is then disabled (#99).
 func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
-	if idx.Config == nil || idx.Config.trigramUnicodeToken == "" {
+	if idx.trigramUnicodeToken == "" {
 		return trigramUnicodeVersion, true
 	}
-	token := idx.Config.trigramUnicodeToken
-	return token, trigramUnicodeTokenSupported(token)
+	return idx.trigramUnicodeToken, trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

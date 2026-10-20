@@ -465,10 +465,6 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 	if err := idx.validatePathReferences(); err != nil {
 		return nil, errors.Wrap(err, "validate path references")
 	}
-	config, err := configForEncode(idx)
-	if err != nil {
-		return nil, errors.Wrap(err, "trigram unicode version")
-	}
 
 	var buf bytes.Buffer
 
@@ -530,7 +526,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 		}
 	}
 
-	if err := writeConfig(&buf, config); err != nil {
+	if err := writeConfig(&buf, idx.Config, idx.trigramUnicodeToken); err != nil {
 		return nil, errors.Wrap(err, "write config")
 	}
 	if err := writeRepresentations(&buf, idx); err != nil {
@@ -542,6 +538,7 @@ func encodeWithLevel(idx *GINIndex, level CompressionLevel, profile EncoderProfi
 	}
 
 	var encoder *zstd.Encoder
+	var err error
 	if profile == EncoderProfileBoundedMemoryUncached {
 		// Built for this call and garbage once it returns.
 		encoder, err = newZstdEncoder(zstd.EncoderLevelFromZstd(int(level)), profile)
@@ -681,17 +678,16 @@ func decodeCore(data []byte) (*GINIndex, error) {
 		idx.DocIDMapping = mapping
 	}
 
-	cfg, err := readConfig(buf)
+	cfg, trigramToken, err := readConfig(buf)
 	if err != nil {
 		return nil, errors.Wrap(err, "read config")
 	}
 	idx.Config = cfg
+	idx.trigramUnicodeToken = trigramToken
 	// The config follows the trigram section, so the trigram indexes learn
 	// their table version only here.
-	if cfg != nil {
-		for _, ti := range idx.TrigramIndexes {
-			ti.unicodeToken = cfg.trigramUnicodeToken
-		}
+	for _, ti := range idx.TrigramIndexes {
+		ti.unicodeToken = trigramToken
 	}
 	representations, err := readRepresentations(buf)
 	if err != nil {
@@ -1888,48 +1884,16 @@ func readDocIDMapping(r io.Reader, maxDocs uint64) ([]DocID, error) {
 	return mapping, nil
 }
 
-// configForEncode returns the config that Encode writes for idx. After Decode
-// the trigram_unicode_version token lives both in idx.Config and in every
-// TrigramIndex. idx.Config is exported and can be replaced or removed, so a
-// token that only the trigram indexes still carry is written back: foreign
-// grams must never be relabelled as trigramUnicodeVersion (#99). Tokens that
-// disagree, or a foreign token with a nil config (which writes a zero-length
-// config section), are errors. idx is not modified.
-func configForEncode(idx *GINIndex) (*GINConfig, error) {
-	trigramToken, seen := "", false
-	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
-		ti := idx.TrigramIndexes[pathID]
-		if ti == nil {
-			continue
-		}
-		token := trigramUnicodeWireToken(ti.unicodeToken)
-		if seen && token != trigramToken {
-			return nil, errors.Errorf("trigram indexes carry different tokens %q and %q", trigramToken, token)
-		}
-		trigramToken, seen = token, true
-	}
-
-	cfg := idx.Config
+// writeConfig writes cfg and the index's trigram_unicode_version token. A
+// nil config writes a zero-length config section, which has nowhere to
+// record a foreign token, so that combination is an error: the foreign grams
+// must never be relabelled as trigramUnicodeVersion (#99).
+func writeConfig(w io.Writer, cfg *GINConfig, trigramToken string) error {
+	trigramToken = trigramUnicodeWireToken(trigramToken)
 	if cfg == nil {
 		if trigramToken != "" {
-			return nil, errors.Errorf("trigram indexes carry token %q but the index has no config to record it", trigramToken)
+			return errors.Errorf("trigram unicode version %q needs a config to record it", trigramToken)
 		}
-		return nil, nil
-	}
-	configToken := trigramUnicodeWireToken(cfg.trigramUnicodeToken)
-	if trigramToken == "" || trigramToken == configToken {
-		return cfg, nil
-	}
-	if configToken != "" {
-		return nil, errors.Errorf("trigram indexes carry token %q but the config carries %q", trigramToken, configToken)
-	}
-	withToken := *cfg
-	withToken.trigramUnicodeToken = trigramToken
-	return &withToken, nil
-}
-
-func writeConfig(w io.Writer, cfg *GINConfig) error {
-	if cfg == nil {
 		return binary.Write(w, binary.LittleEndian, uint32(0))
 	}
 
@@ -1945,7 +1909,7 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 		AdaptiveCoverageCeiling: cfg.AdaptiveCoverageCeiling,
 		AdaptiveBucketCount:     cfg.AdaptiveBucketCount,
 		FTSPaths:                cfg.ftsPaths,
-		TrigramUnicodeVersion:   trigramUnicodeWireToken(cfg.trigramUnicodeToken),
+		TrigramUnicodeVersion:   trigramToken,
 	}
 
 	transformerPaths := make([]string, 0, len(cfg.representationSpecs))
@@ -1980,34 +1944,37 @@ func writeConfig(w io.Writer, cfg *GINConfig) error {
 	return err
 }
 
-func readConfig(r io.Reader) (*GINConfig, error) {
+// readConfig returns the decoded config and the raw trigram_unicode_version
+// token. The token is kept verbatim: an unknown token disables trigram
+// pruning in TrigramIndex.Search instead of failing the decode (#99).
+func readConfig(r io.Reader) (*GINConfig, string, error) {
 	var configLen uint32
 	if err := binary.Read(r, binary.LittleEndian, &configLen); err != nil {
 		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, errors.Wrap(ErrInvalidFormat, "missing config length")
+			return nil, "", errors.Wrap(ErrInvalidFormat, "missing config length")
 		}
-		return nil, err
+		return nil, "", err
 	}
 
 	if configLen == 0 {
-		return nil, nil
+		return nil, "", nil
 	}
 
 	if configLen > maxConfigSize {
-		return nil, errors.Wrapf(ErrInvalidFormat, "config size %d exceeds max %d", configLen, maxConfigSize)
+		return nil, "", errors.Wrapf(ErrInvalidFormat, "config size %d exceeds max %d", configLen, maxConfigSize)
 	}
 
 	data := make([]byte, configLen)
 	if _, err := io.ReadFull(r, data); err != nil {
 		if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, errors.Wrap(ErrInvalidFormat, "truncated config payload")
+			return nil, "", errors.Wrap(ErrInvalidFormat, "truncated config payload")
 		}
-		return nil, err
+		return nil, "", err
 	}
 
 	var sc SerializedConfig
 	if err := json.Unmarshal(data, &sc); err != nil {
-		return nil, errors.Wrapf(ErrInvalidFormat, "unmarshal config: %v", err)
+		return nil, "", errors.Wrapf(ErrInvalidFormat, "unmarshal config: %v", err)
 	}
 
 	cfg := &GINConfig{
@@ -2021,9 +1988,6 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		AdaptivePromotedTermCap: sc.AdaptivePromotedTermCap,
 		AdaptiveCoverageCeiling: sc.AdaptiveCoverageCeiling,
 		AdaptiveBucketCount:     sc.AdaptiveBucketCount,
-		// Kept verbatim: an unknown token disables trigram pruning in
-		// TrigramIndex.Search instead of failing the decode (#99).
-		trigramUnicodeToken: sc.TrigramUnicodeVersion,
 	}
 
 	if len(sc.FTSPaths) > 0 {
@@ -2032,10 +1996,10 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, path := range sc.FTSPaths {
 			canonicalPath, err := canonicalizeSupportedPath(path)
 			if err != nil {
-				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize FTS path %q: %v", path, err)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "canonicalize FTS path %q: %v", path, err)
 			}
 			if firstPath, exists := seenFTSPaths[canonicalPath]; exists {
-				return nil, errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "duplicate canonical FTS path %q from %q and %q", canonicalPath, firstPath, path)
 			}
 			seenFTSPaths[canonicalPath] = path
 			cfg.ftsPaths = append(cfg.ftsPaths, canonicalPath)
@@ -2046,21 +2010,21 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 		for _, spec := range sc.Transformers {
 			canonicalPath, err := canonicalizeSupportedPath(spec.Path)
 			if err != nil {
-				return nil, errors.Wrapf(ErrInvalidFormat, "canonicalize transformer path %q: %v", spec.Path, err)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "canonicalize transformer path %q: %v", spec.Path, err)
 			}
 			alias := spec.Alias
 			if alias == "" {
 				alias = spec.Name
 			}
 			if alias == "" {
-				return nil, errors.Wrapf(ErrInvalidFormat, "missing transformer alias for path %q", spec.Path)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "missing transformer alias for path %q", spec.Path)
 			}
 			targetPath := spec.TargetPath
 			if targetPath == "" {
 				targetPath = representationTargetPath(canonicalPath, alias)
 			}
 			if targetPath != representationTargetPath(canonicalPath, alias) {
-				return nil, errors.Wrapf(ErrInvalidFormat, "transformer target path %q for %s alias %q does not match %q", targetPath, canonicalPath, alias, representationTargetPath(canonicalPath, alias))
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "transformer target path %q for %s alias %q does not match %q", targetPath, canonicalPath, alias, representationTargetPath(canonicalPath, alias))
 			}
 
 			spec.Path = canonicalPath
@@ -2069,16 +2033,16 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
 			fn, err := ReconstructTransformer(spec.ID, spec.Params)
 			if err != nil {
-				return nil, errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
 			}
 			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
-				return nil, errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
+				return nil, "", errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
 			}
 		}
 	}
 
 	if err := cfg.validate(); err != nil {
-		return nil, errors.Wrapf(ErrInvalidFormat, "validate config: %v", err)
+		return nil, "", errors.Wrapf(ErrInvalidFormat, "validate config: %v", err)
 	}
 
 	// Builder-only ingest routing fields are not serialized. Restore their
@@ -2090,7 +2054,7 @@ func readConfig(r io.Reader) (*GINConfig, error) {
 	// before any boundary code consumes them.
 	normalizeObservability(cfg)
 
-	return cfg, nil
+	return cfg, sc.TrigramUnicodeVersion, nil
 }
 
 func writeRepresentations(w io.Writer, idx *GINIndex) error {
