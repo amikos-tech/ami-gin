@@ -139,9 +139,11 @@ func buildTrigramUnicodeDriftIndex(t *testing.T) *GINIndex {
 	return builder.Finalize()
 }
 
+// encodeTrigramUnicodeDriftIndex encodes without compression, so the golden
+// depends only on the gram path and the wire format, not on zstd output.
 func encodeTrigramUnicodeDriftIndex(t *testing.T) []byte {
 	t.Helper()
-	encoded, err := Encode(buildTrigramUnicodeDriftIndex(t))
+	encoded, err := EncodeWithLevel(buildTrigramUnicodeDriftIndex(t), CompressionNone)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
