@@ -281,7 +281,7 @@ func tracerBudgetVerdict(trials []tracerTrialMins) (ok bool, report string) {
 
 // collectTracerTrialSamples times EvaluateContext under config A and config B.
 // Each trial runs a GC, then warmup blocks, then timed blocks. One block is
-// four calls in the order A, B, B, A, each timed on its own. Only timed
+// four calls in the order A,B,B,A, each timed on its own. Only timed
 // durations are returned: 2 per block per side, so 50 per side per trial.
 func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, cfgB *gin.GINConfig) []tracerTrialSamples {
 	ctx := context.Background()
