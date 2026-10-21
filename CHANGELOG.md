@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## v1.6.0 (2026-10-21)
 
+- The Go floor is now 1.26 (#97).
 - Trigram grams no longer depend on the Go toolchain (#99). `Contains`,
   `Regex`, `GenerateNGrams`, `GenerateTrigrams`, `GenerateBigrams` and
   `ExtractTrigrams` now lowercase text and drop whitespace-only and
