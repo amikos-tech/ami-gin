@@ -329,8 +329,8 @@ func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, c
 // Calls are interleaved in A,B,B,A blocks, so both sides see the same noise
 // window. The per-side minimum over 50 timed calls estimates the noise-free
 // cost. The test fails only when min(B) > 2*min(A) in all 3 trials. Measured
-// ratios were 0.97 to 1.01 under -race with 24 busy loops running. The CI SIMD
-// jobs run it with -race and it needs no race skip.
+// ratios were 0.98 to 1.03, with and without -race, with 24 busy-loop processes
+// running. The CI SIMD jobs run it with -race and it needs no race skip.
 //
 // This test amends Phase 14 D-16a: it replaces the median-of-N approach, the
 // 0.5% budget, and the rule against a hard-fail single wall-clock comparison
@@ -354,7 +354,7 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	wantRGs := idx.EvaluateContext(context.Background(), preds)
 	idx.Config = &cfgB
 	gotRGs := idx.EvaluateContext(context.Background(), preds)
-	if wantRGs.Count() != gotRGs.Count() || !slices.Equal(wantRGs.ToSlice(), gotRGs.ToSlice()) {
+	if !slices.Equal(wantRGs.ToSlice(), gotRGs.ToSlice()) {
 		t.Fatalf("config A and config B disagree: A=%v B=%v", wantRGs.ToSlice(), gotRGs.ToSlice())
 	}
 

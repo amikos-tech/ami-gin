@@ -4679,10 +4679,13 @@ func BenchmarkEvaluateWithTracer(b *testing.B) {
 	})
 
 	b.Run("NoopTracer", func(b *testing.B) {
-		cfg, _ := NewConfig(
+		cfg, err := NewConfig(
 			WithLogger(logging.NewNoop()),
 			WithSignals(telemetry.NewSignals(tracenoop.NewTracerProvider(), metricnoop.NewMeterProvider(), nil)),
 		)
+		if err != nil {
+			b.Fatalf("NewConfig: %v", err)
+		}
 		idx.Config = &cfg
 		b.ReportAllocs()
 		b.ResetTimer()
