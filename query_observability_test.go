@@ -183,10 +183,8 @@ func newNoopSignalsConfig(t *testing.T) gin.GINConfig {
 }
 
 // TestEvaluateDisabledLoggingAllocsAtMostOne asserts that running
-// EvaluateContext with an explicitly configured noop-signals config adds at
-// most one allocation over the default config. The default config has zero
-// Signals (Enabled() == false). The comparison config has Enabled() == true
-// with a noop tracer provider and a noop meter provider. The +1 tolerance
+// EvaluateContext with newNoopSignalsConfig adds at most one allocation over
+// the default config (zero Signals, Enabled() == false). The +1 tolerance
 // accommodates scheduler/jitter noise on some Go runtimes while still
 // catching regressions that leak a heap allocation per call. This is the
 // merge gate for OBS-02.
@@ -241,42 +239,25 @@ func minSample(vs []int64) int64 {
 	if len(vs) == 0 {
 		return 0
 	}
-	m := vs[0]
-	for _, v := range vs[1:] {
-		m = min(m, v)
-	}
-	return m
+	return slices.Min(vs)
 }
 
-// tracerBudgetExceeded reports whether one trial is over the 2x bound (D2).
-// It uses an integer compare, so a ratio of exactly 2.0 does not exceed.
-func tracerBudgetExceeded(m tracerTrialMins) bool {
-	return m.minB > 2*m.minA
-}
-
-// tracerBudgetVerdict decides the smoke check from per-trial minimums. The
-// bound is 2x (D2). ok is false when trials is empty (no evidence is not a
-// pass) or when every trial exceeds the bound. ok is true when at least one
-// trial stays within the bound. The report lists, one line per trial, the
-// 1-based index, both minimums and their ratio.
+// tracerBudgetVerdict decides the smoke check from per-trial minimums. ok is
+// true when at least one trial has minB <= 2*minA. The integer compare means a
+// ratio of exactly 2.0 passes. Empty input is not a pass. The report lists,
+// one line per trial, the 1-based index, both minimums and their ratio.
 func tracerBudgetVerdict(trials []tracerTrialMins) (ok bool, report string) {
 	var sb strings.Builder
-	allExceeded := len(trials) > 0
 	for i, m := range trials {
 		ratio := "n/a"
 		if m.minA > 0 {
 			ratio = fmt.Sprintf("%.3f", float64(m.minB)/float64(m.minA))
 		}
-		exceeded := tracerBudgetExceeded(m)
-		if !exceeded {
-			allExceeded = false
-		}
+		exceeded := m.minB > 2*m.minA
+		ok = ok || !exceeded
 		fmt.Fprintf(&sb, "trial %d: minA=%dns minB=%dns ratio=%s exceeded=%t\n", i+1, m.minA, m.minB, ratio, exceeded)
 	}
-	if len(trials) == 0 {
-		sb.WriteString("no trials\n")
-	}
-	return len(trials) > 0 && !allExceeded, sb.String()
+	return ok, sb.String()
 }
 
 // collectTracerTrialSamples times EvaluateContext under config A and config B.
@@ -295,21 +276,16 @@ func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, c
 	trials := make([]tracerTrialSamples, 0, tracerBudgetTrials)
 	for range tracerBudgetTrials {
 		runtime.GC()
-		for range tracerBudgetWarmupBlocks {
-			call(cfgA)
-			call(cfgB)
-			call(cfgB)
-			call(cfgA)
-		}
 		ts := tracerTrialSamples{
 			a: make([]int64, 0, 2*tracerBudgetTimedBlocks),
 			b: make([]int64, 0, 2*tracerBudgetTimedBlocks),
 		}
-		for range tracerBudgetTimedBlocks {
-			ts.a = append(ts.a, call(cfgA))
-			ts.b = append(ts.b, call(cfgB))
-			ts.b = append(ts.b, call(cfgB))
-			ts.a = append(ts.a, call(cfgA))
+		for blk := range tracerBudgetWarmupBlocks + tracerBudgetTimedBlocks {
+			a1, b1, b2, a2 := call(cfgA), call(cfgB), call(cfgB), call(cfgA)
+			if blk >= tracerBudgetWarmupBlocks {
+				ts.a = append(ts.a, a1, a2)
+				ts.b = append(ts.b, b1, b2)
+			}
 		}
 		trials = append(trials, ts)
 	}
@@ -317,8 +293,7 @@ func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, c
 }
 
 // TestEvaluateWithTracerWithinBudget is a 2x smoke check for the extra cost of
-// explicitly configured noop signals (Signals.Enabled() == true with the OTel
-// noop tracer and meter providers) over the default config (zero Signals).
+// newNoopSignalsConfig over the default config (zero Signals).
 //
 // Coverage limit: both configs run telemetry.RunBoundaryOperation and start a
 // span on every call, because zero Signals fall back to noop providers. A
@@ -332,9 +307,9 @@ func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, c
 // ratios were 0.98 to 1.03, with and without -race, with 24 busy-loop processes
 // running. The CI SIMD jobs run it with -race and it needs no race skip.
 //
-// This test amends Phase 14 D-16a: it replaces the median-of-N approach, the
-// 0.5% budget, and the rule against a hard-fail single wall-clock comparison
-// on shared CI.
+// This design replaces an earlier one that compared medians of two sequential
+// sample blocks, had an opt-in 0.5% budget, and avoided a hard fail on shared
+// CI. The sequential medians were flaky under -race (#104).
 func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping perf budget test in short mode")
@@ -362,8 +337,14 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	defer runtime.GOMAXPROCS(prev)
 
 	trials := collectTracerTrialSamples(idx, preds, &cfgA, &cfgB)
+	if len(trials) != tracerBudgetTrials {
+		t.Fatalf("trials=%d; want %d", len(trials), tracerBudgetTrials)
+	}
 	mins := make([]tracerTrialMins, 0, len(trials))
-	for _, ts := range trials {
+	for i, ts := range trials {
+		if want := 2 * tracerBudgetTimedBlocks; len(ts.a) != want || len(ts.b) != want {
+			t.Fatalf("trial %d: len(a)=%d len(b)=%d; want %d each", i+1, len(ts.a), len(ts.b), want)
+		}
 		mins = append(mins, tracerTrialMins{minA: minSample(ts.a), minB: minSample(ts.b)})
 	}
 
@@ -418,27 +399,6 @@ func TestTracerBudgetVerdict(t *testing.T) {
 			t.Fatalf("minSample=%d; want 3", got)
 		}
 	})
-}
-
-func TestCollectTracerTrialSamplesShape(t *testing.T) {
-	idx, err := buildQueryObsIndex()
-	if err != nil {
-		t.Fatalf("build: %v", err)
-	}
-	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
-	cfgA := gin.DefaultConfig()
-	cfgB := newNoopSignalsConfig(t)
-
-	trials := collectTracerTrialSamples(idx, preds, &cfgA, &cfgB)
-	if len(trials) != tracerBudgetTrials {
-		t.Fatalf("trials=%d; want %d", len(trials), tracerBudgetTrials)
-	}
-	want := 2 * tracerBudgetTimedBlocks
-	for i, ts := range trials {
-		if len(ts.a) != want || len(ts.b) != want {
-			t.Fatalf("trial %d: len(a)=%d len(b)=%d; want %d each", i+1, len(ts.a), len(ts.b), want)
-		}
-	}
 }
 
 // =============================================================================
