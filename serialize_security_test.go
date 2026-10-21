@@ -706,7 +706,7 @@ func TestDecodeLegacyTransformerFailureModeTokens(t *testing.T) {
 		},
 	})
 
-	cfg, err := readConfig(&buf)
+	cfg, _, err := readConfig(&buf)
 	if err != nil {
 		t.Fatalf("readConfig() error = %v", err)
 	}
@@ -738,7 +738,7 @@ func TestReadConfigRejectsUnknownTransformerFailureMode(t *testing.T) {
 		Transformers: []TransformerSpec{lower},
 	})
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want invalid transformer failure mode")
 	}
@@ -760,7 +760,7 @@ func TestReadConfigRejectsCorruptJSONAsInvalidFormat(t *testing.T) {
 		t.Fatalf("buf.Write() error = %v", err)
 	}
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want corrupt JSON rejection")
 	}
@@ -777,7 +777,7 @@ func TestReadConfigRejectsInvalidFTSPathAsInvalidFormat(t *testing.T) {
 		FTSPaths: []string{"$.items[0]"},
 	})
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want invalid FTS path rejection")
 	}
@@ -798,7 +798,7 @@ func TestReadConfigRejectsInvalidTransformerPathAsInvalidFormat(t *testing.T) {
 		Transformers: []TransformerSpec{spec},
 	})
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want invalid transformer path rejection")
 	}
@@ -819,7 +819,7 @@ func TestReadConfigRejectsReconstructTransformerFailureAsInvalidFormat(t *testin
 		Transformers: []TransformerSpec{spec},
 	})
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want transformer reconstruction rejection")
 	}
@@ -836,7 +836,7 @@ func TestReadConfigRejectsValidateFailureAsInvalidFormat(t *testing.T) {
 		PrefixBlockSize: -1,
 	})
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("readConfig() error = nil, want config validation rejection")
 	}
@@ -2560,7 +2560,7 @@ func TestReadConfigRejectsCanonicalFTSPathCollision(t *testing.T) {
 		t.Fatalf("buf.Write() error = %v", err)
 	}
 
-	_, err = readConfig(&buf)
+	_, _, err = readConfig(&buf)
 	if err == nil {
 		t.Fatal("expected canonical FTS collision error, got nil")
 	}
@@ -2575,7 +2575,7 @@ func TestReadConfigRejectsOversizedConfigLength(t *testing.T) {
 		t.Fatalf("binary.Write() error = %v", err)
 	}
 
-	_, err := readConfig(&buf)
+	_, _, err := readConfig(&buf)
 	if err == nil {
 		t.Fatal("expected oversized config length error, got nil")
 	}
@@ -2613,7 +2613,7 @@ func TestReadConfigRejectsDuplicateTransformerAlias(t *testing.T) {
 		t.Fatalf("buf.Write() error = %v", err)
 	}
 
-	_, err = readConfig(&buf)
+	_, _, err = readConfig(&buf)
 	if err == nil {
 		t.Fatal("expected duplicate transformer alias error, got nil")
 	}

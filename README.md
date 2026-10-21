@@ -309,6 +309,16 @@ gin.Contains("$.description", "hello")
 gin.Contains("$.title", "database")  // matches "database", "databases", etc.
 ```
 
+Grams are lowercased and filtered with tables frozen at Unicode 15.0.0, so the
+index and the query derive the same grams on every Go toolchain (#99). The
+index config can record the table version as `trigram_unicode_version`; no key
+means 15.0.0. A reader that does not know the recorded version skips trigram
+pruning for that index (fail-open), and the other operators still prune. If a
+later release adds a new table version, upgrade all readers before any writer
+records it: ami-gin v1.5.x and older readers ignore the field. Rebuild indexes
+that ami-gin v1.5.x or older built with Go 1.27 or newer over data that can
+hold Unicode 16 or 17 characters.
+
 ### Regex Matching
 
 ```go

@@ -96,6 +96,12 @@ type GINIndex struct {
 	representationLookup  map[string]map[string]uint16
 	representationInfos   map[string][]RepresentationInfo
 	representations       []RepresentationSpec
+	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
+	// means absent (= trigramUnicodeVersion). The index owns the serialized
+	// token: Decode sets it, and Encode writes it back from here. Each
+	// TrigramIndex keeps a copy for Search, and Encode refuses a TrigramIndex
+	// whose foreign copy differs, so it never relabels foreign grams (#99).
+	trigramUnicodeToken string
 }
 
 type Header struct {
@@ -1098,6 +1104,16 @@ func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map
 		}
 	}
 	return materialized
+}
+
+// TrigramUnicodeVersion returns the Unicode version of the trigram tables the
+// index was built with and whether this reader supports it. An unsupported
+// version is returned verbatim; trigram pruning is then disabled (#99).
+func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
+	if idx.trigramUnicodeToken == "" {
+		return trigramUnicodeVersion, true
+	}
+	return idx.trigramUnicodeToken, trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

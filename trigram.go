@@ -2,7 +2,6 @@ package gin
 
 import (
 	"strings"
-	"unicode"
 
 	"github.com/pkg/errors"
 )
@@ -37,6 +36,11 @@ type TrigramIndex struct {
 	N         int
 	Padding   string
 	MinLength int
+	// unicodeToken is Decode's copy of GINIndex.trigramUnicodeToken, the
+	// table version Search must honour; "" means trigramUnicodeVersion. The
+	// index owns the serialized token; Encode refuses this copy when it is
+	// foreign and differs from the index token (#99).
+	unicodeToken string
 }
 
 func NewTrigramIndex(numRGs int, opts ...NGramOption) (*TrigramIndex, error) {
@@ -64,7 +68,7 @@ func MustNewTrigramIndex(numRGs int, opts ...NGramOption) *TrigramIndex {
 }
 
 func (ti *TrigramIndex) Add(value string, rgID int) {
-	runes := []rune(strings.ToLower(value))
+	runes := trigramLowerRunes(value)
 	if len(runes) < ti.MinLength {
 		return
 	}
@@ -79,7 +83,11 @@ func (ti *TrigramIndex) Add(value string, rgID int) {
 }
 
 func (ti *TrigramIndex) Search(pattern string) *RGSet {
-	runes := []rune(strings.ToLower(pattern))
+	// Grams written with unknown tables cannot be matched safely.
+	if !trigramUnicodeTokenSupported(ti.unicodeToken) {
+		return AllRGs(ti.NumRGs)
+	}
+	runes := trigramLowerRunes(pattern)
 	if len(runes) < ti.N {
 		return AllRGs(ti.NumRGs)
 	}
@@ -147,7 +155,7 @@ func (ti *TrigramIndex) TrigramCount() int {
 
 func isWhitespaceOnly(s string) bool {
 	for _, r := range s {
-		if !unicode.IsSpace(r) {
+		if !trigramIsSpace(r) {
 			return false
 		}
 	}
@@ -156,7 +164,7 @@ func isWhitespaceOnly(s string) bool {
 
 func isPunctuationOnly(s string) bool {
 	for _, r := range s {
-		if !unicode.IsPunct(r) && !unicode.IsSymbol(r) {
+		if !trigramIsPunctOrSymbol(r) {
 			return false
 		}
 	}
@@ -171,8 +179,7 @@ func GenerateNGrams(text string, n int, opts ...NGramOption) ([]string, error) {
 		}
 	}
 
-	text = strings.ToLower(text)
-	runes := []rune(text)
+	runes := trigramLowerRunes(text)
 
 	if cfg.Padding != "" {
 		padRunes := []rune(strings.Repeat(cfg.Padding, n-1))
