@@ -8,10 +8,10 @@ package gin_test
 // Verification commands:
 //
 //	# Run all policy tests:
-//	go test -run 'Test(InfoLevelAttrAllowlist|InfoLevelEmissionsUseOnlyAllowlistedAttrs|NoLegacyQueryLoggerSurface|NoBackendTypeLeakage|RootModuleHasNoOtelSdkOrExporterDeps|ObservabilityDefaultsSurviveFinalizeAndDecode|ObservabilityEnabledDoesNotChangeFunctionalResults|ParquetAndSerializationObservabilityRoundTrip|EvaluateDisabledLoggingAllocsAtMostOne|EvaluateWithTracerWithinBudget)$' -count=1 .
+//	go test -run 'Test(InfoLevelAttrAllowlist|InfoLevelEmissionsUseOnlyAllowlistedAttrs|NoLegacyQueryLoggerSurface|NoBackendTypeLeakage|RootModuleHasNoOtelSdkOrExporterDeps|ObservabilityDefaultsSurviveFinalizeAndDecode|ObservabilityEnabledDoesNotChangeFunctionalResults|ParquetAndSerializationObservabilityRoundTrip|EvaluateDisabledLoggingAllocsAtMostOne|EvaluateWithTracerWithinBudget|TracerBudgetVerdict|TracerBudgetNegativeControl)$' -count=1 .
 //
-//	# Strict normalized perf-gate (0.5% budget):
-//	GIN_STRICT_PERF=1 go test -run 'Test(InfoLevelAttrAllowlist|NoLegacyQueryLoggerSurface|ObservabilityDefaultsSurviveFinalizeAndDecode|EvaluateDisabledLoggingAllocsAtMostOne|EvaluateWithTracerWithinBudget)$' -count=1 .
+//	# Precise overhead numbers (compare NoTracer and NoopTracer with benchstat):
+//	go test -run '^$' -bench 'BenchmarkEvaluateWithTracer$' -benchmem -count=10 .
 //
 //	# Benchmarks:
 //	go test -run '^$' -bench 'BenchmarkEvaluate(DisabledLogging|WithTracer)$' -benchmem -count=1 .

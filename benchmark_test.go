@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/pkg/errors"
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/amikos-tech/ami-gin/telemetry"
@@ -4640,10 +4642,10 @@ func benchQueryFixture() (*GINIndex, []Predicate) {
 	return idx, preds
 }
 
-// BenchmarkEvaluateDisabledLogging measures EvaluateContext with the default
-// noop logger and disabled signals. This is the near-zero-cost disabled-path
-// gate for OBS-02 (at most one alloc over baseline; verified by
-// TestEvaluateDisabledLoggingAllocsAtMostOne).
+// BenchmarkEvaluateDisabledLogging measures EvaluateContext with DefaultConfig
+// (noop logger, zero Signals). TestEvaluateDisabledLoggingAllocsAtMostOne
+// checks that explicit noop signals add at most one alloc over this default
+// path.
 func BenchmarkEvaluateDisabledLogging(b *testing.B) {
 	idx, preds := benchQueryFixture()
 	cfg := DefaultConfig() // noop logger + disabled signals
@@ -4657,9 +4659,11 @@ func BenchmarkEvaluateDisabledLogging(b *testing.B) {
 	}
 }
 
-// BenchmarkEvaluateWithTracer compares the no-tracer baseline against a
-// noop-tracer path on the same fixture. The strict 0.5% overhead budget is
-// enforced by TestEvaluateWithTracerWithinBudget when GIN_STRICT_PERF=1.
+// BenchmarkEvaluateWithTracer compares the default config (zero Signals,
+// Enabled() == false) with an explicitly configured noop-signals config (OTel
+// noop tracer and meter providers) on the same fixture. It is the source of
+// precise overhead numbers: run it with -count=10 and compare with benchstat.
+// TestEvaluateWithTracerWithinBudget is only a 2x smoke check.
 func BenchmarkEvaluateWithTracer(b *testing.B) {
 	idx, preds := benchQueryFixture()
 	ctx := context.Background()
@@ -4675,10 +4679,16 @@ func BenchmarkEvaluateWithTracer(b *testing.B) {
 	})
 
 	b.Run("NoopTracer", func(b *testing.B) {
-		cfg, _ := NewConfig(
+		cfg, err := NewConfig(
 			WithLogger(logging.NewNoop()),
-			WithSignals(telemetry.Disabled()),
+			WithSignals(telemetry.NewSignals(tracenoop.NewTracerProvider(), metricnoop.NewMeterProvider(), nil)),
 		)
+		if err != nil {
+			b.Fatalf("NewConfig: %v", err)
+		}
+		if !cfg.Signals.Enabled() {
+			b.Fatalf("noop-signals config: Signals.Enabled() = false; want true")
+		}
 		idx.Config = &cfg
 		b.ReportAllocs()
 		b.ResetTimer()

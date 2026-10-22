@@ -2,12 +2,17 @@ package gin_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
-	"sort"
+	"slices"
+	"strings"
 	"testing"
 	"time"
+
+	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
+	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	gin "github.com/amikos-tech/ami-gin"
 	"github.com/amikos-tech/ami-gin/logging"
@@ -163,12 +168,30 @@ func TestAdaptiveInvariantViolationStillFailsOpen(t *testing.T) {
 // Task 3: Disabled-path performance gates
 // =============================================================================
 
+// newNoopSignalsConfig builds a config whose Signals use explicit OTel noop
+// tracer and meter providers, so Signals.Enabled() is true. The perf tests use
+// it as config B and compare it with gin.DefaultConfig() as config A.
+func newNoopSignalsConfig(t *testing.T) gin.GINConfig {
+	t.Helper()
+	cfg, err := gin.NewConfig(gin.WithSignals(telemetry.NewSignals(
+		tracenoop.NewTracerProvider(),
+		metricnoop.NewMeterProvider(),
+		nil,
+	)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if !cfg.Signals.Enabled() {
+		t.Fatalf("noop-signals config: Signals.Enabled() = false; want true")
+	}
+	return cfg
+}
+
 // TestEvaluateDisabledLoggingAllocsAtMostOne asserts that running
-// EvaluateContext with a disabled (noop) logger adds at most one allocation
-// over the baseline that uses no observability at all. The +1 tolerance
+// EvaluateContext with newNoopSignalsConfig adds at most one allocation over
+// the default config (zero Signals, Enabled() == false). The +1 tolerance
 // accommodates scheduler/jitter noise on some Go runtimes while still
-// catching regressions that leak a heap allocation per call. This is the
-// merge gate for OBS-02.
+// catching regressions that leak a heap allocation per call.
 func TestEvaluateDisabledLoggingAllocsAtMostOne(t *testing.T) {
 	idx, err := buildQueryObsIndex()
 	if err != nil {
@@ -176,32 +199,124 @@ func TestEvaluateDisabledLoggingAllocsAtMostOne(t *testing.T) {
 	}
 	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
 
-	// Baseline: DefaultConfig has noop logger + disabled signals.
+	// Config A: DefaultConfig has a noop logger and zero (disabled) Signals.
+	cfgA := gin.DefaultConfig()
+	idx.Config = &cfgA
 	baseAllocs := testing.AllocsPerRun(100, func() {
 		_ = idx.EvaluateContext(context.Background(), preds)
 	})
 
-	// Same with explicitly wired noop logger and disabled signals (same behavior,
-	// but proves the enabled=false guard does not add allocations).
-	noopCfg := gin.DefaultConfig()
-	idx.Config = &noopCfg
-	withNoopAllocs := testing.AllocsPerRun(100, func() {
+	// Config B: explicit noop signals (Enabled() == true). Checks that wiring
+	// noop providers adds at most one allocation over the default path.
+	cfgB := newNoopSignalsConfig(t)
+	idx.Config = &cfgB
+	noopAllocs := testing.AllocsPerRun(100, func() {
 		_ = idx.EvaluateContext(context.Background(), preds)
 	})
 
-	if withNoopAllocs > baseAllocs+1 {
-		t.Fatalf("disabled logging allocs=%v; baseline allocs=%v; disabled path must add at most 1 alloc over baseline", withNoopAllocs, baseAllocs)
+	if noopAllocs > baseAllocs+1 {
+		t.Fatalf("noop-signals allocs=%v; default-config allocs=%v; noop-signals path must add at most 1 alloc over default", noopAllocs, baseAllocs)
 	}
 }
 
-// TestEvaluateWithTracerWithinBudget asserts that running EvaluateContext with
-// a disabled/noop tracer stays within the 0.5% overhead budget compared to the
-// no-tracer baseline. Only enforced when GIN_STRICT_PERF=1.
+const (
+	tracerBudgetTrials       = 3
+	tracerBudgetWarmupBlocks = 5
+	tracerBudgetTimedBlocks  = 25
+)
+
+// tracerTrialSamples holds the timed per-call durations (ns) of one trial.
+// Warmup durations are never stored.
+type tracerTrialSamples struct {
+	a []int64
+	b []int64
+}
+
+// tracerTrialMins holds the per-side minimum duration (ns) of one trial.
+type tracerTrialMins struct {
+	minA int64
+	minB int64
+}
+
+// minSample returns the smallest value in vs. It returns 0 for an empty slice.
+func minSample(vs []int64) int64 {
+	if len(vs) == 0 {
+		return 0
+	}
+	return slices.Min(vs)
+}
+
+// tracerBudgetVerdict decides the smoke check from per-trial minimums. ok is
+// true when at least one trial has minB <= 2*minA. The integer compare means a
+// ratio of exactly 2.0 passes. Empty input is not a pass. The report lists,
+// one line per trial, the 1-based index, both minimums and their ratio. The
+// ratio is printed as "n/a" when minA is 0.
+func tracerBudgetVerdict(trials []tracerTrialMins) (ok bool, report string) {
+	var sb strings.Builder
+	for i, m := range trials {
+		ratio := "n/a"
+		if m.minA > 0 {
+			ratio = fmt.Sprintf("%.3f", float64(m.minB)/float64(m.minA))
+		}
+		exceeded := m.minB > 2*m.minA
+		ok = ok || !exceeded
+		fmt.Fprintf(&sb, "trial %d: minA=%dns minB=%dns ratio=%s exceeded=%t\n", i+1, m.minA, m.minB, ratio, exceeded)
+	}
+	return ok, sb.String()
+}
+
+// collectTracerTrialSamples times EvaluateContext under config A and config B.
+// Each trial runs a GC, then warmup blocks, then timed blocks. One block is
+// four calls in the order A,B,B,A, each timed on its own. Only timed
+// durations are returned: 2 per block per side, so 50 per side per trial.
+func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, cfgB *gin.GINConfig) []tracerTrialSamples {
+	ctx := context.Background()
+	call := func(cfg *gin.GINConfig) int64 {
+		idx.Config = cfg
+		start := time.Now()
+		_ = idx.EvaluateContext(ctx, preds)
+		return time.Since(start).Nanoseconds()
+	}
+
+	trials := make([]tracerTrialSamples, 0, tracerBudgetTrials)
+	for range tracerBudgetTrials {
+		runtime.GC()
+		ts := tracerTrialSamples{
+			a: make([]int64, 0, 2*tracerBudgetTimedBlocks),
+			b: make([]int64, 0, 2*tracerBudgetTimedBlocks),
+		}
+		for blk := range tracerBudgetWarmupBlocks + tracerBudgetTimedBlocks {
+			a1, b1, b2, a2 := call(cfgA), call(cfgB), call(cfgB), call(cfgA)
+			if blk >= tracerBudgetWarmupBlocks {
+				ts.a = append(ts.a, a1, a2)
+				ts.b = append(ts.b, b1, b2)
+			}
+		}
+		trials = append(trials, ts)
+	}
+	return trials
+}
+
+// TestEvaluateWithTracerWithinBudget is a 2x smoke check for the extra cost of
+// newNoopSignalsConfig over the default config (zero Signals).
 //
-// Both the baseline and noop-tracer path use telemetry.Disabled(), so the
-// comparison is between two semantically identical code paths. The median-of-N
-// approach with GOMAXPROCS(1) suppresses scheduler jitter enough for the 0.5%
-// budget to be meaningful on a quiet, dedicated machine.
+// Coverage limit: both configs run telemetry.RunBoundaryOperation and start a
+// span on every call, because zero Signals fall back to noop providers. A
+// regression shared by both sides is not caught here. Precise overhead numbers
+// come from BenchmarkEvaluateWithTracer compared with benchstat.
+//
+// This is a HARD fail on shared CI. That is acceptable because calls are
+// interleaved in A,B,B,A blocks, so both sides see the same noise window; the
+// per-side minimum over 50 timed calls estimates the noise-free cost; and the
+// test fails only when min(B) > 2*min(A) in all 3 trials. When this check was
+// written (#104), ratios on one developer machine were about 0.98 to 1.03,
+// with and without -race, with 24 busy-loop processes running. The required
+// SIMD CI jobs (linux/amd64, darwin/arm64) run it with -race, and it needs no
+// race skip. The unit CI job uses -short and skips it.
+//
+// This design replaces an earlier one that compared medians of two sequential
+// sample blocks, had an opt-in 0.5% budget, and avoided a hard fail on shared
+// CI. The sequential medians were flaky under -race (#104).
 func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping perf budget test in short mode")
@@ -213,44 +328,146 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 	}
 	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
 
-	// Baseline: DefaultConfig produces disabled signals (telemetry.Disabled()).
-	baselineCfg := gin.DefaultConfig()
-	idx.Config = &baselineCfg
+	cfgA := gin.DefaultConfig()
+	cfgB := newNoopSignalsConfig(t)
 
-	// Use more samples and drop the first few as warmup to reduce cold-start noise.
-	const totalSamples = 51
-	const warmup = 5
+	// Correctness precheck: both configs must give the same result.
+	idx.Config = &cfgA
+	wantRGs := idx.EvaluateContext(context.Background(), preds)
+	idx.Config = &cfgB
+	gotRGs := idx.EvaluateContext(context.Background(), preds)
+	if !slices.Equal(wantRGs.ToSlice(), gotRGs.ToSlice()) {
+		t.Fatalf("config A and config B disagree: A=%v B=%v", wantRGs.ToSlice(), gotRGs.ToSlice())
+	}
 
-	baselineAll := collectEvalSamples(idx, preds, totalSamples)
-	baselineTimes := baselineAll[warmup:]
+	// One P means no other goroutine runs Go code in parallel with a timed
+	// call. Background work such as GC mark workers can still preempt a call,
+	// but then it adds time to single samples, and the per-side minimum
+	// discards those.
+	prev := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(prev)
 
-	// Noop-tracer path: explicitly disabled signals. Semantically identical to
-	// DefaultConfig; exercises the WithSignals option code path.
-	noopCfg, err := gin.NewConfig(gin.WithSignals(telemetry.Disabled()))
+	trials := collectTracerTrialSamples(idx, preds, &cfgA, &cfgB)
+	if len(trials) != tracerBudgetTrials {
+		t.Fatalf("trials=%d; want %d", len(trials), tracerBudgetTrials)
+	}
+	mins := make([]tracerTrialMins, 0, len(trials))
+	for i, ts := range trials {
+		if want := 2 * tracerBudgetTimedBlocks; len(ts.a) != want || len(ts.b) != want {
+			t.Fatalf("trial %d: len(a)=%d len(b)=%d; want %d each", i+1, len(ts.a), len(ts.b), want)
+		}
+		mins = append(mins, tracerTrialMins{minA: minSample(ts.a), minB: minSample(ts.b)})
+	}
+
+	ok, report := tracerBudgetVerdict(mins)
+	if !ok {
+		t.Fatalf("noop-signals smoke check failed: min(B) > 2*min(A) in every trial:\n%s", report)
+	}
+	t.Logf("noop-signals smoke check passed:\n%s", report)
+}
+
+// slowTracerProvider wraps the OTel noop provider and returns tracers whose
+// Start sleeps for 1ms. TestTracerBudgetNegativeControl uses it.
+type slowTracerProvider struct{ tracenoop.TracerProvider }
+
+func (p slowTracerProvider) Tracer(name string, opts ...trace.TracerOption) trace.Tracer {
+	return slowTracer{p.TracerProvider.Tracer(name, opts...)}
+}
+
+type slowTracer struct{ trace.Tracer }
+
+func (t slowTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	time.Sleep(time.Millisecond)
+	return t.Tracer.Start(ctx, name, opts...)
+}
+
+// TestTracerBudgetNegativeControl runs the budget check with a config B whose
+// tracer sleeps 1ms per span. The verdict must fail. This proves that the
+// collector routes B samples through B's provider and that the verdict can
+// fail end to end.
+func TestTracerBudgetNegativeControl(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping perf budget negative control in short mode")
+	}
+
+	idx, err := buildQueryObsIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
+
+	cfgA := gin.DefaultConfig()
+	cfgB, err := gin.NewConfig(gin.WithSignals(telemetry.NewSignals(
+		slowTracerProvider{tracenoop.NewTracerProvider()},
+		metricnoop.NewMeterProvider(),
+		nil,
+	)))
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
-	idx.Config = &noopCfg
+	if !cfgB.Signals.Enabled() {
+		t.Fatalf("slow-tracer config: Signals.Enabled() = false; want true")
+	}
 
-	noopAll := collectEvalSamples(idx, preds, totalSamples)
-	noopTimes := noopAll[warmup:]
+	trials := collectTracerTrialSamples(idx, preds, &cfgA, &cfgB)
+	mins := make([]tracerTrialMins, 0, len(trials))
+	for _, ts := range trials {
+		mins = append(mins, tracerTrialMins{minA: minSample(ts.a), minB: minSample(ts.b)})
+	}
 
-	baseMedian := medianInt64(baselineTimes)
-	noopMedian := medianInt64(noopTimes)
+	if ok, report := tracerBudgetVerdict(mins); ok {
+		t.Fatalf("verdict passed with a 1ms tracer; collector or config routing is broken:\n%s", report)
+	}
+}
 
-	if isStrictPerfMode() {
-		budget := float64(baseMedian) * 1.005
-		if float64(noopMedian) > budget {
-			t.Fatalf("noop-tracer median=%dns exceeds 0.5%% budget over baseline=%dns (limit=%dns)",
-				noopMedian, baseMedian, int64(budget))
+func TestTracerBudgetVerdict(t *testing.T) {
+	cases := []struct {
+		name   string
+		trials []tracerTrialMins
+		wantOK bool
+	}{
+		{"empty is a failure", nil, false},
+		{"exactly 2x passes", []tracerTrialMins{{100, 200}, {100, 200}, {100, 200}}, true},
+		{"all exceed fails", []tracerTrialMins{{100, 201}, {100, 300}, {50, 101}}, false},
+		{"only first within passes", []tracerTrialMins{{100, 150}, {100, 500}, {100, 900}}, true},
+		{"two exceed one within passes", []tracerTrialMins{{100, 500}, {100, 150}, {100, 900}}, true},
+		{"only last within passes", []tracerTrialMins{{100, 500}, {100, 900}, {100, 150}}, true},
+		{"zero minA with positive minB exceeds", []tracerTrialMins{{0, 5}, {0, 5}, {0, 5}}, false},
+		{"zero minA and zero minB passes", []tracerTrialMins{{0, 0}, {0, 0}, {0, 0}}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, report := tracerBudgetVerdict(tc.trials)
+			if ok != tc.wantOK {
+				t.Fatalf("ok=%v; want %v; report:\n%s", ok, tc.wantOK, report)
+			}
+			if strings.Contains(report, "NaN") || strings.Contains(report, "Inf") {
+				t.Fatalf("report contains NaN or Inf:\n%s", report)
+			}
+		})
+	}
+
+	t.Run("report lists every trial", func(t *testing.T) {
+		_, report := tracerBudgetVerdict([]tracerTrialMins{{101, 303}, {202, 404}, {505, 606}})
+		for _, want := range []string{
+			"trial 1", "trial 2", "trial 3",
+			"minA=101ns", "minB=303ns", "minA=202ns", "minB=404ns", "minA=505ns", "minB=606ns",
+			"2.000", "1.200",
+		} {
+			if !strings.Contains(report, want) {
+				t.Fatalf("report missing %q:\n%s", want, report)
+			}
 		}
-		return
-	}
+	})
 
-	// Non-strict: smoke-check only — noop tracer must not be 2x slower.
-	if noopMedian > baseMedian*2 {
-		t.Fatalf("noop-tracer median=%dns is more than 2x baseline=%dns (smoke check)", noopMedian, baseMedian)
-	}
+	t.Run("minSample", func(t *testing.T) {
+		if got := minSample(nil); got != 0 {
+			t.Fatalf("minSample(nil)=%d; want 0", got)
+		}
+		if got := minSample([]int64{7, 3, 9, 3, 5}); got != 3 {
+			t.Fatalf("minSample=%d; want 3", got)
+		}
+	})
 }
 
 // =============================================================================
@@ -260,38 +477,6 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 type noopWriter struct{}
 
 func (noopWriter) Write(p []byte) (n int, err error) { return len(p), nil }
-
-// collectEvalSamples runs EvaluateContext the given number of times and
-// returns the per-iteration nanosecond durations, measured with GOMAXPROCS=1
-// to reduce scheduler noise.
-func collectEvalSamples(idx *gin.GINIndex, preds []gin.Predicate, n int) []int64 {
-	prev := runtime.GOMAXPROCS(1)
-	defer runtime.GOMAXPROCS(prev)
-
-	times := make([]int64, n)
-	for i := range times {
-		start := time.Now()
-		_ = idx.EvaluateContext(context.Background(), preds)
-		times[i] = time.Since(start).Nanoseconds()
-	}
-	return times
-}
-
-// medianInt64 returns the median value of a sorted copy of vs.
-func medianInt64(vs []int64) int64 {
-	if len(vs) == 0 {
-		return 0
-	}
-	cp := make([]int64, len(vs))
-	copy(cp, vs)
-	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
-	return cp[len(cp)/2]
-}
-
-// isStrictPerfMode reports whether GIN_STRICT_PERF=1 is set.
-func isStrictPerfMode() bool {
-	return os.Getenv("GIN_STRICT_PERF") == "1"
-}
 
 // captureLogger captures all Log calls for assertion.
 type captureLogger struct {
