@@ -8,7 +8,7 @@ package gin_test
 // Verification commands:
 //
 //	# Run all policy tests:
-//	go test -run 'Test(InfoLevelAttrAllowlist|InfoLevelEmissionsUseOnlyAllowlistedAttrs|NoLegacyQueryLoggerSurface|NoBackendTypeLeakage|RootModuleHasNoOtelSdkOrExporterDeps|ObservabilityDefaultsSurviveFinalizeAndDecode|ObservabilityEnabledDoesNotChangeFunctionalResults|ParquetAndSerializationObservabilityRoundTrip|EvaluateDisabledLoggingAllocsAtMostOne|EvaluateWithTracerWithinBudget)$' -count=1 .
+//	go test -run 'Test(InfoLevelAttrAllowlist|InfoLevelEmissionsUseOnlyAllowlistedAttrs|NoLegacyQueryLoggerSurface|NoBackendTypeLeakage|RootModuleHasNoOtelSdkOrExporterDeps|ObservabilityDefaultsSurviveFinalizeAndDecode|ObservabilityEnabledDoesNotChangeFunctionalResults|ParquetAndSerializationObservabilityRoundTrip|EvaluateDisabledLoggingAllocsAtMostOne|EvaluateWithTracerWithinBudget|TracerBudgetVerdict|TracerBudgetNegativeControl)$' -count=1 .
 //
 //	# Precise overhead numbers (compare NoTracer and NoopTracer with benchstat):
 //	go test -run '^$' -bench 'BenchmarkEvaluateWithTracer$' -benchmem -count=10 .

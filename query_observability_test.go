@@ -11,6 +11,7 @@ import (
 	"time"
 
 	metricnoop "go.opentelemetry.io/otel/metric/noop"
+	"go.opentelemetry.io/otel/trace"
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	gin "github.com/amikos-tech/ami-gin"
@@ -167,8 +168,9 @@ func TestAdaptiveInvariantViolationStillFailsOpen(t *testing.T) {
 // Task 3: Disabled-path performance gates
 // =============================================================================
 
-// newNoopSignalsConfig returns config B: an explicitly configured noop-signals
-// config (Signals.Enabled() == true, OTel noop tracer and meter providers).
+// newNoopSignalsConfig builds a config whose Signals use explicit OTel noop
+// tracer and meter providers, so Signals.Enabled() is true. The perf tests use
+// it as config B and compare it with gin.DefaultConfig() as config A.
 func newNoopSignalsConfig(t *testing.T) gin.GINConfig {
 	t.Helper()
 	cfg, err := gin.NewConfig(gin.WithSignals(telemetry.NewSignals(
@@ -179,6 +181,9 @@ func newNoopSignalsConfig(t *testing.T) gin.GINConfig {
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
 	}
+	if !cfg.Signals.Enabled() {
+		t.Fatalf("noop-signals config: Signals.Enabled() = false; want true")
+	}
 	return cfg
 }
 
@@ -186,8 +191,7 @@ func newNoopSignalsConfig(t *testing.T) gin.GINConfig {
 // EvaluateContext with newNoopSignalsConfig adds at most one allocation over
 // the default config (zero Signals, Enabled() == false). The +1 tolerance
 // accommodates scheduler/jitter noise on some Go runtimes while still
-// catching regressions that leak a heap allocation per call. This is the
-// merge gate for OBS-02.
+// catching regressions that leak a heap allocation per call.
 func TestEvaluateDisabledLoggingAllocsAtMostOne(t *testing.T) {
 	idx, err := buildQueryObsIndex()
 	if err != nil {
@@ -202,8 +206,8 @@ func TestEvaluateDisabledLoggingAllocsAtMostOne(t *testing.T) {
 		_ = idx.EvaluateContext(context.Background(), preds)
 	})
 
-	// Config B: explicit noop signals (Enabled() == true). Proves that wiring
-	// noop providers does not add allocations over the default path.
+	// Config B: explicit noop signals (Enabled() == true). Checks that wiring
+	// noop providers adds at most one allocation over the default path.
 	cfgB := newNoopSignalsConfig(t)
 	idx.Config = &cfgB
 	noopAllocs := testing.AllocsPerRun(100, func() {
@@ -245,7 +249,8 @@ func minSample(vs []int64) int64 {
 // tracerBudgetVerdict decides the smoke check from per-trial minimums. ok is
 // true when at least one trial has minB <= 2*minA. The integer compare means a
 // ratio of exactly 2.0 passes. Empty input is not a pass. The report lists,
-// one line per trial, the 1-based index, both minimums and their ratio.
+// one line per trial, the 1-based index, both minimums and their ratio. The
+// ratio is printed as "n/a" when minA is 0.
 func tracerBudgetVerdict(trials []tracerTrialMins) (ok bool, report string) {
 	var sb strings.Builder
 	for i, m := range trials {
@@ -300,12 +305,14 @@ func collectTracerTrialSamples(idx *gin.GINIndex, preds []gin.Predicate, cfgA, c
 // regression shared by both sides is not caught here. Precise overhead numbers
 // come from BenchmarkEvaluateWithTracer compared with benchstat.
 //
-// This is a HARD fail on shared CI, which is acceptable for three reasons.
-// Calls are interleaved in A,B,B,A blocks, so both sides see the same noise
-// window. The per-side minimum over 50 timed calls estimates the noise-free
-// cost. The test fails only when min(B) > 2*min(A) in all 3 trials. Measured
-// ratios were 0.98 to 1.03, with and without -race, with 24 busy-loop processes
-// running. The CI SIMD jobs run it with -race and it needs no race skip.
+// This is a HARD fail on shared CI. That is acceptable because calls are
+// interleaved in A,B,B,A blocks, so both sides see the same noise window; the
+// per-side minimum over 50 timed calls estimates the noise-free cost; and the
+// test fails only when min(B) > 2*min(A) in all 3 trials. When this check was
+// written (#104), ratios on one developer machine were about 0.98 to 1.03,
+// with and without -race, with 24 busy-loop processes running. The required
+// SIMD CI jobs (linux/amd64, darwin/arm64) run it with -race, and it needs no
+// race skip. The unit CI job uses -short and skips it.
 //
 // This design replaces an earlier one that compared medians of two sequential
 // sample blocks, had an opt-in 0.5% budget, and avoided a hard fail on shared
@@ -333,6 +340,10 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 		t.Fatalf("config A and config B disagree: A=%v B=%v", wantRGs.ToSlice(), gotRGs.ToSlice())
 	}
 
+	// One P means no other goroutine runs Go code in parallel with a timed
+	// call. Background work such as GC mark workers can still preempt a call,
+	// but then it adds time to single samples, and the per-side minimum
+	// discards those.
 	prev := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(prev)
 
@@ -348,8 +359,64 @@ func TestEvaluateWithTracerWithinBudget(t *testing.T) {
 		mins = append(mins, tracerTrialMins{minA: minSample(ts.a), minB: minSample(ts.b)})
 	}
 
-	if ok, report := tracerBudgetVerdict(mins); !ok {
+	ok, report := tracerBudgetVerdict(mins)
+	if !ok {
 		t.Fatalf("noop-signals smoke check failed: min(B) > 2*min(A) in every trial:\n%s", report)
+	}
+	t.Logf("noop-signals smoke check passed:\n%s", report)
+}
+
+// slowTracerProvider wraps the OTel noop provider and returns tracers whose
+// Start sleeps for 1ms. TestTracerBudgetNegativeControl uses it.
+type slowTracerProvider struct{ tracenoop.TracerProvider }
+
+func (p slowTracerProvider) Tracer(name string, opts ...trace.TracerOption) trace.Tracer {
+	return slowTracer{p.TracerProvider.Tracer(name, opts...)}
+}
+
+type slowTracer struct{ trace.Tracer }
+
+func (t slowTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	time.Sleep(time.Millisecond)
+	return t.Tracer.Start(ctx, name, opts...)
+}
+
+// TestTracerBudgetNegativeControl runs the budget check with a config B whose
+// tracer sleeps 1ms per span. The verdict must fail. This proves that the
+// collector routes B samples through B's provider and that the verdict can
+// fail end to end.
+func TestTracerBudgetNegativeControl(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping perf budget negative control in short mode")
+	}
+
+	idx, err := buildQueryObsIndex()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	preds := []gin.Predicate{gin.EQ("$.status", "active"), gin.GTE("$.age", 25)}
+
+	cfgA := gin.DefaultConfig()
+	cfgB, err := gin.NewConfig(gin.WithSignals(telemetry.NewSignals(
+		slowTracerProvider{tracenoop.NewTracerProvider()},
+		metricnoop.NewMeterProvider(),
+		nil,
+	)))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	if !cfgB.Signals.Enabled() {
+		t.Fatalf("slow-tracer config: Signals.Enabled() = false; want true")
+	}
+
+	trials := collectTracerTrialSamples(idx, preds, &cfgA, &cfgB)
+	mins := make([]tracerTrialMins, 0, len(trials))
+	for _, ts := range trials {
+		mins = append(mins, tracerTrialMins{minA: minSample(ts.a), minB: minSample(ts.b)})
+	}
+
+	if ok, report := tracerBudgetVerdict(mins); ok {
+		t.Fatalf("verdict passed with a 1ms tracer; collector or config routing is broken:\n%s", report)
 	}
 }
 
@@ -362,7 +429,9 @@ func TestTracerBudgetVerdict(t *testing.T) {
 		{"empty is a failure", nil, false},
 		{"exactly 2x passes", []tracerTrialMins{{100, 200}, {100, 200}, {100, 200}}, true},
 		{"all exceed fails", []tracerTrialMins{{100, 201}, {100, 300}, {50, 101}}, false},
+		{"only first within passes", []tracerTrialMins{{100, 150}, {100, 500}, {100, 900}}, true},
 		{"two exceed one within passes", []tracerTrialMins{{100, 500}, {100, 150}, {100, 900}}, true},
+		{"only last within passes", []tracerTrialMins{{100, 500}, {100, 900}, {100, 150}}, true},
 		{"zero minA with positive minB exceeds", []tracerTrialMins{{0, 5}, {0, 5}, {0, 5}}, false},
 		{"zero minA and zero minB passes", []tracerTrialMins{{0, 0}, {0, 0}, {0, 0}}, true},
 	}
