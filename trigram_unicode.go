@@ -15,20 +15,16 @@ import (
 // and prune matching row groups.
 //
 // The same table also lowercases the values of ToLower, EmailDomain and
-// URLHost companions through frozenToLower (#102). Readers of v1.6.0 apply the
-// unknown-version fallback to trigrams only and still prune lowering
-// companions.
+// URLHost companions through frozenToLower (#102).
 //
 // Upgrade policy: a freshly built index writes no trigram_unicode_version
 // config key, and an absent key means this version. A future table upgrade
 // must ADD a second table set next to this one and keep this one, so that
 // existing indexes keep their meaning. Readers of ami-gin <= v1.5.x ignore
-// unknown config fields and cannot apply the unknown-version fallback, so
-// every reader must be upgraded before any writer emits a new token.
-//
-// Reader-upgrade advisory: v1.6.0 readers prune lowering companions under an
-// unknown token. Upgrade all readers to this release before any writer emits a
-// new token (#102).
+// unknown config fields and cannot apply the unknown-version fallback.
+// Readers of v1.6.0 apply the fallback to trigrams only and still prune
+// lowering companions (#102). So every reader must be upgraded to this
+// release before any writer emits a new token.
 const trigramUnicodeVersion = "15.0.0"
 
 // trigramUnicodeTokenSupported reports whether this reader has the tables for

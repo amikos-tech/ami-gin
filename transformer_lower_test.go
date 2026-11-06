@@ -12,12 +12,12 @@ import (
 	"unicode"
 )
 
-// The value of the tests in this file is that the committed goldens are
-// compared on every toolchain. transformer_lower_goldens_test.go regenerates
-// the goldens; it does not compare them. A build and a query on one toolchain
-// agree even on broken code, so they prove nothing. The goldens were generated
-// with Unicode 15.0.0 (Go 1.21-1.26) and must match on a Unicode 17.0.0
-// toolchain (Go 1.27) too (#102).
+// The tests in this file pin Unicode 15.0.0 behavior with committed goldens
+// and literal row sets. They run on every toolchain.
+// transformer_lower_goldens_test.go regenerates the goldens; it does not
+// compare them. A build and a query on one toolchain agree even on broken
+// code. So the value of these tests is that the same literals must also hold
+// on Go 1.27 (Unicode 17.0.0) (#102).
 
 // transformerDriftDocs is the fixture: one document per row group. RG3 and RG4
 // have no email and no url field.

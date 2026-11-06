@@ -203,8 +203,9 @@ func predicateMarkerOf(value any) (predicateMarker, string, any) {
 }
 
 // unwrapPredicateValue strips As and Normalized markers from a predicate
-// value. A list is unwrapped only when every element carries a marker of the
-// same kind and alias; otherwise valid is false and the predicate returns
+// value. A list with no markers is returned unchanged and valid is true. A
+// list with any marker is unwrapped only when every element has a marker of
+// the same kind and alias. Otherwise valid is false and the predicate returns
 // every row group.
 func unwrapPredicateValue(value any) (alias string, rawValue any, marker predicateMarker, listForm bool, valid bool) {
 	if list, ok := value.([]any); ok {

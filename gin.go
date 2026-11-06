@@ -369,7 +369,9 @@ type NormalizedValue struct {
 // wrap every element, all with the same alias. Other operators, including
 // Contains, Regex, IsNull and IsNotNull, return every row group. A list that
 // mixes As and Normalized markers, mixes aliases, or mixes markers with plain
-// values also returns every row group.
+// values also returns every row group. A single Normalized value under IN or
+// NIN also returns every row group. So does a list of Normalized values under
+// EQ, NE, GT, GTE, LT or LTE.
 //
 // Do not wrap a value that is already transformed. EmailDomain and URLHost are
 // not idempotent, so Normalized("domain", "example.com") fails open.
