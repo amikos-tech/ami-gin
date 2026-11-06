@@ -358,7 +358,7 @@ type NormalizedValue struct {
 //
 // Evaluate calls the companion's transformer at query time. This includes a
 // WithCustomTransformer function. That function must be safe for concurrent
-// use and must not panic.
+// use. A panic in it is recovered, and the predicate returns every row group.
 //
 // The raw value must have the type that ingest sees. JSON numbers are float64,
 // and Evaluate converts a json.Number to float64 before the transformer. A Go

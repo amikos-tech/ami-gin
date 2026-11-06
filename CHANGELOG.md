@@ -14,7 +14,7 @@
   `EQ("$.email", Normalized("domain", "Alice@Example.COM"))`. It works with
   `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN` and `NIN`. For `IN` and `NIN`,
   wrap every element with the same alias. It never prunes on a failure. If the
-  transformer reports failure, the alias is unknown, the list mixes `As` and
+  transformer reports failure or panics, the alias is unknown, the list mixes `As` and
   `Normalized`, mixes aliases or mixes markers with plain values, or the
   operator is `Contains`, `Regex`, `IsNull` or `IsNotNull`, the predicate
   returns all row groups. `As` still sends its value unchanged.

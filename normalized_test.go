@@ -201,6 +201,39 @@ func TestNormalizedCustomTransformer(t *testing.T) {
 	}
 }
 
+// TestNormalizedRecoversTransformerPanic: ingest passes JSON float64, so this
+// transformer never panics there. A Go int query value makes it panic; the
+// predicate must return every row group, not crash Evaluate.
+func TestNormalizedRecoversTransformerPanic(t *testing.T) {
+	toMs := func(v any) (any, bool) {
+		return v.(float64) * 1000, true
+	}
+	cfg, err := NewConfig(WithCustomTransformer("$.secs", "ms", toMs))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder := mustNewBuilder(t, cfg, 3)
+	for i, doc := range []string{`{"secs":1}`, `{"secs":2}`, `{"secs":3}`} {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument: %v", err)
+		}
+	}
+	idx := builder.Finalize()
+
+	requireRows(t, idx, EQ("$.secs", As("ms", float64(2000))), []int{1})
+	requireRows(t, idx, EQ("$.secs", Normalized("ms", float64(2))), []int{1})
+	for name, predicate := range map[string]Predicate{
+		"EQ int":       EQ("$.secs", Normalized("ms", 2)),
+		"GT int":       GT("$.secs", Normalized("ms", 2)),
+		"IN int last":  IN("$.secs", Normalized("ms", float64(1)), Normalized("ms", 2)),
+		"NIN int only": NIN("$.secs", Normalized("ms", 2)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireRows(t, idx, predicate, allRows(idx))
+		})
+	}
+}
+
 func TestNormalizedPanicsOnInvalidAlias(t *testing.T) {
 	defer func() {
 		if recover() == nil {

@@ -704,9 +704,10 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	if err := idx.rebuildRepresentationLookup(); err != nil {
 		return nil, errors.Wrap(err, "rebuild representation lookup")
 	}
-	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
-		return nil, errors.Wrap(err, "build companion transformers")
+	if err := idx.checkRepresentationSpecs(idx.Config); err != nil {
+		return nil, errors.Wrap(err, "check representation specs")
 	}
+	idx.buildCompanionTransformers(idx.Config)
 
 	return idx, nil
 }
