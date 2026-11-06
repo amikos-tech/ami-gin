@@ -74,7 +74,6 @@ func TestNormalizedEquivalentToAs(t *testing.T) {
 		{"lower NE", NE("$.name", Normalized("lower", "ALICE")), NE("$.name", As("lower", "alice")), []int{0, 1, 2, 3, 4}},
 		{"lower IN", IN("$.name", Normalized("lower", "ALICE"), Normalized("lower", "\uA7DCABC")), IN("$.name", As("lower", "alice"), As("lower", "\uA7DCabc")), []int{0, 5}},
 		{"lower NIN", NIN("$.name", Normalized("lower", "ALICE"), Normalized("lower", "\uA7DCABC")), NIN("$.name", As("lower", "alice"), As("lower", "\uA7DCabc")), []int{1, 2, 3, 4}},
-		{"lower GTE", GTE("$.name", Normalized("lower", "ALICE")), GTE("$.name", As("lower", "alice")), nil},
 	}
 	forEachVariant(t, build, func(t *testing.T, idx *GINIndex) {
 		for _, tc := range cases {
@@ -148,6 +147,11 @@ func TestNormalizedFailOpen(t *testing.T) {
 	}{
 		{"transformer fails", EQ("$.email", Normalized("domain", "nodomain"))},
 		{"IN with one failing element", IN("$.email", Normalized("domain", "u@Example.COM"), Normalized("domain", "nodomain"))},
+		{"NIN with one failing element", NIN("$.email", Normalized("domain", "u@Example.COM"), Normalized("domain", "nodomain"))},
+		{"IN mixes As first and Normalized", IN("$.name", As("lower", "alice"), Normalized("lower", "KELVIN"))},
+		{"NIN mixes As first and Normalized", NIN("$.name", As("lower", "alice"), Normalized("lower", "KELVIN"))},
+		{"literal with empty alias", EQ("$.name", NormalizedValue{Alias: "", Value: "ALICE"})},
+		{"literal with alias containing #", EQ("$.name", NormalizedValue{Alias: "lower#x", Value: "ALICE"})},
 		{"IN mixes As and Normalized", IN("$.email", ok, As("domain", "example.com"))},
 		{"IN mixes aliases", IN("$.name", Normalized("lower", "ALICE"), Normalized("other", "ALICE"))},
 		{"IN mixes Normalized and plain value", IN("$.name", Normalized("lower", "ALICE"), "alice")},
@@ -218,4 +222,89 @@ func TestNormalizedHandConstructedIndexFailsOpen(t *testing.T) {
 	idx := buildTransformerDriftIndex(t)
 	idx.companionTransformers = nil
 	requireRowsSet(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
+}
+
+func buildNormalizedRegistryIndex(t *testing.T) *GINIndex {
+	t.Helper()
+	cfg, err := NewConfig(
+		WithDateTransformer("$.date", "day"),
+		WithCustomDateTransformer("$.stamp", "stamp", "2006/01/02 15:04"),
+		WithIPv4Transformer("$.ip", "ip"),
+		WithSemVerTransformer("$.ver", "ver"),
+		WithRegexExtractTransformer("$.log", "code", `ERROR\[(\w+)\]:`, 1),
+		WithRegexExtractIntTransformer("$.order", "num", `order-(\d+)`, 1),
+		WithDurationTransformer("$.dur", "ms"),
+		WithBoolNormalizeTransformer("$.flag", "flag"),
+	)
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	docs := []string{
+		`{"date":"2024-01-14","stamp":"2024/01/14 10:00","ip":"10.0.0.1","ver":"v1.2.3","log":"ERROR[db]: x","order":"order-100","dur":"1h","flag":"yes"}`,
+		`{"date":"2024-01-15","stamp":"2024/01/15 10:00","ip":"10.0.0.200","ver":"v2.0.0","log":"ERROR[net]: y","order":"order-200","dur":"30m","flag":"no"}`,
+		`{"date":"2024-01-16","stamp":"2024/01/16 10:00","ip":"192.168.1.1","ver":"v3.1.0","log":"ERROR[db]: z","order":"order-300","dur":"2h","flag":"on"}`,
+		`{"other":1}`,
+	}
+	builder := mustNewBuilder(t, cfg, len(docs))
+	for i, doc := range docs {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument(%d): %v", i, err)
+		}
+	}
+	return builder.Finalize()
+}
+
+// TestNormalizedEqualsAsForRegistryTransformers covers the registry
+// transformers that the drift and numeric fixtures do not. Each row compares
+// Normalized(alias, raw) with As(alias, T(raw)), where T is the exported
+// transformer, on built and decoded indexes, and requires an exact pruned set.
+func TestNormalizedEqualsAsForRegistryTransformers(t *testing.T) {
+	transformed := func(fn FieldTransformer, raw any) any {
+		t.Helper()
+		v, ok := fn(raw)
+		if !ok {
+			t.Fatalf("transformer failed on %v", raw)
+		}
+		return v
+	}
+	cases := []struct {
+		name       string
+		normalized Predicate
+		as         Predicate
+		want       []int
+	}{
+		{"DateToEpochMs EQ", EQ("$.date", Normalized("day", "2024-01-15")),
+			EQ("$.date", As("day", transformed(DateToEpochMs, "2024-01-15"))), []int{1}},
+		{"CustomDateToEpochMs GTE", GTE("$.stamp", Normalized("stamp", "2024/01/15 10:00")),
+			GTE("$.stamp", As("stamp", transformed(CustomDateToEpochMs("2006/01/02 15:04"), "2024/01/15 10:00"))), []int{1, 2}},
+		{"IPv4ToInt GTE", GTE("$.ip", Normalized("ip", "10.0.0.100")),
+			GTE("$.ip", As("ip", transformed(IPv4ToInt, "10.0.0.100"))), []int{1, 2}},
+		{"IPv4ToInt LTE", LTE("$.ip", Normalized("ip", "10.0.0.255")),
+			LTE("$.ip", As("ip", transformed(IPv4ToInt, "10.0.0.255"))), []int{0, 1}},
+		{"SemVerToInt EQ", EQ("$.ver", Normalized("ver", "v2.0.0")),
+			EQ("$.ver", As("ver", transformed(SemVerToInt, "v2.0.0"))), []int{1}},
+		{"RegexExtract EQ", EQ("$.log", Normalized("code", "ERROR[db]: other")),
+			EQ("$.log", As("code", transformed(RegexExtract(`ERROR\[(\w+)\]:`, 1), "ERROR[db]: other"))), []int{0, 2}},
+		{"RegexExtractInt EQ", EQ("$.order", Normalized("num", "order-200")),
+			EQ("$.order", As("num", transformed(RegexExtractInt(`order-(\d+)`, 1), "order-200"))), []int{1}},
+		{"DurationToMs GT", GT("$.dur", Normalized("ms", "45m")),
+			GT("$.dur", As("ms", transformed(DurationToMs, "45m"))), []int{0, 2}},
+		{"BoolNormalize EQ", EQ("$.flag", Normalized("flag", "on")),
+			EQ("$.flag", As("flag", transformed(BoolNormalize, "on"))), []int{0, 2}},
+	}
+	forEachVariant(t, func() *GINIndex { return buildNormalizedRegistryIndex(t) }, func(t *testing.T, idx *GINIndex) {
+		for _, tc := range cases {
+			gotN := idx.Evaluate([]Predicate{tc.normalized}).ToSlice()
+			gotA := idx.Evaluate([]Predicate{tc.as}).ToSlice()
+			if !reflect.DeepEqual(gotN, gotA) {
+				t.Errorf("%s: Normalized = %v, As = %v", tc.name, gotN, gotA)
+			}
+			if !reflect.DeepEqual(gotN, tc.want) {
+				t.Errorf("%s: Normalized = %v, want %v", tc.name, gotN, tc.want)
+			}
+			if len(gotN) >= len(allRows(idx)) {
+				t.Errorf("%s: Normalized = %v does not prune", tc.name, gotN)
+			}
+		}
+	})
 }

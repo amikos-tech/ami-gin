@@ -65,12 +65,28 @@ func companionGuardIndex(t *testing.T, cfg GINConfig, token string) *GINIndex {
 	return decoded
 }
 
-// companionGuardLoweringPredicates covers every operator the guard must
-// answer with every row group, through As and through Normalized.
-func companionGuardLoweringPredicates() map[string]Predicate {
+// companionGuardCase is one lowering-companion predicate for the guard tests.
+// knownPrune says whether the same predicate prunes on an index with a
+// supported token; it gets the config's EnableTrigrams setting.
+type companionGuardCase struct {
+	predicate  Predicate
+	knownPrune func(trigrams bool) bool
+}
+
+// companionGuardLoweringPredicates covers EQ, NE, IN, NIN and GT through As
+// and through Normalized, plus IsNull, Contains and the bloom, string-length
+// and empty-string paths through As. The guard must answer each with every row
+// group. GT on a string companion never prunes, and Contains prunes only with
+// trigrams; those rows are in the expected-no-pruning set of the known index.
+func companionGuardLoweringPredicates() map[string]companionGuardCase {
 	long := strings.Repeat("x", 600)
-	preds := map[string]Predicate{}
-	add := func(name string, p Predicate) { preds[name] = p }
+	always := func(bool) bool { return true }
+	never := func(bool) bool { return false }
+	withTrigrams := func(trigrams bool) bool { return trigrams }
+	cases := map[string]companionGuardCase{}
+	add := func(name string, p Predicate, knownPrune func(bool) bool) {
+		cases[name] = companionGuardCase{predicate: p, knownPrune: knownPrune}
+	}
 	for _, c := range []struct{ path, alias, raw, lowered string }{
 		{"$.name", "lower", "ALICE", "alice"},
 		{"$.name", "folded", "BOB", "bob"},
@@ -78,23 +94,23 @@ func companionGuardLoweringPredicates() map[string]Predicate {
 		{"$.url", "host", "https://EXAMPLE.com/", "example.com"},
 	} {
 		key := c.path + "#" + c.alias
-		add("EQ As "+key, EQ(c.path, As(c.alias, c.lowered)))
-		add("EQ Normalized "+key, EQ(c.path, Normalized(c.alias, c.raw)))
-		add("NE As "+key, NE(c.path, As(c.alias, c.lowered)))
-		add("NE Normalized "+key, NE(c.path, Normalized(c.alias, c.raw)))
-		add("IN As "+key, IN(c.path, As(c.alias, c.lowered)))
-		add("IN Normalized "+key, IN(c.path, Normalized(c.alias, c.raw)))
-		add("NIN As "+key, NIN(c.path, As(c.alias, c.lowered)))
-		add("NIN Normalized "+key, NIN(c.path, Normalized(c.alias, c.raw)))
-		add("GT As "+key, GT(c.path, As(c.alias, c.lowered)))
-		add("GT Normalized "+key, GT(c.path, Normalized(c.alias, c.raw)))
-		add("IsNull As "+key, Predicate{Path: c.path, Operator: OpIsNull, Value: As(c.alias, nil)})
-		add("absent from bloom As "+key, EQ(c.path, As(c.alias, "zzz-not-present")))
-		add("longer than bounds As "+key, EQ(c.path, As(c.alias, long)))
-		add("empty string As "+key, EQ(c.path, As(c.alias, "")))
-		add("Contains As "+key, Predicate{Path: c.path, Operator: OpContains, Value: As(c.alias, "zzz")})
+		add("EQ As "+key, EQ(c.path, As(c.alias, c.lowered)), always)
+		add("EQ Normalized "+key, EQ(c.path, Normalized(c.alias, c.raw)), always)
+		add("NE As "+key, NE(c.path, As(c.alias, c.lowered)), always)
+		add("NE Normalized "+key, NE(c.path, Normalized(c.alias, c.raw)), always)
+		add("IN As "+key, IN(c.path, As(c.alias, c.lowered)), always)
+		add("IN Normalized "+key, IN(c.path, Normalized(c.alias, c.raw)), always)
+		add("NIN As "+key, NIN(c.path, As(c.alias, c.lowered)), always)
+		add("NIN Normalized "+key, NIN(c.path, Normalized(c.alias, c.raw)), always)
+		add("GT As "+key, GT(c.path, As(c.alias, c.lowered)), never)
+		add("GT Normalized "+key, GT(c.path, Normalized(c.alias, c.raw)), never)
+		add("IsNull As "+key, Predicate{Path: c.path, Operator: OpIsNull, Value: As(c.alias, nil)}, always)
+		add("absent from bloom As "+key, EQ(c.path, As(c.alias, "zzz-not-present")), always)
+		add("longer than bounds As "+key, EQ(c.path, As(c.alias, long)), always)
+		add("empty string As "+key, EQ(c.path, As(c.alias, "")), always)
+		add("Contains As "+key, Predicate{Path: c.path, Operator: OpContains, Value: As(c.alias, "zzz")}, withTrigrams)
 	}
-	return preds
+	return cases
 }
 
 func TestCompanionUnicodeGuardLoweringReturnsAllRGs(t *testing.T) {
@@ -107,17 +123,18 @@ func TestCompanionUnicodeGuardLoweringReturnsAllRGs(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			unknown := companionGuardIndex(t, cfg, trigramUnicodeForeignToken)
 			known := companionGuardIndex(t, cfg, "")
-			sawPruning := false
-			for label, p := range companionGuardLoweringPredicates() {
-				if got := unknown.Evaluate([]Predicate{p}).ToSlice(); !reflect.DeepEqual(got, allRows(unknown)) {
+			for label, c := range companionGuardLoweringPredicates() {
+				if got := unknown.Evaluate([]Predicate{c.predicate}).ToSlice(); !reflect.DeepEqual(got, allRows(unknown)) {
 					t.Errorf("%s: unknown token = %v, want every row group", label, got)
 				}
-				if got := known.Evaluate([]Predicate{p}).ToSlice(); len(got) < len(allRows(known)) {
-					sawPruning = true
+				got := known.Evaluate([]Predicate{c.predicate}).ToSlice()
+				if c.knownPrune(cfg.EnableTrigrams) {
+					if len(got) >= len(allRows(known)) {
+						t.Errorf("%s: supported token = %v, want pruning: the guard row proves nothing", label, got)
+					}
+				} else if !reflect.DeepEqual(got, allRows(known)) {
+					t.Errorf("%s: supported token = %v, want every row group (expected no pruning)", label, got)
 				}
-			}
-			if !sawPruning {
-				t.Error("supported token never pruned: the guard cases prove nothing")
 			}
 		})
 	}
@@ -287,5 +304,91 @@ func TestCompanionUnicodeGuardRepresentationOnlyStillGuards(t *testing.T) {
 			requireRowsSet(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
 			requireRowsSet(t, idx, EQ("$.name", "nobody"), []int{})
 		})
+	}
+}
+
+// TestCompanionTransformerRepresentationOnlySupportedToken covers the
+// registry fallback under a supported token. The config section does not
+// list the companion, so the transformer comes from the representation
+// section alone.
+func TestCompanionTransformerRepresentationOnlySupportedToken(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(rep *RepresentationSpec)
+		want   []int
+	}{
+		{"spec intact reconstructs from the registry", func(rep *RepresentationSpec) {}, []int{0}},
+		{"ID zeroed leaves no function and fails open", func(rep *RepresentationSpec) { rep.Transformer.ID = TransformerUnknown }, []int{0, 1, 2, 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			idx := buildCompanionGuardIndex(t, companionGuardConfig(t))
+			tc.mutate(lowerRepresentation(t, idx))
+			idx.Config.representationSpecs["$.name"] = nil
+			idx.Config.representationTransformers["$.name"] = nil
+			encoded, err := Encode(idx)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+			decoded, err := Decode(encoded)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			requireRowsSet(t, decoded, EQ("$.name", Normalized("lower", "ALICE")), tc.want)
+			requireRowsSet(t, decoded, EQ("$.name", As("lower", "alice")), []int{0})
+		})
+	}
+}
+
+func TestCompanionTransformerParamsMismatchRejected(t *testing.T) {
+	idx := buildCompanionGuardIndex(t, companionGuardConfig(t))
+	found := false
+	for i := range idx.representations {
+		rep := &idx.representations[i]
+		if rep.SourcePath == "$.n" && rep.Alias == lowerAlias {
+			if rep.Transformer.ID != TransformerNumericBucket {
+				t.Fatalf("$.n#lower transformer = %v, want NumericBucket", rep.Transformer.ID)
+			}
+			rep.Transformer.Params = json.RawMessage(`{"size":200}`)
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("representation $.n#lower missing")
+	}
+	encoded, err := Encode(idx)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+	_, err = Decode(encoded)
+	if err == nil {
+		t.Fatal("Decode accepted representation params that disagree with the config section")
+	}
+	if !errors.Is(err, ErrInvalidFormat) {
+		t.Errorf("Decode error = %v, want ErrInvalidFormat", err)
+	}
+	if !strings.Contains(err.Error(), "params") || !strings.Contains(err.Error(), "$.n") {
+		t.Errorf("Decode error %q should name the params and the source path", err)
+	}
+}
+
+func TestTransformerParamsEqual(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"", "", true},
+		{"", "null", true},
+		{`{"size":100}`, `{"size":100}`, true},
+		{`{"size":100}`, `{ "size" : 100.0 }`, true},
+		{`{"pattern":"a","group":1}`, `{"group":1,"pattern":"a"}`, true},
+		{`{"size":100}`, `{"size":200}`, false},
+		{`{"size":100}`, "", false},
+		{"not json", "not json", true},
+		{"not json", `{"size":100}`, false},
+	}
+	for _, tc := range tests {
+		if got := transformerParamsEqual(json.RawMessage(tc.a), json.RawMessage(tc.b)); got != tc.want {
+			t.Errorf("transformerParamsEqual(%q, %q) = %t, want %t", tc.a, tc.b, got, tc.want)
+		}
 	}
 }

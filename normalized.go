@@ -1,6 +1,9 @@
 package gin
 
 import (
+	"encoding/json"
+	"reflect"
+
 	"github.com/pkg/errors"
 )
 
@@ -36,15 +39,15 @@ func isLoweringSpec(spec TransformerSpec) bool {
 // index-owned map, never idx.Config.
 //
 // A representation whose (source path, alias) the Config also lists must agree
-// with the Config spec on transformer ID and name, otherwise a tampered
-// representation section could hide a lowering companion from the guard. A
-// representation the Config does not list is accepted and falls back to the
-// registry; failure to reconstruct leaves fn nil and never fails Decode (L3).
+// with the Config spec on transformer ID, name and params, otherwise a
+// tampered representation section could hide a lowering companion from the
+// guard or change what Normalized computes. A representation the Config does
+// not list is accepted and falls back to the registry. Failure to reconstruct
+// leaves fn nil and never fails Decode.
 //
-// Hand-constructed GINIndex values (the fallback in rebuildRepresentationLookup
-// that never ran Finalize or Decode) get no companion transformer lookup, so
-// Normalized fails open to every row group for them and the unknown-token
-// guard cannot fire. They carry no token either.
+// A GINIndex built by hand, without Finalize or Decode, has no companion
+// lookup. Normalized then returns every row group, and the unknown-token guard
+// cannot fire. Such an index carries no token either.
 func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	idx.companionTransformers = nil
 	if len(idx.representations) == 0 {
@@ -70,6 +73,11 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 					representation.Transformer.ID, configSpec.ID,
 					representation.Transformer.Name, configSpec.Name)
 			}
+			if !transformerParamsEqual(configSpec.Params, representation.Transformer.Params) {
+				return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config transformer params (%s/%s)",
+					representation.Alias, representation.SourcePath,
+					representation.Transformer.Params, configSpec.Params)
+			}
 			entry.fn = registered.FieldTransformer
 			break
 		}
@@ -84,15 +92,33 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	return nil
 }
 
+// transformerParamsEqual compares two transformer parameter payloads as JSON
+// values, so formatting differences do not matter. An empty payload equals
+// JSON null. A payload that is not valid JSON equals only identical bytes.
+func transformerParamsEqual(a, b json.RawMessage) bool {
+	decode := func(raw json.RawMessage) (any, bool) {
+		if len(raw) == 0 {
+			return nil, true
+		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			return nil, false
+		}
+		return v, true
+	}
+	av, aok := decode(a)
+	bv, bok := decode(b)
+	if !aok || !bok {
+		return string(a) == string(b)
+	}
+	return reflect.DeepEqual(av, bv)
+}
+
 // unknownUnicodeLoweringCompanion reports whether pathID is a ToLower,
 // EmailDomain or URLHost companion that this reader cannot answer exactly: the
 // index carries a trigram_unicode_version token whose tables this reader does
 // not have, so the companion terms may hold a lowercase mapping it cannot
 // reproduce. Callers return every row group.
-//
-// Reader-upgrade advisory: v1.6.0 readers prune lowering companions under an
-// unknown token. Upgrade all readers to this release before any writer emits a
-// new token (#102).
 func (idx *GINIndex) unknownUnicodeLoweringCompanion(pathID int) bool {
 	if trigramUnicodeTokenSupported(idx.trigramUnicodeToken) {
 		return false

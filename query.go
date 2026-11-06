@@ -144,7 +144,7 @@ type resolvedPredicate struct {
 	listForm bool // the value was a list of markers (IN/NIN form)
 }
 
-//nolint:unparam // the raw value result is kept for benchmark_test.go callers.
+//nolint:unparam // the third result is unused; kept so benchmark_test.go call sites stay unchanged.
 func (idx *GINIndex) resolvePredicatePath(path string, value any) (int, *PathEntry, any) {
 	resolved := idx.resolvePredicate(path, value)
 	return resolved.pathID, resolved.entry, resolved.rawValue
@@ -224,7 +224,7 @@ func unwrapPredicateValue(value any) (alias string, rawValue any, marker predica
 				marker = itemMarker
 				alias = itemAlias
 			} else if itemMarker != marker || itemAlias != alias {
-				return "", list, markerAs, true, false
+				return "", list, marker, true, false
 			}
 			unwrapped[i] = itemValue
 		}
