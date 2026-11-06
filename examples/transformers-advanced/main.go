@@ -188,7 +188,8 @@ func caseInsensitiveExample() error {
 	})
 	fmt.Printf("Row groups: %v (expected: [0])\n", result.ToSlice())
 
-	// Query: Find user "alice" through the derived lowercase companion.
+	// Query: Find user "Alice" through the derived lowercase companion.
+	// Normalized lowercases the raw value with the companion's transformer.
 	fmt.Println("Query: Find username = 'Alice' (raw form) through lower companion with gin.Normalized")
 	result = idx.Evaluate([]gin.Predicate{
 		gin.EQ("$.username", gin.Normalized("lower", "Alice")),

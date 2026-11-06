@@ -1023,7 +1023,7 @@ func TestWriteIndexInfoUnknownTrigramUnicodeVersion(t *testing.T) {
 
 	var buf bytes.Buffer
 	writeIndexInfo(&buf, idx)
-	want := "  Trigram Unicode: 17.0.0 (unsupported; trigram pruning disabled)\n"
+	want := "  Trigram Unicode: 17.0.0 (unsupported; trigram and lowering-companion pruning disabled)\n"
 	if out := buf.String(); !strings.Contains(out, want) {
 		t.Fatalf("writeIndexInfo output missing %q:\n%s", want, out)
 	}
@@ -1038,11 +1038,11 @@ func TestFormatTrigramUnicodeVersionQuotesUntrustedTokens(t *testing.T) {
 		want      string
 	}{
 		{"15.0.0", true, "15.0.0"},
-		{"17.0.0", false, "17.0.0 (unsupported; trigram pruning disabled)"},
-		{"16.0.0-rc+foreign", false, "16.0.0-rc+foreign (unsupported; trigram pruning disabled)"},
-		{"\x1b[31m17.0.0", false, `"\x1b[31m17.0.0" (unsupported; trigram pruning disabled)`},
-		{"17.0.0\n", false, `"17.0.0\n" (unsupported; trigram pruning disabled)`},
-		{"17.0.0é", false, `"17.0.0é" (unsupported; trigram pruning disabled)`},
+		{"17.0.0", false, "17.0.0 (unsupported; trigram and lowering-companion pruning disabled)"},
+		{"16.0.0-rc+foreign", false, "16.0.0-rc+foreign (unsupported; trigram and lowering-companion pruning disabled)"},
+		{"\x1b[31m17.0.0", false, `"\x1b[31m17.0.0" (unsupported; trigram and lowering-companion pruning disabled)`},
+		{"17.0.0\n", false, `"17.0.0\n" (unsupported; trigram and lowering-companion pruning disabled)`},
+		{"17.0.0é", false, `"17.0.0é" (unsupported; trigram and lowering-companion pruning disabled)`},
 	}
 	for _, c := range cases {
 		got := formatTrigramUnicodeVersion(c.version, c.supported)

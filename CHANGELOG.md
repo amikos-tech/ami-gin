@@ -15,14 +15,15 @@
   `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN` and `NIN`. For `IN` and `NIN`,
   wrap every element with the same alias. It never prunes on a failure. If the
   transformer reports failure, the alias is unknown, the list mixes `As` and
-  `Normalized`, or the operator is `Contains` or `Regex`, the predicate
+  `Normalized`, mixes aliases or mixes markers with plain values, or the
+  operator is `Contains`, `Regex`, `IsNull` or `IsNotNull`, the predicate
   returns all row groups. `As` still sends its value unchanged.
 - An unknown `trigram_unicode_version` token now also makes `ToLower`,
   `EmailDomain` and `URLHost` companions return all row groups. The guard
   keys on the transformer in the index, not on the alias, and applies to `As`
   and `Normalized`. Other companions and raw paths keep pruning. `Decode`
-  rejects an index whose representation section names a different transformer
-  than the config section.
+  rejects an index whose representation section names a different transformer,
+  or different transformer params, than the config section.
 - Reader-version boundary: v1.6.0 readers understand an unknown token for
   trigrams but still prune lowering companions. Upgrade all readers to this
   release before any writer records a new token.
@@ -40,10 +41,13 @@
   exchange real encoded indexes between go1.26.9 and go1.27.3 in all four
   build and query combinations, and require the two builder artifacts to be
   byte-identical.
-- Known divergence, not fixed here: `RegexExtractInt` parses numbers with
-  `strconv.ParseFloat`, and the reconstructed transformer used by a decoded
-  index uses a simpler parser (#113). `Normalized` on such a companion can
-  return all row groups when the two disagree. It never loses a match.
+- Known divergence, not fixed here (#113): a registered `RegexExtractInt`
+  companion builds with the reconstructed parser, so the builder, a decoded
+  index and `Normalized` agree. The risk is for callers who prepare `As` values
+  with the exported `gin.RegexExtractInt`, which uses `strconv.ParseFloat`.
+  "1e3" parses only there, and long decimal fractions such as
+  0.123456789012345678 can round differently. `As` can then miss a match.
+  `Normalized` avoids this.
 
 ## v1.6.0 (2026-10-21)
 

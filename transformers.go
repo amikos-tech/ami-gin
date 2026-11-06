@@ -123,6 +123,9 @@ func SemVerToInt(v any) (any, bool) {
 
 // RegexExtract returns a transformer that extracts a substring via regex capture group.
 // Pattern is compiled once at config time. Group 0 = full match, group 1+ = capture groups.
+//
+// Patterns with Unicode classes or (?i) depend on the Unicode tables of the Go
+// toolchain. Build and query with the same Go version.
 func RegexExtract(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {
@@ -139,6 +142,9 @@ func RegexExtract(pattern string, group int) FieldTransformer {
 }
 
 // RegexExtractInt extracts a substring via regex and converts it to float64.
+//
+// Patterns with Unicode classes or (?i) depend on the Unicode tables of the Go
+// toolchain. Build and query with the same Go version.
 func RegexExtractInt(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {
@@ -174,9 +180,8 @@ func DurationToMs(v any) (any, bool) {
 // EmailDomain extracts and lowercases the domain from an email address.
 //
 // The domain is lowercased with frozen Unicode 15.0.0 tables, independent of
-// the Go toolchain. To prepare a query value for an EmailDomain companion, use
-// this function or Normalized, not strings.ToLower: on Go 1.27 strings.ToLower
-// differs for 55 runes and a query could miss a match. See ToLower.
+// the Go toolchain. Prepare query values with this function or Normalized, not
+// strings.ToLower; see ToLower.
 func EmailDomain(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {
@@ -192,9 +197,8 @@ func EmailDomain(v any) (any, bool) {
 // URLHost extracts and lowercases the host from a URL.
 //
 // The host is lowercased with frozen Unicode 15.0.0 tables, independent of
-// the Go toolchain. To prepare a query value for a URLHost companion, use this
-// function or Normalized, not strings.ToLower: on Go 1.27 strings.ToLower
-// differs for 55 runes and a query could miss a match. See ToLower.
+// the Go toolchain. Prepare query values with this function or Normalized, not
+// strings.ToLower; see ToLower.
 func URLHost(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {

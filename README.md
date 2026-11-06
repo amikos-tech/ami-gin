@@ -237,7 +237,7 @@ errorResult := idx.Evaluate([]gin.Predicate{
 - `gin.As(alias, value)` sends `value` to the companion unchanged. Use it for values you already prepared, such as epoch millis, IP range bounds, semver floats or error codes.
 - `gin.Normalized(alias, raw)` applies the transformer that the index holds for the companion to `raw`, then queries the companion. It works with `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN` and `NIN`. In an `IN` or `NIN` list, wrap every element with the same alias.
 - Do not wrap a value that is already transformed. `Normalized("domain", "example.com")` has no `@`, so the transformer fails. A failed transform returns all row groups, so you never lose a match, but you also get no pruning.
-- `Normalized` returns all row groups for an unknown alias, for a mixed `As` and `Normalized` list, and for `Contains` and `Regex`.
+- `Normalized` returns all row groups for an unknown alias, for a list that mixes `As` and `Normalized`, mixes aliases or mixes markers with plain values, and for `Contains`, `Regex`, `IsNull` and `IsNotNull`.
 
 **Built-in additive helpers:**
 - Date/time: `WithISODateTransformer(path, alias)`, `WithDateTransformer(path, alias)`, `WithCustomDateTransformer(path, alias, layout)`

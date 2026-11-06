@@ -106,6 +106,7 @@ type GINIndex struct {
 	// token: Decode sets it, and Encode writes it back from here. Each
 	// TrigramIndex keeps a copy for Search, and Encode refuses a TrigramIndex
 	// whose foreign copy differs, so it never relabels foreign grams (#99).
+	// unknownUnicodeLoweringCompanion also reads it (#102).
 	trigramUnicodeToken string
 }
 
@@ -333,7 +334,9 @@ func As(alias string, value any) RepresentationValue {
 }
 
 // NormalizedValue marks a query value as a raw source value that Evaluate must
-// pass through the companion's own transformer. Create it with Normalized.
+// pass through the companion's own transformer. Create it with Normalized. A
+// literal with an invalid alias matches no companion, and the predicate
+// returns every row group.
 type NormalizedValue struct {
 	Alias string
 	Value any
@@ -350,22 +353,30 @@ type NormalizedValue struct {
 // WithCustomTransformer functions), and the registry-reconstructed function
 // on a Decoded index. Normalized(alias, raw) equals As(alias, T(raw)) only
 // when T succeeds. It never prunes on a failure: if T reports ok=false, the
-// alias is unknown, the index holds no function for the companion, or the
-// markers in an IN/NIN list are mixed, the predicate returns every row group.
+// alias is unknown, or the index holds no function for the companion, the
+// predicate returns every row group.
+//
+// Evaluate calls the companion's transformer at query time. This includes a
+// WithCustomTransformer function. That function must be safe for concurrent
+// use and must not panic.
+//
+// The raw value must have the type that ingest sees. JSON numbers are float64,
+// and Evaluate converts a json.Number to float64 before the transformer. A Go
+// int is not converted: NumericBucket then reports ok=false and the predicate
+// returns every row group.
 //
 // Normalized supports EQ, NE, GT, GTE, LT, LTE, IN and NIN. For IN and NIN,
-// wrap every element, all with the same alias. Contains and Regex take
-// patterns and are out of scope; with a Normalized value they return every row
-// group. Evaluate applies ingest-style preparation (a json.Number becomes a
-// float64) before the transformer.
+// wrap every element, all with the same alias. Other operators, including
+// Contains, Regex, IsNull and IsNotNull, return every row group. A list that
+// mixes As and Normalized markers, mixes aliases, or mixes markers with plain
+// values also returns every row group.
 //
 // Do not wrap a value that is already transformed. EmailDomain and URLHost are
 // not idempotent, so Normalized("domain", "example.com") fails open.
 //
-// Query values for ToLower, EmailDomain and URLHost companions must come from
-// Normalized or from gin.ToLower, gin.EmailDomain and gin.URLHost. A caller on
-// Go 1.27 that prepares them with strings.ToLower can miss a match for the 55
-// runes whose lowercase differs between Unicode 15.0.0 and 17.0.0.
+// RegexExtract and RegexExtractInt patterns with Unicode classes or (?i)
+// depend on the Unicode tables of the Go toolchain. Build and query with the
+// same Go version.
 func Normalized(alias string, raw any) NormalizedValue {
 	if err := validateRepresentationAlias(alias); err != nil {
 		panic(err.Error())
@@ -1168,7 +1179,9 @@ func collectMaterializedRepresentationsFromConfig(cfg *GINConfig, pathLookup map
 
 // TrigramUnicodeVersion returns the Unicode version of the trigram tables the
 // index was built with and whether this reader supports it. An unsupported
-// version is returned verbatim; trigram pruning is then disabled (#99).
+// version is returned verbatim; trigram pruning is then disabled (#99), and
+// predicates on ToLower, EmailDomain and URLHost companions return every row
+// group (#102).
 func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
 	if idx.trigramUnicodeToken == "" {
 		return trigramUnicodeVersion, true
