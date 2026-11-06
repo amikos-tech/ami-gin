@@ -2,7 +2,9 @@ package gin
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 )
 
@@ -373,4 +375,57 @@ func TestNormalizedEqualsAsForRegistryTransformers(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestNormalizedConcurrentEvaluate runs Normalized predicates from several
+// goroutines on decoded indexes. Under -race (CI) it fails if a reconstructed
+// built-in transformer or the companion lookup gains shared mutable state.
+func TestNormalizedConcurrentEvaluate(t *testing.T) {
+	type job struct {
+		idx       *GINIndex
+		predicate Predicate
+		want      []int
+	}
+	registryPredicates := []Predicate{
+		EQ("$.date", Normalized("day", "2024-01-15")),
+		GTE("$.stamp", Normalized("stamp", "2024/01/15 10:00")),
+		GTE("$.ip", Normalized("ip", "10.0.0.100")),
+		EQ("$.ver", Normalized("ver", "v2.0.0")),
+		EQ("$.log", Normalized("code", "ERROR[db]: other")),
+		EQ("$.order", Normalized("num", "order-200")),
+		GT("$.dur", Normalized("ms", "45m")),
+		IN("$.flag", Normalized("flag", "on"), Normalized("flag", "no")),
+	}
+	jobs := make([]job, 0, len(registryPredicates)+len(transformerDriftNormalizedQueries))
+	registry := mustRoundTripIndex(t, buildNormalizedRegistryIndex(t))
+	for _, predicate := range registryPredicates {
+		jobs = append(jobs, job{registry, predicate, registry.Evaluate([]Predicate{predicate}).ToSlice()})
+	}
+	drift := mustRoundTripIndex(t, buildTransformerDriftIndex(t))
+	for _, tc := range transformerDriftNormalizedQueries {
+		jobs = append(jobs, job{drift, tc.predicate, tc.want})
+	}
+
+	const goroutines, iterations = 8, 50
+	errs := make(chan error, goroutines)
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				j := jobs[(g+i)%len(jobs)]
+				got := j.idx.Evaluate([]Predicate{j.predicate}).ToSlice()
+				if len(got) != len(j.want) || (len(got) > 0 && !reflect.DeepEqual(got, j.want)) {
+					errs <- fmt.Errorf("goroutine %d: Evaluate(%+v) = %v, want %v", g, j.predicate, got, j.want)
+					return
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
 }
