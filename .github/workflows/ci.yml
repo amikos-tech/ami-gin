@@ -282,3 +282,28 @@ jobs:
           go-package: ./...
           repo-checkout: false
           output-format: text
+
+  cross-toolchain:
+    name: cross-toolchain (go1.26.9 <-> go1.27.3)
+    runs-on: ubuntu-latest
+    env:
+      # Overrides the workflow-level "local" for this job only. The check must
+      # download go1.26.9 and go1.27.3 to exchange real index bytes between them.
+      GOTOOLCHAIN: auto
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26"
+          cache-dependency-path: go.sum
+
+      - name: Download pinned toolchains
+        run: |
+          GOTOOLCHAIN=go1.26.9 go version
+          GOTOOLCHAIN=go1.27.3 go version
+
+      - name: Exchange index artifacts between toolchains
+        run: make cross-toolchain-check

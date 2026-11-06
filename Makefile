@@ -4,6 +4,10 @@ GOLANGCI_LINT_CMD := go run github.com/golangci/golangci-lint/v2/cmd/golangci-li
 BENCHTIME ?= 1s
 BENCH_TIMEOUT ?= 30m
 COUNT ?= 1
+XTC_OLD_GO ?= go1.26.9
+XTC_NEW_GO ?= go1.27.3
+XTC_OLD_UNICODE ?= 15.0.0
+XTC_NEW_UNICODE ?= 17.0.0
 
 .PHONY: build
 build:
@@ -35,6 +39,36 @@ simd-isolation-check:
 	fi
 	go build ./...
 	go vet ./...
+
+# Real artifact exchange between two Go toolchains with different Unicode tables (#102).
+# Each toolchain builds and encodes the fixture index. The two artifacts must be
+# byte-identical. Each toolchain then decodes and queries both artifacts (four cells).
+# Not part of test or lint: it downloads two toolchains.
+.PHONY: cross-toolchain-check
+cross-toolchain-check:
+	@set -eu; \
+	dir="$$(mktemp -d)"; \
+	trap 'rm -r "$$dir"' EXIT; \
+	old_art="$$dir/$(XTC_OLD_GO).gin"; \
+	new_art="$$dir/$(XTC_NEW_GO).gin"; \
+	GOTOOLCHAIN=$(XTC_OLD_GO) AMI_GIN_XTC_WANT_UNICODE=$(XTC_OLD_UNICODE) AMI_GIN_XTC_OUT="$$old_art" \
+		go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
+	GOTOOLCHAIN=$(XTC_NEW_GO) AMI_GIN_XTC_WANT_UNICODE=$(XTC_NEW_UNICODE) AMI_GIN_XTC_OUT="$$new_art" \
+		go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
+	test -s "$$old_art"; \
+	test -s "$$new_art"; \
+	if ! cmp "$$old_art" "$$new_art"; then \
+		printf 'artifacts differ: %s and %s encode the same fixture to different bytes\n' '$(XTC_OLD_GO)' '$(XTC_NEW_GO)' >&2; \
+		exit 1; \
+	fi; \
+	printf 'artifacts byte-identical (%s bytes)\n' "$$(wc -c < "$$old_art" | tr -d ' ')"; \
+	for reader in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
+		for builder in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
+			GOTOOLCHAIN="$${reader%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${reader#*:}" AMI_GIN_XTC_IN="$$dir/$$builder.gin" \
+				go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainQuery$$' .; \
+			printf '%s -> %s: ok\n' "$$builder" "$${reader%%:*}"; \
+		done; \
+	done
 
 .PHONY: gotestsum-bin
 gotestsum-bin:
@@ -194,6 +228,7 @@ help:
 	@echo "  bench-simd - Run paired stdlib/SIMD typed-sink smoke fixtures by default; optionally set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> for the local external tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
+	@echo "  cross-toolchain-check - Exchange encoded indexes between $(XTC_OLD_GO) and $(XTC_NEW_GO) and query them in all four build/query cells"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against default and simdjson-tagged call graphs"
