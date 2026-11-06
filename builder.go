@@ -1428,6 +1428,9 @@ func (b *GINBuilder) Finalize() *GINIndex {
 		// collect only materialized representations.
 		panic(err)
 	}
+	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
+		panic(err)
+	}
 	return idx
 }
 

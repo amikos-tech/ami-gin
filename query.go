@@ -75,9 +75,25 @@ func (idx *GINIndex) EvaluateContext(ctx context.Context, predicates []Predicate
 }
 
 func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
-	pathID, entry, rawValue := idx.resolvePredicatePath(p.Path, p.Value)
+	resolved := idx.resolvePredicate(p.Path, p.Value)
+	pathID, entry, rawValue := resolved.pathID, resolved.entry, resolved.rawValue
 	if pathID < 0 {
 		return AllRGs(int(idx.Header.NumRowGroups))
+	}
+
+	// Guard right after path resolution, before bloom, string-length,
+	// adaptive and negative-predicate pruning: it covers As, Normalized and
+	// every operator, and keys on the transformer spec, never on the alias.
+	if idx.unknownUnicodeLoweringCompanion(pathID) {
+		return AllRGs(int(idx.Header.NumRowGroups))
+	}
+
+	if resolved.marker == markerNormalized {
+		value, ok := idx.normalizeQueryValue(p.Operator, pathID, rawValue, resolved.listForm)
+		if !ok {
+			return AllRGs(int(idx.Header.NumRowGroups))
+		}
+		rawValue = value
 	}
 
 	switch p.Operator {
@@ -110,79 +126,121 @@ func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
 	}
 }
 
+// predicateMarker says how a predicate value addresses a companion.
+type predicateMarker int
+
+const (
+	markerNone       predicateMarker = iota // plain value on a raw path
+	markerAs                                // As: already-transformed value
+	markerNormalized                        // Normalized: raw value, transform at Evaluate
+)
+
+// resolvedPredicate is the result of resolving a predicate path and value.
+type resolvedPredicate struct {
+	pathID   int
+	entry    *PathEntry
+	rawValue any
+	marker   predicateMarker
+	listForm bool // the value was a list of markers (IN/NIN form)
+}
+
+//nolint:unparam // the raw value result is kept for benchmark_test.go callers.
 func (idx *GINIndex) resolvePredicatePath(path string, value any) (int, *PathEntry, any) {
-	canonicalPath, err := canonicalizeSupportedPath(path)
-	if err != nil {
-		return -1, nil, value
+	resolved := idx.resolvePredicate(path, value)
+	return resolved.pathID, resolved.entry, resolved.rawValue
+}
+
+func (idx *GINIndex) resolvePredicate(path string, value any) resolvedPredicate {
+	unresolved := func(raw any) resolvedPredicate {
+		return resolvedPredicate{pathID: -1, rawValue: raw}
 	}
 
-	alias, rawValue, aliased, valid := unwrapRepresentationPredicateValue(value)
-	if aliased {
+	canonicalPath, err := canonicalizeSupportedPath(path)
+	if err != nil {
+		return unresolved(value)
+	}
+
+	alias, rawValue, marker, listForm, valid := unwrapPredicateValue(value)
+	if marker != markerNone {
 		if !valid {
-			return -1, nil, rawValue
+			return unresolved(rawValue)
 		}
 		aliases := idx.representationLookup[canonicalPath]
 		if len(aliases) == 0 {
-			return -1, nil, rawValue
+			return unresolved(rawValue)
 		}
 		pathID, ok := aliases[alias]
 		if !ok {
-			return -1, nil, rawValue
+			return unresolved(rawValue)
 		}
 		if int(pathID) >= len(idx.PathDirectory) {
-			return -1, nil, rawValue
+			return unresolved(rawValue)
 		}
-		return int(pathID), &idx.PathDirectory[pathID], rawValue
+		return resolvedPredicate{pathID: int(pathID), entry: &idx.PathDirectory[pathID], rawValue: rawValue, marker: marker, listForm: listForm}
 	}
 
 	pathID, ok := idx.pathLookup[canonicalPath]
 	if !ok {
-		return -1, nil, rawValue
+		return unresolved(rawValue)
 	}
 	if int(pathID) >= len(idx.PathDirectory) {
-		return -1, nil, rawValue
+		return unresolved(rawValue)
 	}
-	return int(pathID), &idx.PathDirectory[pathID], rawValue
+	return resolvedPredicate{pathID: int(pathID), entry: &idx.PathDirectory[pathID], rawValue: rawValue}
 }
 
-func unwrapRepresentationPredicateValue(value any) (alias string, rawValue any, aliased bool, valid bool) {
+// predicateMarkerOf reports the marker kind, alias and wrapped value of one
+// value. markerNone means a plain value.
+func predicateMarkerOf(value any) (predicateMarker, string, any) {
 	switch v := value.(type) {
 	case RepresentationValue:
-		return v.Alias, v.Value, true, true
-	case []any:
-		if len(v) == 0 {
-			return "", v, false, true
-		}
+		return markerAs, v.Alias, v.Value
+	case NormalizedValue:
+		return markerNormalized, v.Alias, v.Value
+	default:
+		return markerNone, "", value
+	}
+}
 
-		sawRepresentation := false
-		alias = ""
-		unwrapped := make([]any, len(v))
-		for i, item := range v {
-			representation, ok := item.(RepresentationValue)
-			if !ok {
+// unwrapPredicateValue strips As and Normalized markers from a predicate
+// value. A list is unwrapped only when every element carries a marker of the
+// same kind and alias; otherwise valid is false and the predicate returns
+// every row group.
+func unwrapPredicateValue(value any) (alias string, rawValue any, marker predicateMarker, listForm bool, valid bool) {
+	if list, ok := value.([]any); ok {
+		if len(list) == 0 {
+			return "", list, markerNone, false, true
+		}
+		unwrapped := make([]any, len(list))
+		sawMarker := false
+		for i, item := range list {
+			itemMarker, itemAlias, itemValue := predicateMarkerOf(item)
+			if itemMarker == markerNone {
 				unwrapped[i] = item
 				continue
 			}
-			if !sawRepresentation {
-				sawRepresentation = true
-				alias = representation.Alias
-			} else if representation.Alias != alias {
-				return "", v, true, false
+			if !sawMarker {
+				sawMarker = true
+				marker = itemMarker
+				alias = itemAlias
+			} else if itemMarker != marker || itemAlias != alias {
+				return "", list, markerAs, true, false
 			}
-			unwrapped[i] = representation.Value
+			unwrapped[i] = itemValue
 		}
-		if !sawRepresentation {
-			return "", v, false, true
+		if !sawMarker {
+			return "", list, markerNone, false, true
 		}
-		for _, item := range v {
-			if _, ok := item.(RepresentationValue); !ok {
-				return "", v, true, false
+		for _, item := range list {
+			if itemMarker, _, _ := predicateMarkerOf(item); itemMarker == markerNone {
+				return "", list, marker, true, false
 			}
 		}
-		return alias, unwrapped, true, true
-	default:
-		return "", value, false, true
+		return alias, unwrapped, marker, true, true
 	}
+
+	marker, alias, rawValue = predicateMarkerOf(value)
+	return alias, rawValue, marker, false, true
 }
 
 func (idx *GINIndex) findPath(path string) (int, *PathEntry) {

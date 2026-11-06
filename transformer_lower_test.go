@@ -74,7 +74,15 @@ var transformerDriftQueries = []transformerDriftQuery{
 
 // transformerDriftNormalizedQueries holds Normalized rows with the same
 // semantics; they run through the same tests as transformerDriftQueries.
-var transformerDriftNormalizedQueries = []transformerDriftQuery{}
+var transformerDriftNormalizedQueries = []transformerDriftQuery{
+	{"EQ Normalized lower A7DC", EQ("$.name", Normalized("lower", "\uA7DCABC")), []int{0}},
+	{"EQ Normalized lower 0130", EQ("$.name", Normalized("lower", "\u0130STANBUL")), []int{3}},
+	{"EQ Normalized lower 212A", EQ("$.name", Normalized("lower", "\u212AELVIN")), []int{4}},
+	{"EQ Normalized lower ALICE", EQ("$.name", Normalized("lower", "ALICE")), []int{5}},
+	{"IN Normalized lower A7DC ALICE", IN("$.name", Normalized("lower", "\uA7DCABC"), Normalized("lower", "ALICE")), []int{0, 5}},
+	{"EQ Normalized domain A7DC", EQ("$.email", Normalized("domain", "u@\uA7DCABC.com")), []int{0}},
+	{"EQ Normalized host A7DC", EQ("$.url", Normalized("host", "https://\uA7DCABC.example/z")), []int{0}},
+}
 
 func requireTransformerDriftQueries(t *testing.T, idx *GINIndex, label string) {
 	t.Helper()

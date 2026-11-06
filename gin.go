@@ -96,6 +96,11 @@ type GINIndex struct {
 	representationLookup  map[string]map[string]uint16
 	representationInfos   map[string][]RepresentationInfo
 	representations       []RepresentationSpec
+	// companionTransformers maps a companion path ID to the transformer spec
+	// and function the index holds for it. Finalize and Decode build it, so
+	// Normalized and the unknown-Unicode-token guard never read Config at query
+	// time. See buildCompanionTransformers.
+	companionTransformers map[uint16]companionTransformer
 	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
 	// means absent (= trigramUnicodeVersion). The index owns the serialized
 	// token: Decode sets it, and Encode writes it back from here. Each
@@ -311,6 +316,47 @@ func As(alias string, value any) RepresentationValue {
 		panic(err.Error())
 	}
 	return RepresentationValue{Alias: alias, Value: value}
+}
+
+// NormalizedValue marks a query value as a raw source value that Evaluate must
+// pass through the companion's own transformer. Create it with Normalized.
+type NormalizedValue struct {
+	Alias string
+	Value any
+}
+
+// Normalized is the sibling of As for companion queries. As sends a value that
+// the caller already transformed, verbatim. Normalized sends the raw source
+// value, and Evaluate applies the companion's stored transformer to it:
+//
+//	EQ("$.email", Normalized("domain", "Alice@Example.COM"))
+//
+// The reference is the transformer the index holds for the companion: the
+// builder's function on an index returned by Finalize (including in-memory
+// WithCustomTransformer functions), and the registry-reconstructed function
+// on a Decoded index. Normalized(alias, raw) equals As(alias, T(raw)) only
+// when T succeeds. It never prunes on a failure: if T reports ok=false, the
+// alias is unknown, the index holds no function for the companion, or the
+// markers in an IN/NIN list are mixed, the predicate returns every row group.
+//
+// Normalized supports EQ, NE, GT, GTE, LT, LTE, IN and NIN. For IN and NIN,
+// wrap every element, all with the same alias. Contains and Regex take
+// patterns and are out of scope; with a Normalized value they return every row
+// group. Evaluate applies ingest-style preparation (a json.Number becomes a
+// float64) before the transformer.
+//
+// Do not wrap a value that is already transformed. EmailDomain and URLHost are
+// not idempotent, so Normalized("domain", "example.com") fails open.
+//
+// Query values for ToLower, EmailDomain and URLHost companions must come from
+// Normalized or from gin.ToLower, gin.EmailDomain and gin.URLHost. A caller on
+// Go 1.27 that prepares them with strings.ToLower can miss a match for the 55
+// runes whose lowercase differs between Unicode 15.0.0 and 17.0.0.
+func Normalized(alias string, raw any) NormalizedValue {
+	if err := validateRepresentationAlias(alias); err != nil {
+		panic(err.Error())
+	}
+	return NormalizedValue{Alias: alias, Value: raw}
 }
 
 // FieldTransformer transforms a value before indexing.
