@@ -83,6 +83,13 @@ cross-toolchain-check:
 		done; \
 	done
 
+# Unicode-sensitive unit tests on $(XTC_NEW_GO) (Unicode $(XTC_NEW_UNICODE)) (#102).
+# Not part of test or lint: it downloads a toolchain.
+.PHONY: cross-toolchain-unit
+cross-toolchain-unit:
+	GOTOOLCHAIN=$(XTC_NEW_GO) go version
+	GOTOOLCHAIN=$(XTC_NEW_GO) go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard' .
+
 .PHONY: gotestsum-bin
 gotestsum-bin:
 	go install gotest.tools/gotestsum@$(GOTESTSUM_VERSION)
@@ -242,6 +249,7 @@ help:
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
 	@echo "  cross-toolchain-check - Exchange encoded indexes between $(XTC_OLD_GO) and $(XTC_NEW_GO) and query them in all four build/query cells"
+	@echo "  cross-toolchain-unit - Run the Unicode-sensitive unit tests on $(XTC_NEW_GO)"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against default and simdjson-tagged call graphs"

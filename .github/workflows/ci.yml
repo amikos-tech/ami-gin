@@ -288,7 +288,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # Overrides the workflow-level "local" for this job only. The check must
-      # download go1.26.9 and go1.27.3 to exchange real index bytes between them.
+      # download the two toolchains pinned in the Makefile (XTC_OLD_GO and
+      # XTC_NEW_GO) to exchange real index bytes between them.
       GOTOOLCHAIN: auto
     steps:
       - name: Checkout repository
@@ -300,13 +301,8 @@ jobs:
           go-version: "1.26"
           cache-dependency-path: go.sum
 
-      - name: Download pinned toolchains
-        run: |
-          GOTOOLCHAIN=go1.26.9 go version
-          GOTOOLCHAIN=go1.27.3 go version
-
-      - name: Run Unicode-sensitive unit tests on go1.27.3
-        run: GOTOOLCHAIN=go1.27.3 go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard' .
+      - name: Run Unicode-sensitive unit tests on the newer toolchain
+        run: make cross-toolchain-unit
 
       - name: Exchange index artifacts between toolchains
         run: make cross-toolchain-check
