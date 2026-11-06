@@ -50,9 +50,6 @@ var trigramGuardCaseDenied = map[string]bool{
 type trigramGuardAllow struct{ file, decl, sel, reason string }
 
 var trigramGuardAllowlist = []trigramGuardAllow{
-	{"transformers.go", "ToLower", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
-	{"transformers.go", "EmailDomain", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
-	{"transformers.go", "URLHost", "strings.ToLower", "derived companion transformer; toolchain lowercase tracked in #102"},
 	{"transformers.go", "BoolNormalize", "strings.ToLower", "matches ASCII keywords and returns a bool, never a gram"},
 	{"regex.go", "foldsUnderToLower", "unicode.SimpleFold", "foldsUnderToLower: toolchain SimpleFold orbit checked against the frozen lowercase (#99)"},
 }

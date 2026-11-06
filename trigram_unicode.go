@@ -2,6 +2,7 @@ package gin
 
 import (
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -101,4 +102,36 @@ func trigramIsPunctOrSymbol(r rune) bool {
 		return trigramASCIIPunctOrSymbol[r>>6]&(1<<(r&63)) != 0
 	}
 	return unicode.Is(trigramPunctOrSymbolTable, r)
+}
+
+// frozenToLower is the frozen trigramUnicodeVersion counterpart of
+// strings.ToLower: it lowercases s with trigramLowerRune, so the result does
+// not depend on the Go toolchain's Unicode tables (#102). It equals
+// strings.ToLower under Go 1.21-1.26, including U+0130 and U+212A and the
+// U+FFFD that replaces each invalid UTF-8 byte. The upgrade policy of
+// trigramUnicodeVersion applies: a future table upgrade must add a second set
+// and keep this one.
+func frozenToLower(s string) string {
+	hasUpper := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= utf8.RuneSelf {
+			return strings.Map(trigramLowerRune, s)
+		}
+		if 'A' <= c && c <= 'Z' {
+			hasUpper = true
+		}
+	}
+	if !hasUpper {
+		return s
+	}
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return string(b)
 }

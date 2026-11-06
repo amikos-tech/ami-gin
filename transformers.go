@@ -57,12 +57,20 @@ func CustomDateToEpochMs(layout string) FieldTransformer {
 }
 
 // ToLower normalizes strings to lowercase for case-insensitive queries.
+//
+// It lowercases with frozen Unicode 15.0.0 tables, independent of the Go
+// toolchain, so an index built with one toolchain matches query values
+// prepared with another (#102). The result equals strings.ToLower under Go
+// 1.21-1.26. Callers that prepare query values for a ToLower, EmailDomain or
+// URLHost companion must use gin.ToLower, gin.EmailDomain, gin.URLHost or the
+// Normalized marker, not strings.ToLower: on Go 1.27 (Unicode 17.0.0)
+// strings.ToLower differs for 55 runes and a query could miss a match.
 func ToLower(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {
 		return nil, false
 	}
-	return strings.ToLower(s), true
+	return frozenToLower(s), true
 }
 
 // IPv4ToInt converts IPv4 address strings to uint32 (as float64) for range queries.
@@ -164,6 +172,10 @@ func DurationToMs(v any) (any, bool) {
 }
 
 // EmailDomain extracts and lowercases the domain from an email address.
+//
+// The domain is lowercased with frozen Unicode 15.0.0 tables, independent of
+// the Go toolchain; see ToLower for what callers must use to prepare query
+// values.
 func EmailDomain(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {
@@ -173,10 +185,14 @@ func EmailDomain(v any) (any, bool) {
 	if len(parts) != 2 || parts[1] == "" {
 		return nil, false
 	}
-	return strings.ToLower(parts[1]), true
+	return frozenToLower(parts[1]), true
 }
 
 // URLHost extracts and lowercases the host from a URL.
+//
+// The host is lowercased with frozen Unicode 15.0.0 tables, independent of
+// the Go toolchain; see ToLower for what callers must use to prepare query
+// values.
 func URLHost(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {
@@ -186,7 +202,7 @@ func URLHost(v any) (any, bool) {
 	if err != nil || u.Host == "" {
 		return nil, false
 	}
-	return strings.ToLower(u.Host), true
+	return frozenToLower(u.Host), true
 }
 
 // NumericBucket returns a transformer that buckets numeric values by size.
