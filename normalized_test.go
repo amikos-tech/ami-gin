@@ -234,6 +234,47 @@ func TestNormalizedRecoversTransformerPanic(t *testing.T) {
 	}
 }
 
+// TestNormalizedNilTransformedValueFailsOpen: a custom transformer may return
+// (nil, true). The pruning code has no rule for a nil value, so every operator
+// must return every row group; nothing may prune.
+func TestNormalizedNilTransformedValueFailsOpen(t *testing.T) {
+	toNil := func(v any) (any, bool) {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		if s == "N" {
+			return nil, true
+		}
+		return s, true
+	}
+	cfg, err := NewConfig(WithCustomTransformer("$.k", "c", toNil))
+	if err != nil {
+		t.Fatalf("NewConfig: %v", err)
+	}
+	builder := mustNewBuilder(t, cfg, 3)
+	for i, doc := range []string{`{"k":"N"}`, `{"k":"x"}`, `{"k":"y"}`} {
+		if err := builder.AddDocument(DocID(i), []byte(doc)); err != nil {
+			t.Fatalf("AddDocument: %v", err)
+		}
+	}
+	idx := builder.Finalize()
+
+	requireRows(t, idx, EQ("$.k", As("c", "x")), []int{1})
+	requireRows(t, idx, EQ("$.k", Normalized("c", "x")), []int{1})
+	for name, predicate := range map[string]Predicate{
+		"EQ":  EQ("$.k", Normalized("c", "N")),
+		"NE":  NE("$.k", Normalized("c", "N")),
+		"GT":  GT("$.k", Normalized("c", "N")),
+		"IN":  IN("$.k", Normalized("c", "N"), Normalized("c", "x")),
+		"NIN": NIN("$.k", Normalized("c", "N")),
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireRows(t, idx, predicate, allRows(idx))
+		})
+	}
+}
+
 func TestNormalizedPanicsOnInvalidAlias(t *testing.T) {
 	defer func() {
 		if recover() == nil {
