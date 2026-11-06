@@ -312,15 +312,12 @@ func formatTransformerLowerOutputs() []byte {
 		}
 		buf.WriteString(name + " " + strconv.QuoteToASCII(arg) + " -> " + out + "\n")
 	}
-	for _, in := range transformerLowerDriftInputs {
-		line("ToLower", ToLower, in)
-		line("EmailDomain", EmailDomain, "u@"+in)
-		line("URLHost", URLHost, "https://"+in+"/p")
-	}
-	for _, in := range transformerLowerInvalidInputs {
-		line("ToLower", ToLower, in)
-		line("EmailDomain", EmailDomain, "u@"+in)
-		line("URLHost", URLHost, "https://"+in+"/p")
+	for _, inputs := range [][]string{transformerLowerDriftInputs, transformerLowerInvalidInputs} {
+		for _, in := range inputs {
+			line("ToLower", ToLower, in)
+			line("EmailDomain", EmailDomain, "u@"+in)
+			line("URLHost", URLHost, "https://"+in+"/p")
+		}
 	}
 	line("EmailDomain", EmailDomain, "nodomain")
 	line("URLHost", URLHost, "/relative")

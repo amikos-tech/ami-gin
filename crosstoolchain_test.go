@@ -63,10 +63,7 @@ func TestCrossToolchainBuild(t *testing.T) {
 		xtcDriftArtifact:      buildTransformerDriftIndex(t),
 		xtcAggregatedArtifact: buildTransformerAggregatedIndex(t),
 	} {
-		data, err := EncodeWithLevel(idx, CompressionNone)
-		if err != nil {
-			t.Fatalf("EncodeWithLevel(%s): %v", name, err)
-		}
+		data := mustEncodeUncompressed(t, idx)
 		path := filepath.Join(out, name)
 		if err := os.WriteFile(path, data, 0o600); err != nil {
 			t.Fatalf("WriteFile(%s): %v", path, err)
@@ -78,11 +75,7 @@ func TestCrossToolchainBuild(t *testing.T) {
 func xtcDecode(t *testing.T, dir, name string) *GINIndex {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("ReadFile(%s): %v", path, err)
-	}
-	idx, err := Decode(data)
+	idx, err := Decode(readTestFile(t, path))
 	if err != nil {
 		t.Fatalf("Decode(%s): %v", path, err)
 	}

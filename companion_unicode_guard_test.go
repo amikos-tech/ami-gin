@@ -54,15 +54,7 @@ func companionGuardIndex(t *testing.T, cfg GINConfig, token string) *GINIndex {
 	t.Helper()
 	idx := buildCompanionGuardIndex(t, cfg)
 	idx.trigramUnicodeToken = token
-	encoded, err := Encode(idx)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	decoded, err := Decode(encoded)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
-	return decoded
+	return mustRoundTripIndex(t, idx)
 }
 
 // companionGuardCase is one lowering-companion predicate for the guard tests.
@@ -143,12 +135,12 @@ func TestCompanionUnicodeGuardLoweringReturnsAllRGs(t *testing.T) {
 func TestCompanionUnicodeGuardSupportedTokensPruneExactly(t *testing.T) {
 	for _, token := range []string{"", trigramUnicodeVersion} {
 		idx := companionGuardIndex(t, companionGuardConfig(t), token)
-		requireRowsSet(t, idx, EQ("$.name", As("lower", "alice")), []int{0})
-		requireRowsSet(t, idx, EQ("$.name", Normalized("lower", "BOB")), []int{1})
-		requireRowsSet(t, idx, EQ("$.name", As("lower", "zzz-not-present")), []int{})
-		requireRowsSet(t, idx, EQ("$.email", As("domain", "other.org")), []int{1})
-		requireRowsSet(t, idx, EQ("$.url", As("host", "third.net")), []int{2})
-		requireRowsSet(t, idx, NE("$.name", As("lower", "alice")), []int{1, 2, 3})
+		requireRows(t, idx, EQ("$.name", As("lower", "alice")), []int{0})
+		requireRows(t, idx, EQ("$.name", Normalized("lower", "BOB")), []int{1})
+		requireRows(t, idx, EQ("$.name", As("lower", "zzz-not-present")), []int{})
+		requireRows(t, idx, EQ("$.email", As("domain", "other.org")), []int{1})
+		requireRows(t, idx, EQ("$.url", As("host", "third.net")), []int{2})
+		requireRows(t, idx, NE("$.name", As("lower", "alice")), []int{1, 2, 3})
 	}
 }
 
@@ -156,14 +148,14 @@ func TestCompanionUnicodeGuardKeysOnSpecNotAlias(t *testing.T) {
 	idx := companionGuardIndex(t, companionGuardConfig(t), trigramUnicodeForeignToken)
 
 	// NumericBucket companion that carries the alias "lower".
-	requireRowsSet(t, idx, EQ("$.n", As("lower", float64(100))), []int{0})
-	requireRowsSet(t, idx, EQ("$.n", As("lower", float64(900))), []int{})
-	requireRowsSet(t, idx, EQ("$.n", Normalized("lower", json.Number("250"))), []int{1})
+	requireRows(t, idx, EQ("$.n", As("lower", float64(100))), []int{0})
+	requireRows(t, idx, EQ("$.n", As("lower", float64(900))), []int{})
+	requireRows(t, idx, EQ("$.n", Normalized("lower", json.Number("250"))), []int{1})
 
 	// Raw paths keep pruning.
-	requireRowsSet(t, idx, EQ("$.name", "Alice"), []int{0})
-	requireRowsSet(t, idx, EQ("$.name", "nobody"), []int{})
-	requireRowsSet(t, idx, GT("$.n", float64(300)), []int{2, 3})
+	requireRows(t, idx, EQ("$.name", "Alice"), []int{0})
+	requireRows(t, idx, EQ("$.name", "nobody"), []int{})
+	requireRows(t, idx, GT("$.n", float64(300)), []int{2, 3})
 
 	// Conjunction: the raw predicate prunes, the lowering one adds nothing.
 	got := idx.Evaluate([]Predicate{EQ("$.name", "Bob"), EQ("$.name", As("lower", "alice"))}).ToSlice()
@@ -173,7 +165,7 @@ func TestCompanionUnicodeGuardKeysOnSpecNotAlias(t *testing.T) {
 
 	// Contains and Regex on a raw path stay behind the #99 trigram guard.
 	for _, p := range []Predicate{Contains("$.name", "lic"), Regex("$.name", "Ali.*")} {
-		requireRowsSet(t, idx, p, allRows(idx))
+		requireRows(t, idx, p, allRows(idx))
 	}
 }
 
@@ -190,9 +182,9 @@ func TestCompanionUnicodeGuardCustomTransformerAliasDomainStillPrunes(t *testing
 	}
 	idx := buildCompanionGuardIndex(t, cfg)
 	idx.trigramUnicodeToken = trigramUnicodeForeignToken // custom transformers cannot be encoded
-	requireRowsSet(t, idx, EQ("$.name", As("domain", "c-Alice")), []int{0})
-	requireRowsSet(t, idx, EQ("$.name", As("domain", "c-nobody")), []int{})
-	requireRowsSet(t, idx, EQ("$.email", As("domain", "example.com")), allRows(idx))
+	requireRows(t, idx, EQ("$.name", As("domain", "c-Alice")), []int{0})
+	requireRows(t, idx, EQ("$.name", As("domain", "c-nobody")), []int{})
+	requireRows(t, idx, EQ("$.email", As("domain", "example.com")), allRows(idx))
 }
 
 func TestCompanionUnicodeGuardTokenRoundTrip(t *testing.T) {
@@ -201,8 +193,8 @@ func TestCompanionUnicodeGuardTokenRoundTrip(t *testing.T) {
 	if again.trigramUnicodeToken != trigramUnicodeForeignToken {
 		t.Fatalf("token after round trip = %q, want %q", again.trigramUnicodeToken, trigramUnicodeForeignToken)
 	}
-	requireRowsSet(t, again, EQ("$.name", As("lower", "alice")), allRows(again))
-	requireRowsSet(t, again, EQ("$.name", Normalized("lower", "ALICE")), allRows(again))
+	requireRows(t, again, EQ("$.name", As("lower", "alice")), allRows(again))
+	requireRows(t, again, EQ("$.name", Normalized("lower", "ALICE")), allRows(again))
 }
 
 func TestIsLoweringSpec(t *testing.T) {
@@ -300,9 +292,9 @@ func TestCompanionUnicodeGuardRepresentationOnlyStillGuards(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Decode: %v (an absent config entry must not fail Decode)", err)
 			}
-			requireRowsSet(t, idx, EQ("$.name", As("lower", "alice")), allRows(idx))
-			requireRowsSet(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
-			requireRowsSet(t, idx, EQ("$.name", "nobody"), []int{})
+			requireRows(t, idx, EQ("$.name", As("lower", "alice")), allRows(idx))
+			requireRows(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
+			requireRows(t, idx, EQ("$.name", "nobody"), []int{})
 		})
 	}
 }
@@ -333,8 +325,8 @@ func TestCompanionTransformerRepresentationOnlySupportedToken(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Decode: %v", err)
 			}
-			requireRowsSet(t, decoded, EQ("$.name", Normalized("lower", "ALICE")), tc.want)
-			requireRowsSet(t, decoded, EQ("$.name", As("lower", "alice")), []int{0})
+			requireRows(t, decoded, EQ("$.name", Normalized("lower", "ALICE")), tc.want)
+			requireRows(t, decoded, EQ("$.name", As("lower", "alice")), []int{0})
 		})
 	}
 }

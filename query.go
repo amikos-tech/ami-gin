@@ -209,14 +209,12 @@ func predicateMarkerOf(value any) (predicateMarker, string, any) {
 // every row group.
 func unwrapPredicateValue(value any) (alias string, rawValue any, marker predicateMarker, listForm bool, valid bool) {
 	if list, ok := value.([]any); ok {
-		if len(list) == 0 {
-			return "", list, markerNone, false, true
-		}
 		unwrapped := make([]any, len(list))
-		sawMarker := false
+		sawMarker, sawPlain := false, false
 		for i, item := range list {
 			itemMarker, itemAlias, itemValue := predicateMarkerOf(item)
 			if itemMarker == markerNone {
+				sawPlain = true
 				unwrapped[i] = item
 				continue
 			}
@@ -232,10 +230,8 @@ func unwrapPredicateValue(value any) (alias string, rawValue any, marker predica
 		if !sawMarker {
 			return "", list, markerNone, false, true
 		}
-		for _, item := range list {
-			if itemMarker, _, _ := predicateMarkerOf(item); itemMarker == markerNone {
-				return "", list, marker, true, false
-			}
+		if sawPlain {
+			return "", list, marker, true, false
 		}
 		return alias, unwrapped, marker, true, true
 	}

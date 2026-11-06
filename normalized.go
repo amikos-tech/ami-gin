@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"reflect"
 
@@ -96,6 +97,9 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 // values, so formatting differences do not matter. An empty payload equals
 // JSON null. A payload that is not valid JSON equals only identical bytes.
 func transformerParamsEqual(a, b json.RawMessage) bool {
+	if bytes.Equal(a, b) {
+		return true
+	}
 	decode := func(raw json.RawMessage) (any, bool) {
 		if len(raw) == 0 {
 			return nil, true
@@ -149,8 +153,7 @@ func (idx *GINIndex) normalizeQueryValue(op Operator, pathID int, raw any, listF
 		return nil, false
 	}
 	if !listForm {
-		out, ok := companion.fn(prepareTransformerValue(raw))
-		return out, ok
+		return companion.fn(prepareTransformerValue(raw))
 	}
 	items, ok := raw.([]any)
 	if !ok {

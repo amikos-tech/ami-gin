@@ -20,14 +20,6 @@ func allRows(idx *GINIndex) []int {
 	return rows
 }
 
-func requireRowsSet(t *testing.T, idx *GINIndex, predicate Predicate, want []int) {
-	t.Helper()
-	got := idx.Evaluate([]Predicate{predicate}).ToSlice()
-	if !reflect.DeepEqual(got, want) && (len(got) != 0 || len(want) != 0) {
-		t.Fatalf("Evaluate(%+v) = %v, want %v", predicate, got, want)
-	}
-}
-
 // normalizedVariants returns the same index as a Finalize-built index and as
 // Decode(Encode(idx)), each with its Config intact, nil, and replaced.
 func normalizedVariants(t *testing.T, build func() *GINIndex) map[string]*GINIndex {
@@ -117,23 +109,23 @@ func TestNormalizedNumericPreparation(t *testing.T) {
 	forEachVariant(t, func() *GINIndex { return buildNormalizedNumericIndex(t) }, func(t *testing.T, idx *GINIndex) {
 		gte := GTE("$.ts", Normalized("epoch", "2024-01-15T00:00:00Z"))
 		gteAs := GTE("$.ts", As("epoch", float64(1705276800000)))
-		requireRowsSet(t, idx, gte, []int{1, 2})
-		requireRowsSet(t, idx, gteAs, []int{1, 2})
+		requireRows(t, idx, gte, []int{1, 2})
+		requireRows(t, idx, gteAs, []int{1, 2})
 
 		eq := EQ("$.n", Normalized("bucket", json.Number("150")))
 		eqAs := EQ("$.n", As("bucket", float64(100)))
-		requireRowsSet(t, idx, eq, []int{0})
-		requireRowsSet(t, idx, eqAs, []int{0})
+		requireRows(t, idx, eq, []int{0})
+		requireRows(t, idx, eqAs, []int{0})
 
 		in := IN("$.n", Normalized("bucket", json.Number("150")), Normalized("bucket", json.Number("250")))
-		requireRowsSet(t, idx, in, []int{0, 1})
+		requireRows(t, idx, in, []int{0, 1})
 
 		failOpen := []Predicate{
 			GTE("$.ts", Normalized("epoch", "garbage")),
 			EQ("$.n", Normalized("bucket", "not a number")),
 		}
 		for _, p := range failOpen {
-			requireRowsSet(t, idx, p, allRows(idx))
+			requireRows(t, idx, p, allRows(idx))
 		}
 	})
 }
@@ -196,13 +188,13 @@ func TestNormalizedCustomTransformer(t *testing.T) {
 	idx := builder.Finalize()
 
 	idx.Config = nil
-	requireRowsSet(t, idx, EQ("$.name", Normalized("prefixed", "abc")), []int{0})
-	requireRowsSet(t, idx, EQ("$.name", As("prefixed", "x-def")), []int{1})
-	requireRowsSet(t, idx, IN("$.name", Normalized("prefixed", "abc"), Normalized("prefixed", "def")), []int{0, 1})
+	requireRows(t, idx, EQ("$.name", Normalized("prefixed", "abc")), []int{0})
+	requireRows(t, idx, EQ("$.name", As("prefixed", "x-def")), []int{1})
+	requireRows(t, idx, IN("$.name", Normalized("prefixed", "abc"), Normalized("prefixed", "def")), []int{0, 1})
 
 	other := DefaultConfig()
 	idx.Config = &other
-	requireRowsSet(t, idx, EQ("$.name", Normalized("prefixed", "def")), []int{1})
+	requireRows(t, idx, EQ("$.name", Normalized("prefixed", "def")), []int{1})
 
 	if _, err := Encode(idx); err == nil {
 		t.Fatal("Encode of an index with a custom transformer succeeded, want a not-serializable error")
@@ -221,7 +213,7 @@ func TestNormalizedPanicsOnInvalidAlias(t *testing.T) {
 func TestNormalizedHandConstructedIndexFailsOpen(t *testing.T) {
 	idx := buildTransformerDriftIndex(t)
 	idx.companionTransformers = nil
-	requireRowsSet(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
+	requireRows(t, idx, EQ("$.name", Normalized("lower", "ALICE")), allRows(idx))
 }
 
 func buildNormalizedRegistryIndex(t *testing.T) *GINIndex {
