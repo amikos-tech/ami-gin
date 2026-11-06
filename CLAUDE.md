@@ -77,11 +77,14 @@ The `Regex` operator uses trigram index for candidate row-group selection before
 
 ### Field Transformers
 
-Transform values into derived companion indexes via config options like `WithISODateTransformer`, `WithToLowerTransformer`, and `WithCustomTransformer`. Raw source values stay indexed on the original path; query a derived companion explicitly with `As(alias, value)`. Internal companion paths are encoded as `__derived:<source>#<alias>` and are not part of the public query API. Use cases: date range queries, IP subnet filtering, version comparisons, case-insensitive search.
+Transform values into derived companion indexes via config options like `WithISODateTransformer`, `WithToLowerTransformer`, and `WithCustomTransformer`. Raw source values stay indexed on the original path; query a derived companion explicitly with `As(alias, value)` for an already prepared value, or `Normalized(alias, raw)` for a raw source value. Internal companion paths are encoded as `__derived:<source>#<alias>` and are not part of the public query API. Use cases: date range queries, IP subnet filtering, version comparisons, case-insensitive search.
 
 **Types:**
 - `FieldTransformer` - `func(value any) (any, bool)` - returns transformed value and success flag; `ok=false` skips the derived companion for that document while raw indexing continues
-- `RepresentationValue` - created with `As(alias, value)` to route a predicate to a derived companion index
+- `RepresentationValue` - created with `As(alias, value)` to route a predicate to a derived companion index; the value is sent verbatim
+- `NormalizedValue` - created with `Normalized(alias, raw)`; `Evaluate` applies the transformer the index holds for the companion (index-owned `companionTransformers` map, built in `Finalize` and `Decode`, never read from `idx.Config`) to `raw`. Operators: EQ, NE, GT, GTE, LT, LTE, IN, NIN. Any failure (ok=false, unknown alias, mixed `As`/`Normalized`/aliases in a list, other operators) returns `AllRGs`. Do not wrap an already transformed value (`EmailDomain` and `URLHost` are not idempotent)
+
+**Frozen lowering:** `ToLower`, `EmailDomain` and `URLHost` lowercase with `frozenToLower` (`trigram_unicode.go`, Unicode 15.0.0 tables, the same token `trigram_unicode_version` as trigrams), so output does not depend on the Go toolchain (Go 1.27 ships Unicode 17.0.0). Callers that prepare query values must use `Normalized` or `gin.ToLower`/`gin.EmailDomain`/`gin.URLHost`, not `strings.ToLower`. An unknown `trigram_unicode_version` token makes `evaluatePredicate` return `AllRGs` for lowering companions, classified by `TransformerSpec` ID or Name (never by alias), in addition to the trigram guard for `Contains`/`Regex`. `Decode` rejects a representation section whose transformer ID or name disagrees with the config section. `make cross-toolchain-check` (also the `cross-toolchain` CI job) exchanges real encoded indexes between go1.26.9 and go1.27.3 in four cells.
 
 **Built-in transformers:**
 
@@ -108,6 +111,8 @@ Transform values into derived companion indexes via config options like `WithISO
 - `gin.go` - `FieldTransformer`, `RepresentationValue`, `As()`, config options, and derived representation metadata
 - `transformers.go` - All built-in transformers
 - `transformers_test.go` - Unit and integration tests
+- `normalized.go` - `companionTransformers` lookup, `isLoweringSpec`, `Normalized` evaluation helpers (the `Normalized` constructor is in `gin.go`)
+- `crosstoolchain_test.go` - `crosstoolchain` build-tag build and query halves driven by `make cross-toolchain-check`
 - `builder.go` - Source path staged and budget-checked in `stageMaterializedValue()` before its derived companions run in `stageCompanionRepresentations()`
 
 ## Go Conventions

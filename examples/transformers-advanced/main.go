@@ -189,15 +189,15 @@ func caseInsensitiveExample() error {
 	fmt.Printf("Row groups: %v (expected: [0])\n", result.ToSlice())
 
 	// Query: Find user "alice" through the derived lowercase companion.
-	fmt.Println("Query: Find username = 'alice' through lower companion")
+	fmt.Println("Query: Find username = 'Alice' (raw form) through lower companion with gin.Normalized")
 	result = idx.Evaluate([]gin.Predicate{
-		gin.EQ("$.username", gin.As("lower", "alice")),
+		gin.EQ("$.username", gin.Normalized("lower", "Alice")),
 	})
 	fmt.Printf("Row groups: %v (expected: [0])\n", result.ToSlice())
 
-	fmt.Println("Query: Find email = 'bob@example.com' through lower companion")
+	fmt.Println("Query: Find email = 'Bob@Example.COM' (raw form) through lower companion with gin.Normalized")
 	result = idx.Evaluate([]gin.Predicate{
-		gin.EQ("$.email", gin.As("lower", "bob@example.com")),
+		gin.EQ("$.email", gin.Normalized("lower", "Bob@Example.COM")),
 	})
 	fmt.Printf("Row groups: %v (expected: [1])\n\n", result.ToSlice())
 
@@ -231,16 +231,16 @@ func emailDomainExample() error {
 	idx := builder.Finalize()
 
 	// Query: Find all company.com users
-	fmt.Println("Query: Find all @company.com users")
+	fmt.Println("Query: Find all @company.com users with gin.Normalized on a raw email")
 	result := idx.Evaluate([]gin.Predicate{
-		gin.EQ("$.email", gin.As("domain", "company.com")),
+		gin.EQ("$.email", gin.Normalized("domain", "Eve@Company.COM")),
 	})
 	fmt.Printf("Row groups: %v (expected: [0, 2])\n", result.ToSlice())
 
 	// Query: Find startup.io users
 	fmt.Println("Query: Find startup.io users")
 	result = idx.Evaluate([]gin.Predicate{
-		gin.EQ("$.email", gin.As("domain", "startup.io")),
+		gin.EQ("$.email", gin.Normalized("domain", "Zed@Startup.IO")),
 	})
 	fmt.Printf("Row groups: %v (expected: [3])\n\n", result.ToSlice())
 

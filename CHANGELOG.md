@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- The `ToLower`, `EmailDomain` and `URLHost` transformers no longer depend on
+  the Go toolchain (#102). They lowercase with the in-tree Unicode 15.0.0
+  tables that #99 added for trigrams. Before, an index built with Go 1.26
+  (Unicode 15.0.0) and queried with Go 1.27 (Unicode 17.0.0), or the reverse,
+  could prune a matching row group on a companion. Go 1.21-1.26 already used
+  Unicode 15.0.0, so indexes built with Go 1.21-1.26, and their encoded bytes,
+  do not change. The wire format stays v11.
+- New additive API `Normalized(alias, raw)`. It applies the transformer that
+  the index holds for the companion to a raw source value at query time:
+  `EQ("$.email", Normalized("domain", "Alice@Example.COM"))`. It works with
+  `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN` and `NIN`. For `IN` and `NIN`,
+  wrap every element with the same alias. It never prunes on a failure. If the
+  transformer reports failure, the alias is unknown, the list mixes `As` and
+  `Normalized`, or the operator is `Contains` or `Regex`, the predicate
+  returns all row groups. `As` still sends its value unchanged.
+- An unknown `trigram_unicode_version` token now also makes `ToLower`,
+  `EmailDomain` and `URLHost` companions return all row groups. The guard
+  keys on the transformer in the index, not on the alias, and applies to `As`
+  and `Normalized`. Other companions and raw paths keep pruning. `Decode`
+  rejects an index whose representation section names a different transformer
+  than the config section.
+- Reader-version boundary: v1.6.0 readers understand an unknown token for
+  trigrams but still prune lowering companions. Upgrade all readers to this
+  release before any writer records a new token.
+- Warning: a caller on Go 1.27 that prepares query values for these companions
+  with `strings.ToLower` can miss a match for the 55 runes whose lowercase
+  differs between Unicode 15.0.0 and 17.0.0. Use `Normalized`, or
+  `gin.ToLower`, `gin.EmailDomain` and `gin.URLHost`.
+- Rebuild advisory: rebuild indexes that ami-gin v1.6.0 or older built with a
+  binary compiled by Go 1.27 or newer, if the data can hold Unicode 16 or 17
+  characters (`gin-index build` or `BuildFromParquet`, from the source JSON or
+  Parquet). There is no in-place migration, and this release has no tool that
+  detects affected indexes. Migration tooling is tracked in #112. Indexes
+  built with Go 1.21-1.26 are not affected.
+- New `make cross-toolchain-check` target and a `cross-toolchain` CI job. They
+  exchange real encoded indexes between go1.26.9 and go1.27.3 in all four
+  build and query combinations, and require the two builder artifacts to be
+  byte-identical.
+- Known divergence, not fixed here: `RegexExtractInt` parses numbers with
+  `strconv.ParseFloat`, and the reconstructed transformer used by a decoded
+  index uses a simpler parser (#113). `Normalized` on such a companion can
+  return all row groups when the two disagree. It never loses a match.
+
 ## v1.6.0 (2026-10-21)
 
 - The Go floor is now 1.26 (#97).
