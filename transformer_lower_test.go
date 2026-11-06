@@ -2,6 +2,7 @@ package gin
 
 import (
 	"bytes"
+	"encoding/json"
 	"math/rand"
 	"path/filepath"
 	"slices"
@@ -11,11 +12,12 @@ import (
 	"unicode"
 )
 
-// The value of the tests in this file and in transformer_lower_goldens_test.go
-// is that the committed goldens are compared on every toolchain. A build and a
-// query on one toolchain agree even on broken code, so they prove nothing.
-// The goldens were generated with Unicode 15.0.0 (Go 1.21-1.26) and must match
-// on a Unicode 17.0.0 toolchain (Go 1.27) too (#102).
+// The value of the tests in this file is that the committed goldens are
+// compared on every toolchain. transformer_lower_goldens_test.go regenerates
+// the goldens; it does not compare them. A build and a query on one toolchain
+// agree even on broken code, so they prove nothing. The goldens were generated
+// with Unicode 15.0.0 (Go 1.21-1.26) and must match on a Unicode 17.0.0
+// toolchain (Go 1.27) too (#102).
 
 // transformerDriftDocs is the fixture: one document per row group. RG3 and RG4
 // have no email and no url field.
@@ -97,6 +99,67 @@ func requireTransformerDriftQueries(t *testing.T, idx *GINIndex, label string) {
 			requireRows(t, idx, tc.predicate, tc.want)
 		})
 	}
+}
+
+// transformerAggregatedDocs is the second cross-toolchain fixture. RG0 holds
+// two documents on one DocID: U+A7DC has no lowercase mapping at 15.0.0, so
+// the lower companion keeps two distinct values there. RG1 holds only the
+// U+019B value. RG2 is a distractor.
+var transformerAggregatedDocs = []struct {
+	rg   DocID
+	name string
+}{
+	{0, "\uA7DCabc"},
+	{0, "\u019Babc"},
+	{1, "\u019Babc"},
+	{2, "Zeta"},
+}
+
+func buildTransformerAggregatedIndex(t *testing.T) *GINIndex {
+	t.Helper()
+	builder := mustNewBuilder(t, transformerDriftConfig(t), 3)
+	for _, doc := range transformerAggregatedDocs {
+		data, err := json.Marshal(map[string]string{"name": doc.name})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if err := builder.AddDocument(doc.rg, data); err != nil {
+			t.Fatalf("AddDocument(%d): %v", doc.rg, err)
+		}
+	}
+	return builder.Finalize()
+}
+
+// transformerAggregatedQueries holds exact row groups under Unicode 15.0.0
+// semantics, measured on go1.26.9 and go1.27.3. NE and NIN keep RG0 unless the
+// query names both of its distinct values.
+var transformerAggregatedQueries = []transformerDriftQuery{
+	{"EQ As 019B", EQ("$.name", As("lower", "\u019Babc")), []int{0, 1}},
+	{"EQ As A7DC", EQ("$.name", As("lower", "\uA7DCabc")), []int{0}},
+	{"EQ Normalized A7DC", EQ("$.name", Normalized("lower", "\uA7DCABC")), []int{0}},
+	{"EQ Normalized 019B", EQ("$.name", Normalized("lower", "\u019BABC")), []int{0, 1}},
+	{"IN As both", IN("$.name", As("lower", "\u019Babc"), As("lower", "\uA7DCabc")), []int{0, 1}},
+	{"NE As 019B", NE("$.name", As("lower", "\u019Babc")), []int{0, 2}},
+	{"NIN As 019B", NIN("$.name", As("lower", "\u019Babc")), []int{0, 2}},
+	{"NIN Normalized A7DC", NIN("$.name", Normalized("lower", "\uA7DCABC")), []int{0, 1, 2}},
+	{"NIN As both", NIN("$.name", As("lower", "\u019Babc"), As("lower", "\uA7DCabc")), []int{2}},
+	{"NIN Normalized both", NIN("$.name", Normalized("lower", "\u019BABC"), Normalized("lower", "\uA7DCABC")), []int{2}},
+	{"Contains As 019B", Predicate{Path: "$.name", Operator: OpContains, Value: As("lower", "\u019Bab")}, []int{0, 1}},
+}
+
+func requireTransformerAggregatedQueries(t *testing.T, idx *GINIndex, label string) {
+	t.Helper()
+	for _, tc := range transformerAggregatedQueries {
+		t.Run(label+"/aggregated/"+tc.name, func(t *testing.T) {
+			requireRows(t, idx, tc.predicate, tc.want)
+		})
+	}
+}
+
+func TestTransformerLowerAggregatedQueries(t *testing.T) {
+	built := buildTransformerAggregatedIndex(t)
+	requireTransformerAggregatedQueries(t, built, "built")
+	requireTransformerAggregatedQueries(t, mustRoundTripIndex(t, built), "decoded")
 }
 
 func TestTransformerLowerDriftQueriesBuilt(t *testing.T) {
@@ -223,9 +286,9 @@ var (
 // transformerLowerDriftInputs holds runes whose lowercase differs between
 // Unicode 15.0.0 and 17.0.0, plus context and invalid-UTF-8 cases.
 var transformerLowerDriftInputs = []string{
-	"\uA7DCabc", // lowers to U+019B only in 17.0.0
+	"\uA7DCabc", // lowers to U+019B at 17.0.0, not at 15.0.0
 	"\u019Babc",
-	"\uA7CB\u1C89xyz", // U+A7CB and U+1C89 gain lowercase mappings in 17.0.0
+	"\uA7CB\u1C89xyz", // U+A7CB and U+1C89 have no lowercase mapping at 15.0.0
 	"\u0130stanbul",
 	"\u212Aelvin",
 	"Alice.Example.COM",
@@ -233,7 +296,7 @@ var transformerLowerDriftInputs = []string{
 	"\u03A3\u0391\u03A3",
 }
 
-// transformerLowerInvalidInputs hold invalid UTF-8. They are not fed to the
+// transformerLowerInvalidInputs holds invalid UTF-8. They are not fed to the
 // drift index fixture, only to the outputs golden.
 var transformerLowerInvalidInputs = []string{
 	"a\xffB\xc3",

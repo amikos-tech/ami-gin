@@ -41,31 +41,44 @@ simd-isolation-check:
 	go vet ./...
 
 # Real artifact exchange between two Go toolchains with different Unicode tables (#102).
-# Each toolchain builds and encodes the fixture index. The two artifacts must be
-# byte-identical. Each toolchain then decodes and queries both artifacts (four cells).
+# Each toolchain builds and encodes the fixture indexes (drift.gin, aggregated.gin).
+# The artifacts of the two toolchains must be byte-identical. Each toolchain then
+# decodes and queries the artifacts of both toolchains (four cells). Each query cell
+# must write its done marker, so a run that matched no test fails.
 # Not part of test or lint: it downloads two toolchains.
+XTC_ARTIFACTS := drift.gin aggregated.gin
+
 .PHONY: cross-toolchain-check
 cross-toolchain-check:
 	@set -eu; \
 	dir="$$(mktemp -d)"; \
 	trap 'rm -r "$$dir"' EXIT; \
-	old_art="$$dir/$(XTC_OLD_GO).gin"; \
-	new_art="$$dir/$(XTC_NEW_GO).gin"; \
-	GOTOOLCHAIN=$(XTC_OLD_GO) AMI_GIN_XTC_WANT_UNICODE=$(XTC_OLD_UNICODE) AMI_GIN_XTC_OUT="$$old_art" \
-		go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
-	GOTOOLCHAIN=$(XTC_NEW_GO) AMI_GIN_XTC_WANT_UNICODE=$(XTC_NEW_UNICODE) AMI_GIN_XTC_OUT="$$new_art" \
-		go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
-	test -s "$$old_art"; \
-	test -s "$$new_art"; \
-	if ! cmp "$$old_art" "$$new_art"; then \
-		printf 'artifacts differ: %s and %s encode the same fixture to different bytes\n' '$(XTC_OLD_GO)' '$(XTC_NEW_GO)' >&2; \
-		exit 1; \
-	fi; \
-	printf 'artifacts byte-identical (%s bytes)\n' "$$(wc -c < "$$old_art" | tr -d ' ')"; \
+	for builder in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
+		out="$$dir/$${builder%%:*}"; \
+		mkdir "$$out"; \
+		GOTOOLCHAIN="$${builder%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${builder#*:}" AMI_GIN_XTC_OUT="$$out" \
+			go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
+	done; \
+	for artifact in $(XTC_ARTIFACTS); do \
+		old_art="$$dir/$(XTC_OLD_GO)/$$artifact"; \
+		new_art="$$dir/$(XTC_NEW_GO)/$$artifact"; \
+		test -s "$$old_art"; \
+		test -s "$$new_art"; \
+		if ! cmp "$$old_art" "$$new_art"; then \
+			printf 'artifacts differ: %s and %s encode %s to different bytes\n' '$(XTC_OLD_GO)' '$(XTC_NEW_GO)' "$$artifact" >&2; \
+			exit 1; \
+		fi; \
+		printf '%s byte-identical (%s bytes)\n' "$$artifact" "$$(wc -c < "$$old_art" | tr -d ' ')"; \
+	done; \
 	for reader in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
 		for builder in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
-			GOTOOLCHAIN="$${reader%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${reader#*:}" AMI_GIN_XTC_IN="$$dir/$$builder.gin" \
+			done_file="$$dir/done-$$builder-$${reader%%:*}"; \
+			GOTOOLCHAIN="$${reader%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${reader#*:}" AMI_GIN_XTC_IN="$$dir/$$builder" AMI_GIN_XTC_DONE="$$done_file" \
 				go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainQuery$$' .; \
+			if ! test -s "$$done_file"; then \
+				printf '%s -> %s: TestCrossToolchainQuery did not run\n' "$$builder" "$${reader%%:*}" >&2; \
+				exit 1; \
+			fi; \
 			printf '%s -> %s: ok\n' "$$builder" "$${reader%%:*}"; \
 		done; \
 	done

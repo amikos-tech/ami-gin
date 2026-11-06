@@ -284,7 +284,7 @@ jobs:
           output-format: text
 
   cross-toolchain:
-    name: cross-toolchain (go1.26.9 <-> go1.27.3)
+    name: cross-toolchain
     runs-on: ubuntu-latest
     env:
       # Overrides the workflow-level "local" for this job only. The check must
@@ -304,6 +304,9 @@ jobs:
         run: |
           GOTOOLCHAIN=go1.26.9 go version
           GOTOOLCHAIN=go1.27.3 go version
+
+      - name: Run Unicode-sensitive unit tests on go1.27.3
+        run: GOTOOLCHAIN=go1.27.3 go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard' .
 
       - name: Exchange index artifacts between toolchains
         run: make cross-toolchain-check
