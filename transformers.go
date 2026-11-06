@@ -174,8 +174,9 @@ func DurationToMs(v any) (any, bool) {
 // EmailDomain extracts and lowercases the domain from an email address.
 //
 // The domain is lowercased with frozen Unicode 15.0.0 tables, independent of
-// the Go toolchain; see ToLower for what callers must use to prepare query
-// values.
+// the Go toolchain. To prepare a query value for an EmailDomain companion, use
+// this function or Normalized, not strings.ToLower: on Go 1.27 strings.ToLower
+// differs for 55 runes and a query could miss a match. See ToLower.
 func EmailDomain(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {
@@ -191,8 +192,9 @@ func EmailDomain(v any) (any, bool) {
 // URLHost extracts and lowercases the host from a URL.
 //
 // The host is lowercased with frozen Unicode 15.0.0 tables, independent of
-// the Go toolchain; see ToLower for what callers must use to prepare query
-// values.
+// the Go toolchain. To prepare a query value for a URLHost companion, use this
+// function or Normalized, not strings.ToLower: on Go 1.27 strings.ToLower
+// differs for 55 runes and a query could miss a match. See ToLower.
 func URLHost(v any) (any, bool) {
 	s, ok := v.(string)
 	if !ok {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"math/rand"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -157,18 +158,24 @@ func TestFrozenToLowerDiffersAtUnicode17(t *testing.T) {
 			}
 		}
 	}
-	if len(diffs) != 55 {
-		t.Fatalf("frozenToLower differs from strings.ToLower at %d runes, want 55", len(diffs))
+	if !slices.Equal(diffs, unicode17LowerDrift) {
+		t.Fatalf("frozenToLower differs from strings.ToLower at %d runes %U, want the %d committed runes %U",
+			len(diffs), diffs, len(unicode17LowerDrift), unicode17LowerDrift)
 	}
-	has := map[rune]bool{}
-	for _, r := range diffs {
-		has[r] = true
-	}
-	for _, r := range []rune{0xA7CB, 0xA7DC} {
-		if !has[r] {
-			t.Errorf("drift set lacks %U", r)
-		}
-	}
+}
+
+// unicode17LowerDrift is the exact set of runes whose strings.ToLower result
+// differs between Unicode 15.0.0 (the frozen tables) and Unicode 17.0.0
+// (Go 1.27), measured with go1.27.3. Unicode does not promise that only
+// additions change, so the test compares this exact set, not a count.
+var unicode17LowerDrift = []rune{
+	0x1C89, 0xA7CB, 0xA7CC, 0xA7CE, 0xA7D2, 0xA7D4, 0xA7DA, 0xA7DC,
+	0x10D50, 0x10D51, 0x10D52, 0x10D53, 0x10D54, 0x10D55, 0x10D56, 0x10D57,
+	0x10D58, 0x10D59, 0x10D5A, 0x10D5B, 0x10D5C, 0x10D5D, 0x10D5E, 0x10D5F,
+	0x10D60, 0x10D61, 0x10D62, 0x10D63, 0x10D64, 0x10D65, 0x16EA0, 0x16EA1,
+	0x16EA2, 0x16EA3, 0x16EA4, 0x16EA5, 0x16EA6, 0x16EA7, 0x16EA8, 0x16EA9,
+	0x16EAA, 0x16EAB, 0x16EAC, 0x16EAD, 0x16EAE, 0x16EAF, 0x16EB0, 0x16EB1,
+	0x16EB2, 0x16EB3, 0x16EB4, 0x16EB5, 0x16EB6, 0x16EB7, 0x16EB8,
 }
 
 func TestFrozenToLowerBehavior(t *testing.T) {
@@ -226,8 +233,8 @@ var transformerLowerDriftInputs = []string{
 	"\u03A3\u0391\u03A3",
 }
 
-// transformerLowerInvalidInputs are only fed to ToLower: an email or a URL
-// holding invalid UTF-8 is not a useful fixture.
+// transformerLowerInvalidInputs hold invalid UTF-8. They are not fed to the
+// drift index fixture, only to the outputs golden.
 var transformerLowerInvalidInputs = []string{
 	"a\xffB\xc3",
 	"\xed\xa0\x80X",
@@ -249,6 +256,8 @@ func formatTransformerLowerOutputs() []byte {
 	}
 	for _, in := range transformerLowerInvalidInputs {
 		line("ToLower", ToLower, in)
+		line("EmailDomain", EmailDomain, "u@"+in)
+		line("URLHost", URLHost, "https://"+in+"/p")
 	}
 	line("EmailDomain", EmailDomain, "nodomain")
 	line("URLHost", URLHost, "/relative")

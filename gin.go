@@ -306,11 +306,25 @@ type Predicate struct {
 	Value    any
 }
 
+// RepresentationValue routes a predicate value to a derived companion index.
+// Create it with As.
 type RepresentationValue struct {
 	Alias string
 	Value any
 }
 
+// As routes a predicate to the companion with the given alias. The value is
+// passed to the index verbatim: As does not apply the companion's transformer.
+// The caller must prepare the value exactly as the builder did.
+//
+// For a ToLower, EmailDomain or URLHost companion, prepare the value with
+// gin.ToLower, gin.EmailDomain or gin.URLHost, not strings.ToLower. Those
+// lowercase with frozen Unicode 15.0.0 tables. strings.ToLower uses the Unicode
+// tables of the Go toolchain; on Go 1.27 (Unicode 17.0.0) it differs for 55
+// runes, and the query can then prune a row group that holds a match.
+//
+// To pass the raw source value instead, use Normalized: it applies the
+// companion's stored transformer at query time.
 func As(alias string, value any) RepresentationValue {
 	if err := validateRepresentationAlias(alias); err != nil {
 		panic(err.Error())

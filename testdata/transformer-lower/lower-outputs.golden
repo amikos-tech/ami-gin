@@ -23,6 +23,10 @@ ToLower "\u03a3\u0391\u03a3" -> "\u03c3\u03b1\u03c3"
 EmailDomain "u@\u03a3\u0391\u03a3" -> "\u03c3\u03b1\u03c3"
 URLHost "https://\u03a3\u0391\u03a3/p" -> "\u03c3\u03b1\u03c3"
 ToLower "a\xffB\xc3" -> "a\ufffdb\ufffd"
+EmailDomain "u@a\xffB\xc3" -> "a\ufffdb\ufffd"
+URLHost "https://a\xffB\xc3/p" -> "a\ufffdb\ufffd"
 ToLower "\xed\xa0\x80X" -> "\ufffd\ufffd\ufffdx"
+EmailDomain "u@\xed\xa0\x80X" -> "\ufffd\ufffd\ufffdx"
+URLHost "https://\xed\xa0\x80X/p" -> "\ufffd\ufffd\ufffdx"
 EmailDomain "nodomain" -> FAIL
 URLHost "/relative" -> FAIL
