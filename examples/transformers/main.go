@@ -139,7 +139,7 @@ func run() error {
 
 	fmt.Println("=== Benefits of Date Transformers ===")
 	fmt.Println("1. Raw date strings stay queryable on the source path")
-	fmt.Println("2. Derived companions are queried explicitly with gin.As(alias, value)")
+	fmt.Println("2. Derived companions are queried explicitly: gin.As(alias, value) for prepared values, gin.Normalized(alias, raw) for raw source values")
 	fmt.Println("3. Per-row-group min/max stats still power efficient range pruning")
 	fmt.Println("4. Hidden companion paths remain an internal implementation detail")
 

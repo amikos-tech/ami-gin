@@ -4,6 +4,10 @@ GOLANGCI_LINT_CMD := go run github.com/golangci/golangci-lint/v2/cmd/golangci-li
 BENCHTIME ?= 1s
 BENCH_TIMEOUT ?= 30m
 COUNT ?= 1
+XTC_OLD_GO ?= go1.26.9
+XTC_NEW_GO ?= go1.27.3
+XTC_OLD_UNICODE ?= 15.0.0
+XTC_NEW_UNICODE ?= 17.0.0
 
 .PHONY: build
 build:
@@ -35,6 +39,56 @@ simd-isolation-check:
 	fi
 	go build ./...
 	go vet ./...
+
+# Real artifact exchange between two Go toolchains with different Unicode tables (#102).
+# Each toolchain builds and encodes the fixture indexes (drift.gin, aggregated.gin).
+# The artifacts of the two toolchains must be byte-identical. Each toolchain then
+# decodes and queries the artifacts of both toolchains (four cells). Each query cell
+# must write its done marker, so a run that matched no test fails.
+# Not part of test or lint: it downloads two toolchains.
+XTC_ARTIFACTS := drift.gin aggregated.gin
+
+.PHONY: cross-toolchain-check
+cross-toolchain-check:
+	@set -eu; \
+	dir="$$(mktemp -d)"; \
+	trap 'rm -r "$$dir"' EXIT; \
+	for builder in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
+		out="$$dir/$${builder%%:*}"; \
+		mkdir "$$out"; \
+		GOTOOLCHAIN="$${builder%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${builder#*:}" AMI_GIN_XTC_OUT="$$out" \
+			go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
+	done; \
+	for artifact in $(XTC_ARTIFACTS); do \
+		old_art="$$dir/$(XTC_OLD_GO)/$$artifact"; \
+		new_art="$$dir/$(XTC_NEW_GO)/$$artifact"; \
+		test -s "$$old_art"; \
+		test -s "$$new_art"; \
+		if ! cmp "$$old_art" "$$new_art"; then \
+			printf 'artifacts differ: %s and %s encode %s to different bytes\n' '$(XTC_OLD_GO)' '$(XTC_NEW_GO)' "$$artifact" >&2; \
+			exit 1; \
+		fi; \
+		printf '%s byte-identical (%s bytes)\n' "$$artifact" "$$(wc -c < "$$old_art" | tr -d ' ')"; \
+	done; \
+	for reader in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
+		for builder in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
+			done_file="$$dir/done-$$builder-$${reader%%:*}"; \
+			GOTOOLCHAIN="$${reader%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${reader#*:}" AMI_GIN_XTC_IN="$$dir/$$builder" AMI_GIN_XTC_DONE="$$done_file" \
+				go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainQuery$$' .; \
+			if ! test -s "$$done_file"; then \
+				printf '%s -> %s: TestCrossToolchainQuery did not run\n' "$$builder" "$${reader%%:*}" >&2; \
+				exit 1; \
+			fi; \
+			printf '%s -> %s: ok\n' "$$builder" "$${reader%%:*}"; \
+		done; \
+	done
+
+# Unicode-sensitive unit tests on $(XTC_NEW_GO) (Unicode $(XTC_NEW_UNICODE)) (#102).
+# Not part of test or lint: it downloads a toolchain.
+.PHONY: cross-toolchain-unit
+cross-toolchain-unit:
+	GOTOOLCHAIN=$(XTC_NEW_GO) go version
+	GOTOOLCHAIN=$(XTC_NEW_GO) go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard' .
 
 .PHONY: gotestsum-bin
 gotestsum-bin:
@@ -194,6 +248,8 @@ help:
 	@echo "  bench-simd - Run paired stdlib/SIMD typed-sink smoke fixtures by default; optionally set GIN_PHASE20_ENABLE_SIMDJSON_EXTERNAL=1 and GIN_PHASE20_SIMDJSON_DIR=<path> for the local external tier"
 	@echo "  check-notice-version - Verify NOTICE pure-simdjson pins align with go.mod"
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
+	@echo "  cross-toolchain-check - Exchange encoded indexes between $(XTC_OLD_GO) and $(XTC_NEW_GO) and query them in all four build/query cells"
+	@echo "  cross-toolchain-unit - Run the Unicode-sensitive unit tests on $(XTC_NEW_GO)"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against default and simdjson-tagged call graphs"

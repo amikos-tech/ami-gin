@@ -496,7 +496,7 @@ func formatTrigramUnicodeVersion(version string, supported bool) string {
 	if supported {
 		return version
 	}
-	return version + " (unsupported; trigram pruning disabled)"
+	return version + " (unsupported; trigram and lowering-companion pruning disabled)"
 }
 
 func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {

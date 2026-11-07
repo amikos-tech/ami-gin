@@ -2,6 +2,7 @@ package gin
 
 import (
 	"sort"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -13,12 +14,17 @@ import (
 // searched with another would otherwise derive grams that Add never stored
 // and prune matching row groups.
 //
+// The same table also lowercases the values of ToLower, EmailDomain and
+// URLHost companions through frozenToLower (#102).
+//
 // Upgrade policy: a freshly built index writes no trigram_unicode_version
 // config key, and an absent key means this version. A future table upgrade
 // must ADD a second table set next to this one and keep this one, so that
 // existing indexes keep their meaning. Readers of ami-gin <= v1.5.x ignore
-// unknown config fields and cannot apply the unknown-version fallback, so
-// every reader must be upgraded before any writer emits a new token.
+// unknown config fields and cannot apply the unknown-version fallback.
+// Readers of v1.6.0 apply the fallback to trigrams only and still prune
+// lowering companions (#102). So every reader must be upgraded to this
+// release before any writer emits a new token.
 const trigramUnicodeVersion = "15.0.0"
 
 // trigramUnicodeTokenSupported reports whether this reader has the tables for
@@ -101,4 +107,36 @@ func trigramIsPunctOrSymbol(r rune) bool {
 		return trigramASCIIPunctOrSymbol[r>>6]&(1<<(r&63)) != 0
 	}
 	return unicode.Is(trigramPunctOrSymbolTable, r)
+}
+
+// frozenToLower is the frozen trigramUnicodeVersion counterpart of
+// strings.ToLower: it lowercases s with trigramLowerRune, so the result does
+// not depend on the Go toolchain's Unicode tables (#102). It equals
+// strings.ToLower under Go 1.21-1.26, including U+0130 and U+212A and the
+// U+FFFD that replaces each invalid UTF-8 byte. The upgrade policy of
+// trigramUnicodeVersion applies: a future table upgrade must add a second set
+// and keep this one.
+func frozenToLower(s string) string {
+	hasUpper := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= utf8.RuneSelf {
+			return strings.Map(trigramLowerRune, s)
+		}
+		if 'A' <= c && c <= 'Z' {
+			hasUpper = true
+		}
+	}
+	if !hasUpper {
+		return s
+	}
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return string(b)
 }

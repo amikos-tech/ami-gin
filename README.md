@@ -158,7 +158,7 @@ GIN Index v0.2.0 expands the original predicate surface with adaptive high-cardi
 
 - OR/AND composites are not part of the v0.2.0 query API yet.
 - Index merge across multiple index files is intentionally deferred beyond v0.2.0.
-- Query-time transformers are not supported in v0.2.0; transformations must happen at index-build time.
+- Query values are not transformed unless you ask. Wrap a raw value in `gin.Normalized(alias, raw)` to apply the companion's transformer at query time. `Contains` and `Regex` patterns are never transformed.
 
 Serialized index compatibility remains strict: `Decode()` rejects older payload versions. The current wire format is `v11`, written by `v1.2.0`, `v1.3.0`, `v1.4.0`, `v1.5.0` and `v1.6.0`; indexes written by earlier releases (`v0.1.0` wrote `v3`, `v0.2.0` wrote `v9`, `v1.1.0` and `v1.1.1` wrote `v10`) must be rebuilt.
 
@@ -192,7 +192,7 @@ idx.Evaluate([]gin.Predicate{
 
 ### Derived Representation Queries
 
-Derived representations add companion indexes without dropping the raw source value. Raw-path queries stay raw by default; query a companion explicitly with `gin.As(alias, value)`. Hidden internal target paths are not part of the public query contract.
+Derived representations add companion indexes without dropping the raw source value. Raw-path queries stay raw by default; query a companion explicitly with `gin.As(alias, value)` for a value that is already prepared, or `gin.Normalized(alias, raw)` for a raw source value. Hidden internal target paths are not part of the public query contract.
 
 ```go
 config, _ := gin.NewConfig(
@@ -221,22 +221,38 @@ july2024 := float64(time.Date(2024, 7, 1, 0, 0, 0, 0, time.UTC).UnixMilli())
 dateResult := idx.Evaluate([]gin.Predicate{
     gin.GTE("$.created_at", gin.As("epoch_ms", july2024)),
 })
+// Normalized applies the companion's transformer to a raw source value.
 lowerResult := idx.Evaluate([]gin.Predicate{
-    gin.EQ("$.email", gin.As("lower", "alice@example.com")),
+    gin.EQ("$.email", gin.Normalized("lower", "Alice@Example.COM")),
 })
 domainResult := idx.Evaluate([]gin.Predicate{
-    gin.EQ("$.email", gin.As("domain", "example.com")),
+    gin.EQ("$.email", gin.Normalized("domain", "Alice@Example.COM")),
 })
 errorResult := idx.Evaluate([]gin.Predicate{
     gin.EQ("$.message", gin.As("error_code", "E1001")),
 })
 ```
 
+**`As` and `Normalized`:**
+- `gin.As(alias, value)` sends `value` to the companion unchanged. Use it for values you already prepared, such as epoch millis, IP range bounds, semver floats or error codes.
+- `gin.Normalized(alias, raw)` applies the transformer that the index holds for the companion to `raw`, then queries the companion. It works with `EQ`, `NE`, `GT`, `GTE`, `LT`, `LTE`, `IN` and `NIN`. In an `IN` or `NIN` list, wrap every element with the same alias.
+- Do not wrap a value that is already transformed. `Normalized("domain", "example.com")` has no `@`, so the transformer fails. A failed transform returns all row groups, so you never lose a match, but you also get no pruning.
+- `Normalized` returns all row groups when the transformer panics, for an unknown alias, for a list that mixes `As` and `Normalized`, mixes aliases or mixes markers with plain values, and for `Contains`, `Regex`, `IsNull` and `IsNotNull`.
+
 **Built-in additive helpers:**
 - Date/time: `WithISODateTransformer(path, alias)`, `WithDateTransformer(path, alias)`, `WithCustomDateTransformer(path, alias, layout)`
 - String normalization: `WithToLowerTransformer(path, alias)`, `WithEmailDomainTransformer(path, alias)`, `WithURLHostTransformer(path, alias)`
 - Extracted subfields: `WithRegexExtractTransformer(path, alias, pattern, group)`, `WithRegexExtractIntTransformer(path, alias, pattern, group)`
 - Numeric companions: `WithIPv4Transformer(path, alias)`, `WithSemVerTransformer(path, alias)`, `WithDurationTransformer(path, alias)`, `WithNumericBucketTransformer(path, alias, size)`, `WithBoolNormalizeTransformer(path, alias)`
+
+**Case-insensitive companions and Go toolchains:**
+
+`ToLower`, `EmailDomain` and `URLHost` lowercase with Unicode 15.0.0 tables that ship inside the library. The result no longer depends on the Go version that built the index. Go 1.21 to 1.26 use Unicode 15.0.0 and Go 1.27 uses Unicode 17.0.0. The two versions lowercase 55 runes in different ways (for example U+A7DC).
+
+- Warning: prepare query values for these companions with `gin.Normalized`, or with `gin.ToLower`, `gin.EmailDomain` and `gin.URLHost`. A caller on Go 1.27 that prepares a value with `strings.ToLower` can miss a match for those 55 runes.
+- Rebuild advisory: rebuild an index if ami-gin v1.6.0 or older built it with a binary compiled by Go 1.27 or newer, and the data can hold Unicode 16 or 17 characters. Rebuild from the source JSON or Parquet (`gin-index build` or `BuildFromParquet`). There is no in-place migration. This release has no tool that detects affected indexes. Migration tooling is tracked in #112. Indexes built with Go 1.21 to 1.26 are not affected.
+- Reader-upgrade advisory: when an index records an unknown `trigram_unicode_version`, this release returns all row groups for `Contains`, `Regex` and for every `ToLower`, `EmailDomain` and `URLHost` companion. Readers of v1.6.0 and older still prune those companions. Upgrade all readers to this release before any writer records a new version.
+- `make cross-toolchain-check` builds the same index with go1.26.9 and go1.27.3, requires identical bytes, and queries each artifact with both toolchains.
 
 **Custom companions:**
 ```go
@@ -286,7 +302,7 @@ config, _ := gin.NewConfig(
 )
 
 result := idx.Evaluate([]gin.Predicate{
-    gin.EQ("$.email", gin.As("lower", "alice@example.com")),
+    gin.EQ("$.email", gin.Normalized("lower", "Alice@Example.COM")),
 })
 ```
 
