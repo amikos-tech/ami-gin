@@ -56,6 +56,9 @@ func isLoweringSpec(spec TransformerSpec) bool {
 //
 // It also fills idx.degradedCompanions from both the Config and the
 // representations, so a degraded companion that holds no values is listed.
+// The two sources never list the same (source path, alias): a representation
+// the Config lists takes the Config's degradation, and duplicate aliases are
+// rejected earlier.
 //
 // A GINIndex built by hand, without Finalize or Decode, has no companion
 // lookup. Normalized then returns every row group, and the unknown-token guard
@@ -63,23 +66,18 @@ func isLoweringSpec(spec TransformerSpec) bool {
 func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	idx.companionTransformers = nil
 	idx.degradedCompanions = nil
-	degradedRecords := make(map[[2]string]DegradedCompanion)
-	if cfg != nil {
-		// A degraded config companion that holds no values has no
-		// representation entry; it is still listed.
-		for _, registrations := range cfg.representationTransformers {
-			for _, registered := range registrations {
-				if registered.degraded != nil {
-					recordDegradedCompanion(degradedRecords, registered.SourcePath, registered.Alias, registered.degraded)
-				}
-			}
+	var degradedCompanions []DegradedCompanion
+	// A degraded config companion that holds no values has no representation
+	// entry; it is still listed.
+	for _, representation := range collectRepresentationsFromConfig(cfg) {
+		if registered, ok := configRepresentationFor(cfg, representation); ok && registered.degraded != nil {
+			degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, registered.degraded))
 		}
 	}
-	defer func() { idx.degradedCompanions = sortedDegradedCompanions(degradedRecords) }()
-	if len(idx.representations) == 0 {
-		return nil
+	var companions map[uint16]companionTransformer
+	if len(idx.representations) > 0 {
+		companions = make(map[uint16]companionTransformer, len(idx.representations))
 	}
-	companions := make(map[uint16]companionTransformer, len(idx.representations))
 	for _, representation := range idx.representations {
 		pathID, ok := idx.pathLookup[representation.TargetPath]
 		if !ok {
@@ -96,7 +94,7 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 			}
 			entry.fn, entry.degraded = fn, degraded
 			if degraded != nil {
-				recordDegradedCompanion(degradedRecords, representation.SourcePath, representation.Alias, degraded)
+				degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, degraded))
 			}
 		} else if representation.Transformer.ID != TransformerUnknown {
 			if fn, err := ReconstructTransformer(representation.Transformer.ID, representation.Transformer.Params); err == nil {
@@ -105,38 +103,26 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 		}
 		companions[pathID] = entry
 	}
+	sort.Slice(degradedCompanions, func(i, j int) bool {
+		if degradedCompanions[i].SourcePath != degradedCompanions[j].SourcePath {
+			return degradedCompanions[i].SourcePath < degradedCompanions[j].SourcePath
+		}
+		return degradedCompanions[i].Alias < degradedCompanions[j].Alias
+	})
 	idx.companionTransformers = companions
+	idx.degradedCompanions = degradedCompanions
 	return nil
 }
 
-// recordDegradedCompanion adds one degraded companion, keyed by source path
-// and alias. The first record of a key wins: the config entry, which also
-// drives the companion function, is recorded first.
-func recordDegradedCompanion(into map[[2]string]DegradedCompanion, sourcePath, alias string, degradation *companionDegradation) {
-	key := [2]string{sourcePath, alias}
-	if _, ok := into[key]; ok {
-		return
+// newDegradedCompanion returns the inspection record of one degraded
+// companion.
+func newDegradedCompanion(representation RepresentationSpec, degradation *companionDegradation) DegradedCompanion {
+	return DegradedCompanion{
+		SourcePath: representation.SourcePath,
+		Alias:      representation.Alias,
+		Reason:     degradation.reason,
+		Detail:     degradation.detail,
 	}
-	into[key] = DegradedCompanion{SourcePath: sourcePath, Alias: alias, Reason: degradation.reason, Detail: degradation.detail}
-}
-
-// sortedDegradedCompanions returns the records sorted by source path, then
-// alias, or nil when there are none.
-func sortedDegradedCompanions(records map[[2]string]DegradedCompanion) []DegradedCompanion {
-	if len(records) == 0 {
-		return nil
-	}
-	out := make([]DegradedCompanion, 0, len(records))
-	for _, record := range records {
-		out = append(out, record)
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].SourcePath != out[j].SourcePath {
-			return out[i].SourcePath < out[j].SourcePath
-		}
-		return out[i].Alias < out[j].Alias
-	})
-	return out
 }
 
 // degradedRegexCompanion reports whether pathID is a regex companion that
