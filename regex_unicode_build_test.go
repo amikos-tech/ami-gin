@@ -61,23 +61,26 @@ func regexUnicodeConfig(t *testing.T) GINConfig {
 	return cfg
 }
 
+// regexUnicodeGroup1Params marshals RegexParams for pattern with group 1.
+func regexUnicodeGroup1Params(t *testing.T, pattern string) []byte {
+	t.Helper()
+	data, err := json.Marshal(RegexParams{Pattern: pattern, Group: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 // regexUnicodeRegisteredConfig is the same config through
 // WithRegisteredTransformer.
 func regexUnicodeRegisteredConfig(t *testing.T) GINConfig {
 	t.Helper()
 	soft := WithTransformerFailureMode(IngestFailureSoft)
-	params := func(pattern string) []byte {
-		data, err := json.Marshal(RegexParams{Pattern: pattern, Group: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return data
-	}
 	cfg, err := NewConfig(
-		WithRegisteredTransformer("$.name", "upper", TransformerRegexExtract, params(regexUnicodeUpperPattern), soft),
-		WithRegisteredTransformer("$.name", "ci", TransformerRegexExtract, params(regexUnicodeFoldPattern), soft),
-		WithRegisteredTransformer("$.ref", "n2", TransformerRegexExtractInt, params(regexUnicodeRefPattern), soft),
-		WithRegisteredTransformer("$.code", "num", TransformerRegexExtractInt, params(regexUnicodeCodePattern), soft),
+		WithRegisteredTransformer("$.name", "upper", TransformerRegexExtract, regexUnicodeGroup1Params(t, regexUnicodeUpperPattern), soft),
+		WithRegisteredTransformer("$.name", "ci", TransformerRegexExtract, regexUnicodeGroup1Params(t, regexUnicodeFoldPattern), soft),
+		WithRegisteredTransformer("$.ref", "n2", TransformerRegexExtractInt, regexUnicodeGroup1Params(t, regexUnicodeRefPattern), soft),
+		WithRegisteredTransformer("$.code", "num", TransformerRegexExtractInt, regexUnicodeGroup1Params(t, regexUnicodeCodePattern), soft),
 	)
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
@@ -214,10 +217,7 @@ func TestRegexUnicodeFreezeAtRegistration(t *testing.T) {
 // freezes the caller's params both times and stores the same spec.
 func TestRegexUnicodeOptionReusable(t *testing.T) {
 	for _, id := range []TransformerID{TransformerRegexExtract, TransformerRegexExtractInt} {
-		params, err := json.Marshal(RegexParams{Pattern: regexUnicodeUpperPattern, Group: 1})
-		if err != nil {
-			t.Fatal(err)
-		}
+		params := regexUnicodeGroup1Params(t, regexUnicodeUpperPattern)
 		convenience := WithRegexExtractTransformer("$.name", "upper", regexUnicodeUpperPattern, 1)
 		if id == TransformerRegexExtractInt {
 			convenience = WithRegexExtractIntTransformer("$.name", "upper", regexUnicodeUpperPattern, 1)
@@ -474,10 +474,7 @@ func TestRegexUnicodeWriteRepresentationSizeLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	idx := buildRegexUnicodeIndex(t, small)
-	params, err := json.Marshal(RegexParams{Pattern: regexUnicodeLargeSafePattern, Group: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
+	params := regexUnicodeGroup1Params(t, regexUnicodeLargeSafePattern)
 	var reps []RepresentationSpec
 	for i := 0; i < 11; i++ {
 		alias := "r" + string(rune('a'+i))

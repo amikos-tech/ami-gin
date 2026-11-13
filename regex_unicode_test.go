@@ -710,6 +710,18 @@ func TestRegexUnicodeRegexParamsUnchanged(t *testing.T) {
 	}
 }
 
+// stubRegexCompile replaces the regex compile hooks with compile and
+// deadline. The returned restore puts the previous hooks back; the test
+// cleanup also runs it.
+func stubRegexCompile(t *testing.T, deadline time.Duration, compile func(string) (*regexp.Regexp, error)) (restore func()) {
+	t.Helper()
+	previous, previousDeadline := regexCompileFunc, regexCompileDeadline
+	restore = func() { regexCompileFunc, regexCompileDeadline = previous, previousDeadline }
+	t.Cleanup(restore)
+	regexCompileFunc, regexCompileDeadline = compile, deadline
+	return restore
+}
+
 func TestRegexUnicodeTypedCompileErrors(t *testing.T) {
 	_, err := compileRegexWithTimeout(`[invalid`, time.Second)
 	var compileErr *regexCompileError
@@ -718,12 +730,10 @@ func TestRegexUnicodeTypedCompileErrors(t *testing.T) {
 	}
 
 	release := make(chan struct{})
-	previous := regexCompileFunc
-	regexCompileFunc = func(pattern string) (*regexp.Regexp, error) {
+	stubRegexCompile(t, 10*time.Millisecond, func(pattern string) (*regexp.Regexp, error) {
 		<-release
 		return regexp.Compile(pattern)
-	}
-	t.Cleanup(func() { regexCompileFunc = previous })
+	})
 	defer close(release)
 
 	_, err = compileRegexWithTimeout(`abc`, 10*time.Millisecond)
@@ -732,9 +742,6 @@ func TestRegexUnicodeTypedCompileErrors(t *testing.T) {
 		t.Fatalf("blocked compile: err = %v, want *regexCompileError with timeout=true", err)
 	}
 
-	previousDeadline := regexCompileDeadline
-	regexCompileDeadline = 10 * time.Millisecond
-	t.Cleanup(func() { regexCompileDeadline = previousDeadline })
 	_, err = ReconstructTransformer(TransformerRegexExtract, json.RawMessage(`{"pattern":"abc","group":0}`))
 	compileErr = nil
 	if !errors.As(err, &compileErr) || !compileErr.timeout {

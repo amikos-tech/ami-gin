@@ -21,15 +21,12 @@ type regexUnicodeRawSpec struct {
 	params      string
 }
 
-// regexUnicodeRawFunc compiles the stored pattern when it compiles here.
+// regexUnicodeRawFunc reconstructs the stored transformer when it can.
 // Otherwise it returns a stand-in that still produces values, so the
 // companion is materialized and Decode sees it in both sections.
 func regexUnicodeRawFunc(spec regexUnicodeRawSpec) FieldTransformer {
-	var p RegexParams
-	if err := json.Unmarshal([]byte(spec.params), &p); err == nil && p.Group >= 0 {
-		if re, err := regexp.Compile(p.Pattern); err == nil {
-			return regexExtractFunc(re, p.Group, spec.id == TransformerRegexExtractInt)
-		}
+	if fn, err := ReconstructTransformer(spec.id, json.RawMessage(spec.params)); err == nil {
+		return fn
 	}
 	return func(v any) (any, bool) {
 		s, ok := v.(string)
@@ -207,14 +204,11 @@ func TestRegexUnicodeClassifyTimeout(t *testing.T) {
 
 	release := make(chan struct{})
 	finished := make(chan struct{}, 1)
-	previous, previousDeadline := regexCompileFunc, regexCompileDeadline
-	t.Cleanup(func() { regexCompileFunc, regexCompileDeadline = previous, previousDeadline })
-	regexCompileDeadline = 20 * time.Millisecond
-	regexCompileFunc = func(pattern string) (*regexp.Regexp, error) {
+	restore := stubRegexCompile(t, 20*time.Millisecond, func(pattern string) (*regexp.Regexp, error) {
 		<-release
 		defer func() { finished <- struct{}{} }()
 		return regexp.Compile(pattern)
-	}
+	})
 
 	idx := mustDecodeRegexUnicode(t, data)
 	requireRegexUnicodeDegraded(t, idx, map[string]DegradeReason{"$.name#upper": DegradeReasonRegexCompileTimeout})
@@ -232,7 +226,7 @@ func TestRegexUnicodeClassifyTimeout(t *testing.T) {
 	requireRows(t, idx, EQ("$.name", As("upper", "DEF")), []int{0, 1, 2, 3})
 
 	// The reason is not stored: a later Decode with a normal compile prunes.
-	regexCompileFunc, regexCompileDeadline = previous, previousDeadline
+	restore()
 	again := mustDecodeRegexUnicode(t, data)
 	if got := again.DegradedCompanions(); len(got) != 0 {
 		t.Fatalf("second Decode: DegradedCompanions = %+v, want none", got)
@@ -526,16 +520,13 @@ func TestRegexUnicodeNewBuilderRejectsPlaceholder(t *testing.T) {
 		safeUpper := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, `{"pattern":"([A-Z]+)","group":1}`}
 		data := regexUnicodeRawIndex(t, safeUpper)
 		release := make(chan struct{})
-		previous, previousDeadline := regexCompileFunc, regexCompileDeadline
-		t.Cleanup(func() { regexCompileFunc, regexCompileDeadline = previous, previousDeadline })
-		regexCompileDeadline = 20 * time.Millisecond
-		regexCompileFunc = func(pattern string) (*regexp.Regexp, error) {
+		restore := stubRegexCompile(t, 20*time.Millisecond, func(pattern string) (*regexp.Regexp, error) {
 			<-release
 			return regexp.Compile(pattern)
-		}
+		})
 		idx := mustDecodeRegexUnicode(t, data)
 		close(release)
-		regexCompileFunc, regexCompileDeadline = previous, previousDeadline
+		restore()
 		requireRejected(t, *idx.Config, "upper", DegradeReasonRegexCompileTimeout)
 	})
 
