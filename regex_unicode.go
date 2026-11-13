@@ -62,8 +62,9 @@ func isRegexTransformerSpec(spec TransformerSpec) bool {
 // case-insensitively, like encoding/json matches struct fields. A reserved
 // key present more than once (also with another case, or with the same
 // spelling) is an error: a map decode would keep only one of them, and which
-// one would depend on map order. The flags are still set on that error.
-// JSON null holds no members.
+// one would depend on map order. The flags are still set on that error, so
+// registration rejects a repeated reserved key as reserved. JSON null holds
+// no members.
 func regexReservedParamMembers(raw json.RawMessage) (source, frozen json.RawMessage, hasSource, hasFrozen bool, err error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	tok, err := dec.Token()
@@ -100,13 +101,6 @@ func regexReservedParamMembers(raw json.RawMessage) (source, frozen json.RawMess
 		}
 	}
 	return source, frozen, hasSource, hasFrozen, nil
-}
-
-// regexParamsHoldReservedKeys reports whether raw is a JSON object that holds
-// source_pattern or frozen_unicode, with any value (also "" or null).
-func regexParamsHoldReservedKeys(raw json.RawMessage) bool {
-	_, _, hasSource, hasFrozen, _ := regexReservedParamMembers(raw)
-	return hasSource || hasFrozen
 }
 
 // decodeRegexWireParams decodes stored regex params. marked reports a frozen
@@ -603,7 +597,10 @@ func freezeRegexNode(re *syntax.Regexp) *syntax.Regexp {
 // a new buffer with the frozen pattern plus the original pattern and
 // unicode.Version.
 func freezeRegexTransformerParams(params []byte) ([]byte, error) {
-	if regexParamsHoldReservedKeys(params) {
+	// Any value of a reserved key (also "" or null) is rejected, also when
+	// the key repeats. Other scan errors are reported by
+	// decodeRegexWireParams below.
+	if _, _, hasSource, hasFrozen, _ := regexReservedParamMembers(params); hasSource || hasFrozen {
 		return nil, errors.Errorf("regex params must not set %s or %s: the builder owns these fields", regexParamSourcePattern, regexParamFrozenUnicode)
 	}
 	wire, _, err := decodeRegexWireParams(params)
