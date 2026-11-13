@@ -169,6 +169,33 @@ func (idx *GINIndex) checkRepresentationSpecs(cfg *GINConfig) error {
 				representation.Alias, representation.SourcePath,
 				representation.Transformer.Params, configSpec.Params)
 		}
+		if isRegexTransformerSpec(configSpec) {
+			if err := regexWireParamsAgree(configSpec.Params, representation.Transformer.Params); err != nil {
+				return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config regex params: %v",
+					representation.Alias, representation.SourcePath, err)
+			}
+		}
+	}
+	return nil
+}
+
+// regexWireParamsAgree compares two regex params payloads as decoded wire
+// params (pattern, group, source_pattern, frozen_unicode). JSON value
+// equality is not enough: {"pattern":"a","PATTERN":"b"} and
+// {"PATTERN":"b","pattern":"a"} are equal JSON objects, but encoding/json
+// keeps the last case-insensitive match, so they decode to different
+// executable patterns. Stored bytes are never rewritten.
+func regexWireParamsAgree(configParams, representationParams json.RawMessage) error {
+	configWire, _, err := decodeRegexWireParams(configParams)
+	if err != nil {
+		return errors.Wrap(err, "config params")
+	}
+	representationWire, _, err := decodeRegexWireParams(representationParams)
+	if err != nil {
+		return errors.Wrap(err, "representation params")
+	}
+	if configWire != representationWire {
+		return errors.Errorf("decoded params differ (%+v/%+v)", representationWire, configWire)
 	}
 	return nil
 }

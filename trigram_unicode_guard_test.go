@@ -54,7 +54,7 @@ var trigramGuardAllowlist = []trigramGuardAllow{
 	{"regex.go", "foldsUnderToLower", "unicode.SimpleFold", "foldsUnderToLower: toolchain SimpleFold orbit checked against the frozen lowercase (#99)"},
 	{"regex_unicode.go", "regexFoldOrbit", "unicode.SimpleFold", "freezes a regex with the builder's fold orbit on purpose (#115); never feeds a gram"},
 	{"regex_unicode.go", "freezeRegexTransformerParams", "unicode.Version", "records the builder's Unicode version as frozen_unicode provenance (#115); never feeds a gram"},
-	{"regex_unicode.go", "regexParamKeysPresent", "strings.EqualFold", "matches ASCII JSON keys of regex params like encoding/json; never feeds a gram"},
+	{"regex_unicode.go", "regexReservedParamMembers", "strings.EqualFold", "matches ASCII JSON keys of regex params like encoding/json; never feeds a gram"},
 }
 
 type trigramGuardFile struct {

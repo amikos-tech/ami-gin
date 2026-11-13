@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"regexp/syntax"
 	"sort"
@@ -56,48 +57,75 @@ func isRegexTransformerSpec(spec TransformerSpec) bool {
 	return false
 }
 
-// regexParamKeysPresent reports which reserved keys raw holds. Keys match
-// case-insensitively, like encoding/json matches struct fields.
-func regexParamKeysPresent(fields map[string]json.RawMessage) (source, frozen json.RawMessage, hasSource, hasFrozen bool) {
-	for key, value := range fields {
+// regexReservedParamMembers scans the top-level members of raw in their
+// order and returns the reserved keys it holds. Keys match
+// case-insensitively, like encoding/json matches struct fields. A reserved
+// key present more than once (also with another case, or with the same
+// spelling) is an error: a map decode would keep only one of them, and which
+// one would depend on map order. The flags are still set on that error.
+// JSON null holds no members.
+func regexReservedParamMembers(raw json.RawMessage) (source, frozen json.RawMessage, hasSource, hasFrozen bool, err error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, nil, false, false, errors.Wrap(err, "scan regex params")
+	}
+	if tok == nil {
+		return nil, nil, false, false, nil
+	}
+	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return nil, nil, false, false, errors.New("regex params must be a JSON object")
+	}
+	for dec.More() {
+		keyTok, err := dec.Token()
+		if err != nil {
+			return nil, nil, hasSource, hasFrozen, errors.Wrap(err, "scan regex params")
+		}
+		key, _ := keyTok.(string)
+		var value json.RawMessage
+		if err := dec.Decode(&value); err != nil {
+			return nil, nil, hasSource, hasFrozen, errors.Wrap(err, "scan regex params")
+		}
 		switch {
 		case strings.EqualFold(key, regexParamSourcePattern):
+			if hasSource {
+				return nil, nil, true, hasFrozen, errors.Errorf("regex params hold %s more than once", regexParamSourcePattern)
+			}
 			source, hasSource = value, true
 		case strings.EqualFold(key, regexParamFrozenUnicode):
+			if hasFrozen {
+				return nil, nil, hasSource, true, errors.Errorf("regex params hold %s more than once", regexParamFrozenUnicode)
+			}
 			frozen, hasFrozen = value, true
 		}
 	}
-	return source, frozen, hasSource, hasFrozen
+	return source, frozen, hasSource, hasFrozen, nil
 }
 
 // regexParamsHoldReservedKeys reports whether raw is a JSON object that holds
 // source_pattern or frozen_unicode, with any value (also "" or null).
 func regexParamsHoldReservedKeys(raw json.RawMessage) bool {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return false
-	}
-	_, _, hasSource, hasFrozen := regexParamKeysPresent(fields)
+	_, _, hasSource, hasFrozen, _ := regexReservedParamMembers(raw)
 	return hasSource || hasFrozen
 }
 
 // decodeRegexWireParams decodes stored regex params. marked reports a frozen
 // spec (source_pattern or frozen_unicode present). A marked spec must hold
-// both keys, each as a non-empty JSON string. Any frozen_unicode value is
-// accepted: an unfamiliar Unicode version never disables a frozen pattern.
+// both keys, each once and as a non-empty JSON string. Any frozen_unicode
+// value is accepted: an unfamiliar Unicode version never disables a frozen
+// pattern.
 func decodeRegexWireParams(raw json.RawMessage) (regexWireParams, bool, error) {
 	var params regexWireParams
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return regexWireParams{}, false, errors.Wrap(err, "unmarshal regex params")
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &fields); err != nil {
-		return regexWireParams{}, false, errors.Wrap(err, "unmarshal regex params")
-	}
 	if params.Group < 0 {
 		return regexWireParams{}, false, errors.New("regex group must be non-negative")
 	}
-	source, frozen, hasSource, hasFrozen := regexParamKeysPresent(fields)
+	source, frozen, hasSource, hasFrozen, err := regexReservedParamMembers(raw)
+	if err != nil {
+		return regexWireParams{}, false, err
+	}
 	if !hasSource && !hasFrozen {
 		return params, false, nil
 	}

@@ -251,6 +251,11 @@ var regexUnicodeBadParams = []string{
 	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"","frozen_unicode":"17.0.0"}`,
 	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"x","frozen_unicode":null}`,
 	`{"pattern":"([A-Z]+)","group":1,"source_pattern":5,"frozen_unicode":"17.0.0"}`,
+	// A reserved key present twice, in another case or the same spelling.
+	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"x","SOURCE_PATTERN":"y","frozen_unicode":"17.0.0"}`,
+	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"x","frozen_unicode":"17.0.0","Frozen_Unicode":"15.0.0"}`,
+	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"x","source_pattern":"y","frozen_unicode":"17.0.0"}`,
+	`{"pattern":"([A-Z]+)","group":1,"source_pattern":"x","frozen_unicode":"17.0.0","frozen_unicode":"17.0.0"}`,
 }
 
 func TestRegexUnicodeDecodeRejectsInvalidParams(t *testing.T) {
@@ -540,4 +545,57 @@ func TestRegexUnicodeNewBuilderRejectsPlaceholder(t *testing.T) {
 			t.Fatalf("NewBuilder with a legacy compiled companion: %v", err)
 		}
 	})
+}
+
+// TestRegexUnicodeDuplicateReservedKeyDeterministic: a reserved key present
+// twice fails Decode every time, never only for some map orders.
+func TestRegexUnicodeDuplicateReservedKeyDeterministic(t *testing.T) {
+	spec := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract,
+		`{"pattern":"([A-Z]+)","group":1,"source_pattern":"(\\p{Lu}+)","SOURCE_PATTERN":"","frozen_unicode":"17.0.0"}`}
+	data := regexUnicodeRawIndex(t, spec, regexUnicodeSafeNum)
+	for i := 0; i < 50; i++ {
+		if _, err := Decode(data); !errors.Is(err, ErrInvalidFormat) || !strings.Contains(err.Error(), "more than once") {
+			t.Fatalf("run %d: Decode err = %v, want duplicate key error", i, err)
+		}
+	}
+}
+
+// TestRegexUnicodeSectionsDecodeToSameParams: the config and representation
+// sections hold the same JSON object with the members in another order. The
+// objects compare equal as JSON values, but encoding/json keeps the last
+// case-insensitive match, so they decode to different params. Decode fails.
+func TestRegexUnicodeSectionsDecodeToSameParams(t *testing.T) {
+	for _, tc := range []struct{ name, config, representation string }{
+		{"pattern", `{"pattern":"(?i)ƛ","PATTERN":"x","group":0}`, `{"PATTERN":"x","pattern":"(?i)ƛ","group":0}`},
+		{"pattern reversed", `{"PATTERN":"x","pattern":"(?i)ƛ","group":0}`, `{"pattern":"(?i)ƛ","PATTERN":"x","group":0}`},
+		{"group", `{"pattern":"([A-Z]+)","group":0,"GROUP":1}`, `{"pattern":"([A-Z]+)","GROUP":1,"group":0}`},
+		{"group reversed", `{"pattern":"([A-Z]+)","GROUP":1,"group":0}`, `{"pattern":"([A-Z]+)","group":0,"GROUP":1}`},
+	} {
+		if !transformerParamsEqual(json.RawMessage(tc.config), json.RawMessage(tc.representation)) {
+			t.Fatalf("%s: setup: the payloads must be equal JSON values", tc.name)
+		}
+		spec := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, tc.config}
+		idx := buildRegexUnicodeIndex(t, regexUnicodeRawConfig(t, spec, regexUnicodeSafeNum))
+		found := false
+		for i := range idx.representations {
+			if idx.representations[i].Alias == "upper" {
+				idx.representations[i].Transformer.Params = json.RawMessage(tc.representation)
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%s: setup: no upper representation", tc.name)
+		}
+		_, err := Decode(mustEncodeUncompressed(t, idx))
+		if !errors.Is(err, ErrInvalidFormat) || !strings.Contains(err.Error(), "decoded params differ") {
+			t.Fatalf("%s: Decode err = %v, want decoded params mismatch", tc.name, err)
+		}
+
+		// The same bytes in both sections still decode, and keep their bytes.
+		same := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t, spec, regexUnicodeSafeNum))
+		configParams, repParams := regexUnicodeSectionParams(t, same, "upper")
+		if string(configParams) != tc.config || string(repParams) != tc.config {
+			t.Fatalf("%s: stored params changed: %s / %s", tc.name, configParams, repParams)
+		}
+	}
 }
