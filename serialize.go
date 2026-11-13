@@ -730,6 +730,12 @@ func (e *invalidFormatCauseError) Unwrap() []error {
 	return []error{ErrInvalidFormat, e.cause}
 }
 
+// Cause returns ErrInvalidFormat, so github.com/pkg/errors.Cause gives the
+// same sentinel as for any other ErrInvalidFormat error.
+func (e *invalidFormatCauseError) Cause() error {
+	return ErrInvalidFormat
+}
+
 // classifySerializeError maps a serialization error to the frozen error.type vocabulary.
 func classifySerializeError(err error) string {
 	if err == nil {

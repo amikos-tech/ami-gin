@@ -632,5 +632,8 @@ func TestRegexUnicodeDecodeErrorKeepsCause(t *testing.T) {
 		if got := classifySerializeError(err); got != "invalid_format" {
 			t.Fatalf("%s: classifySerializeError = %q, want invalid_format", tc.name, got)
 		}
+		if got := errors.Cause(err); got != ErrInvalidFormat {
+			t.Fatalf("%s: errors.Cause = %v (%T), want ErrInvalidFormat", tc.name, got, got)
+		}
 	}
 }
