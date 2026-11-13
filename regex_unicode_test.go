@@ -488,6 +488,15 @@ func TestRegexUnicodeVerifier(t *testing.T) {
 		`(?m)^a$`,
 		`\\Q`,
 		`(\\Q[a])`,
+		`[]]`,
+		`[^]]`,
+		`[]-a]`,
+		`[[:alpha:]]`,
+		`[:alpha:]`,
+		`[A-[(?i)]`,
+		`[\x{5d}(?i)]`,
+		`[\135(?i)]`,
+		`[a-](?s)`,
 	}
 	for _, pattern := range pass {
 		if err := verifyFrozenRegexText(pattern); err != nil {
@@ -509,6 +518,12 @@ func TestRegexUnicodeVerifier(t *testing.T) {
 		`\Q[\E(?i:ƛ)`,
 		`a\Qb\E`,
 		`[\Q]`,
+		`[]](?i)(ƛ+)`,
+		`[^]](?i)(ƛ+)`,
+		`[]-a](?i)x`,
+		`[^]-a](?i)x`,
+		`[A-[:](?i)(ƛ+):]`,
+		`[A-[:](?i:ƛ):]`,
 	}
 	for _, pattern := range fail {
 		if err := verifyFrozenRegexText(pattern); err == nil {

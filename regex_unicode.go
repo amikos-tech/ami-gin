@@ -311,68 +311,141 @@ func regexTreeSensitive(re *syntax.Regexp) bool {
 }
 
 // verifyFrozenRegexText checks that an executable (frozen) pattern requests
-// no Unicode-table operation. It is lexical and runs before any parse: a
-// backslash consumes the next rune, bracket classes are tracked so their
-// content is literal, and it fails on a \p or \P escape anywhere or on an i in
-// any flag group outside a class. It also fails on a \Q escape: String never
-// writes one, and the quoted text would hide a later flag group from this
-// scan. An escaped backslash followed by Q (\\Q) is a literal and passes.
-// Explicit non-ASCII literals and ranges pass. It never parses, never
-// regenerates from source_pattern and never re-freezes.
+// no Unicode-table operation. It is lexical and runs before any parse. It
+// fails on a \p or \P escape anywhere, on an i in any flag group outside a
+// class, and on a \Q escape: String never writes one, and the quoted text
+// would hide a later flag group from this scan. An escaped backslash
+// followed by Q (\\Q) is a literal and passes. Explicit non-ASCII literals and
+// ranges pass. It never parses, never regenerates from source_pattern and
+// never re-freezes.
+//
+// The scan follows the item structure of the regexp/syntax class parser, so
+// it ends a class at the same ']' as Go: a ']' at the first class position
+// (after an optional '^') is a literal, "[:name:]" is read only at the start
+// of a class item, and a range high endpoint is exactly one rune or one
+// escape. When the scan and the parser disagree on a pattern, the pattern
+// does not compile, and the companion degrades for that reason.
 func verifyFrozenRegexText(pattern string) error {
-	inClass := false
-	classStart := 0
 	for i := 0; i < len(pattern); {
-		r, size := utf8.DecodeRuneInString(pattern[i:])
 		switch {
-		case r == '\\':
-			i += size
-			if i >= len(pattern) {
-				return nil
+		case pattern[i] == '\\':
+			next, err := scanFrozenRegexEscape(pattern, i)
+			if err != nil {
+				return err
 			}
-			next, nextSize := utf8.DecodeRuneInString(pattern[i:])
-			if next == 'p' || next == 'P' {
-				return errors.Errorf("frozen regex requests a Unicode class at offset %d", i-1)
+			i = next
+		case pattern[i] == '[':
+			next, err := scanFrozenRegexClass(pattern, i)
+			if err != nil {
+				return err
 			}
-			if next == 'Q' {
-				return errors.Errorf("frozen regex holds a \\Q quoted literal at offset %d", i-1)
-			}
-			i += nextSize
-		case inClass:
-			switch {
-			case r == ']' && i > classStart:
-				inClass = false
-				i += size
-			case r == '[' && strings.HasPrefix(pattern[i:], "[:"):
-				if end := strings.Index(pattern[i+2:], ":]"); end >= 0 {
-					i += 2 + end + 2
-				} else {
-					i += size
-				}
-			default:
-				i += size
-			}
-		case r == '[':
-			inClass = true
-			i += size
-			if strings.HasPrefix(pattern[i:], "^") {
-				i++
-			}
-			// A ']' right after '[' or '[^' is a literal.
-			classStart = i + 1
-			if !strings.HasPrefix(pattern[i:], "]") {
-				classStart = i
-			}
-		case r == '(' && strings.HasPrefix(pattern[i:], "(?"):
+			i = next
+		case strings.HasPrefix(pattern[i:], "(?"):
 			if flags, ok := scanFlagGroup(pattern[i+2:]); ok && strings.ContainsRune(flags, 'i') {
 				return errors.Errorf("frozen regex sets the case-insensitive flag at offset %d", i)
 			}
-			i += size
+			i++
 		default:
+			_, size := utf8.DecodeRuneInString(pattern[i:])
 			i += size
 		}
 	}
 	return nil
+}
+
+// scanFrozenRegexClass reads the bracket class that starts at pattern[start]
+// and returns the offset after its closing ']' (or the pattern length when
+// the class is not closed). It follows parseClass in regexp/syntax: each
+// item is a "[:name:]" class, a Perl class escape, or one rune or escape,
+// optionally followed by '-' and one more rune or escape as a range high
+// endpoint. A '-' right before the closing ']' is a literal.
+func scanFrozenRegexClass(pattern string, start int) (int, error) {
+	i := start + 1
+	if i < len(pattern) && pattern[i] == '^' {
+		i++
+	}
+	first := true
+	for i < len(pattern) {
+		if pattern[i] == ']' && !first {
+			return i + 1, nil
+		}
+		first = false
+		if len(pattern)-i > 2 && pattern[i] == '[' && pattern[i+1] == ':' {
+			if end := strings.Index(pattern[i+2:], ":]"); end >= 0 {
+				i += 2 + end + 2
+				continue
+			}
+		}
+		if pattern[i] == '\\' && i+1 < len(pattern) && strings.IndexByte("dDsSwW", pattern[i+1]) >= 0 {
+			i += 2
+			continue
+		}
+		next, err := scanFrozenRegexClassChar(pattern, i)
+		if err != nil {
+			return 0, err
+		}
+		i = next
+		if len(pattern)-i >= 2 && pattern[i] == '-' && pattern[i+1] != ']' {
+			if i, err = scanFrozenRegexClassChar(pattern, i+1); err != nil {
+				return 0, err
+			}
+		}
+	}
+	return len(pattern), nil
+}
+
+// scanFrozenRegexClassChar reads one class rune or escape at pattern[i] and
+// returns the offset after it.
+func scanFrozenRegexClassChar(pattern string, i int) (int, error) {
+	if pattern[i] == '\\' {
+		return scanFrozenRegexEscape(pattern, i)
+	}
+	_, size := utf8.DecodeRuneInString(pattern[i:])
+	return i + size, nil
+}
+
+// scanFrozenRegexEscape reads the escape that starts at the backslash at
+// pattern[i] and returns the offset after it. It fails on \p, \P and \Q. Like
+// parseEscape in regexp/syntax, an octal escape takes up to three digits, \x
+// takes two hex digits or a braced hex run, and any other escape takes one
+// rune. A malformed escape takes one rune; such a pattern does not compile.
+func scanFrozenRegexEscape(pattern string, i int) (int, error) {
+	if i+1 >= len(pattern) {
+		return len(pattern), nil
+	}
+	c, size := utf8.DecodeRuneInString(pattern[i+1:])
+	switch c {
+	case 'p', 'P':
+		return 0, errors.Errorf("frozen regex requests a Unicode class at offset %d", i)
+	case 'Q':
+		return 0, errors.Errorf("frozen regex holds a \\Q quoted literal at offset %d", i)
+	}
+	end := i + 1 + size
+	isOctal := func(j int) bool { return j < len(pattern) && pattern[j] >= '0' && pattern[j] <= '7' }
+	isHex := func(j int) bool {
+		if j >= len(pattern) {
+			return false
+		}
+		b := pattern[j]
+		return b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F'
+	}
+	switch {
+	case c == '0' || c >= '1' && c <= '7' && isOctal(end):
+		for n := 0; n < 2 && isOctal(end); n++ {
+			end++
+		}
+	case c == 'x' && end < len(pattern) && pattern[end] == '{':
+		j := end + 1
+		for isHex(j) {
+			j++
+		}
+		if j > end+1 && j < len(pattern) && pattern[j] == '}' {
+			end = j + 1
+		}
+	case c == 'x' && isHex(end) && isHex(end+1):
+		end += 2
+	}
+	return end, nil
 }
 
 // freezeRegexPattern rewrites pattern so its meaning no longer depends on the
