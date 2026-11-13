@@ -702,6 +702,18 @@ func classifyRegexCompanion(spec TransformerSpec) (FieldTransformer, *companionD
 	return regexExtractFunc(re, params.Group, spec.ID == TransformerRegexExtractInt), degraded, nil
 }
 
+// reconstructStoredTransformer rebuilds the function of a stored spec. A
+// regex spec (by ID or name) goes through classifyRegexCompanion, which can
+// also return a degradation; any other spec goes through
+// ReconstructTransformer. Each caller keeps its own error policy.
+func reconstructStoredTransformer(spec TransformerSpec) (FieldTransformer, *companionDegradation, error) {
+	if isRegexTransformerSpec(spec) {
+		return classifyRegexCompanion(spec)
+	}
+	fn, err := ReconstructTransformer(spec.ID, spec.Params)
+	return fn, nil, err
+}
+
 // checkExecutableTransformers fails when a registration has no executable
 // transformer: a decoded regex companion whose stored pattern did not compile
 // (#115). The error names the source path, alias and reason. NewBuilder runs

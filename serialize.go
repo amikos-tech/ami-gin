@@ -2106,16 +2106,10 @@ func readConfig(r io.Reader) (*GINConfig, string, error) {
 			spec.Alias = alias
 			spec.TargetPath = targetPath
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
-			var fn FieldTransformer
-			var degraded *companionDegradation
-			if isRegexTransformerSpec(spec) {
-				// One classification for regex specs (#115): invalid params fail
-				// Decode; an unsafe or uncompilable pattern degrades only this
-				// companion and keeps its stored spec unchanged.
-				fn, degraded, err = classifyRegexCompanion(spec)
-			} else {
-				fn, err = ReconstructTransformer(spec.ID, spec.Params)
-			}
+			// Invalid params fail Decode. An unsafe or uncompilable regex
+			// pattern degrades only this companion and keeps its stored spec
+			// unchanged (#115).
+			fn, degraded, err := reconstructStoredTransformer(spec)
 			if err != nil {
 				return nil, "", &invalidFormatCauseError{cause: errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)}
 			}

@@ -49,10 +49,10 @@ func isLoweringSpec(spec TransformerSpec) bool {
 //
 // A representation the Config lists takes the Config's function and
 // degradation, so an index finalized from a decoded config inherits it. A
-// regex representation the Config does not list goes through
-// classifyRegexCompanion; invalid params return an error, which fails
-// Decode. Any other representation the Config does not list falls back to
-// the registry; failure to reconstruct leaves fn nil and never fails Decode.
+// representation the Config does not list goes through
+// reconstructStoredTransformer. For a regex spec, invalid params return an
+// error, which fails Decode. For any other spec, failure to reconstruct
+// leaves fn nil and never fails Decode.
 //
 // It also fills idx.degradedCompanions from both the Config and the
 // representations, so a degraded companion that holds no values is listed.
@@ -87,19 +87,18 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 		if registered, ok := configRepresentationFor(cfg, representation); ok {
 			entry.fn = registered.FieldTransformer
 			entry.degraded = registered.degraded
-		} else if isRegexTransformerSpec(representation.Transformer) {
-			fn, degraded, err := classifyRegexCompanion(representation.Transformer)
-			if err != nil {
+		} else {
+			fn, degraded, err := reconstructStoredTransformer(representation.Transformer)
+			switch {
+			case err == nil:
+				entry.fn, entry.degraded = fn, degraded
+				if degraded != nil {
+					degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, degraded))
+				}
+			case isRegexTransformerSpec(representation.Transformer):
 				return errors.Wrapf(err, "representation %s on %s", representation.Alias, representation.SourcePath)
 			}
-			entry.fn, entry.degraded = fn, degraded
-			if degraded != nil {
-				degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, degraded))
-			}
-		} else if representation.Transformer.ID != TransformerUnknown {
-			if fn, err := ReconstructTransformer(representation.Transformer.ID, representation.Transformer.Params); err == nil {
-				entry.fn = fn
-			}
+			// Any other reconstruction failure leaves fn nil.
 		}
 		companions[pathID] = entry
 	}
