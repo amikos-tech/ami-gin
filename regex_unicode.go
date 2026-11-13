@@ -286,8 +286,11 @@ func regexTreeSensitive(re *syntax.Regexp) bool {
 // no Unicode-table operation. It is lexical and runs before any parse: a
 // backslash consumes the next rune, bracket classes are tracked so their
 // content is literal, and it fails on a \p or \P escape anywhere or on an i in
-// any flag group outside a class. Explicit non-ASCII literals and ranges pass.
-// It never parses, never regenerates from source_pattern and never re-freezes.
+// any flag group outside a class. It also fails on a \Q escape: String never
+// writes one, and the quoted text would hide a later flag group from this
+// scan. An escaped backslash followed by Q (\\Q) is a literal and passes.
+// Explicit non-ASCII literals and ranges pass. It never parses, never
+// regenerates from source_pattern and never re-freezes.
 func verifyFrozenRegexText(pattern string) error {
 	inClass := false
 	classStart := 0
@@ -302,6 +305,9 @@ func verifyFrozenRegexText(pattern string) error {
 			next, nextSize := utf8.DecodeRuneInString(pattern[i:])
 			if next == 'p' || next == 'P' {
 				return errors.Errorf("frozen regex requests a Unicode class at offset %d", i-1)
+			}
+			if next == 'Q' {
+				return errors.Errorf("frozen regex holds a \\Q quoted literal at offset %d", i-1)
 			}
 			i += nextSize
 		case inClass:

@@ -174,6 +174,33 @@ func TestRegexUnicodeClassifyMarkedSpecs(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeClassifyMarkedQuotedLiteral: a \Q...\E block can hide a
+// later flag group from the verifier scan, so a marked spec that holds a \Q
+// escape is unverified. An escaped backslash before Q stays a literal.
+func TestRegexUnicodeClassifyMarkedQuotedLiteral(t *testing.T) {
+	marked := func(alias, pattern string) regexUnicodeRawSpec {
+		params, err := json.Marshal(regexWireParams{Pattern: pattern, Group: 0, SourcePattern: pattern, FrozenUnicode: "17.0.0"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return regexUnicodeRawSpec{"$.name", alias, TransformerRegexExtract, string(params)}
+	}
+	idx := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t,
+		marked("q1", `\Q[\E(?i)x`),
+		marked("q2", `\Q[\E(?i)(ƛ+)`),
+		marked("q3", `\Q[\E(?i:ƛ)`),
+		marked("lit", `(\\Q|[A-Z]+)`),
+		regexUnicodeSafeNum,
+	))
+	requireRegexUnicodeDegraded(t, idx, map[string]DegradeReason{
+		"$.name#q1": DegradeReasonUnverifiedFrozenRegex,
+		"$.name#q2": DegradeReasonUnverifiedFrozenRegex,
+		"$.name#q3": DegradeReasonUnverifiedFrozenRegex,
+	})
+	requireRows(t, idx, EQ("$.name", As("q2", "ƛ")), []int{0, 1, 2, 3})
+	requireRows(t, idx, EQ("$.code", As("num", float64(8))), []int{1})
+}
+
 func TestRegexUnicodeClassifyTimeout(t *testing.T) {
 	safeUpper := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, `{"pattern":"([A-Z]+)","group":1}`}
 	data := regexUnicodeRawIndex(t, safeUpper)
