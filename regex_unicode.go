@@ -1,0 +1,455 @@
+package gin
+
+import (
+	"encoding/json"
+	"regexp/syntax"
+	"sort"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/pkg/errors"
+)
+
+// Regex companions and Unicode tables (#115).
+//
+// Go's regexp resolves \p{..}, \P{..} and case folding with the Unicode tables
+// of the toolchain that compiles the pattern. A builder and a reader on
+// different toolchains can then extract different companion values from the
+// same raw input. The builder therefore stores a "frozen" pattern: the parsed
+// tree with every Unicode class expanded to explicit ranges and every
+// case-folded literal expanded to an explicit class of its fold orbit, using
+// the builder's tables. A reader that compiles the frozen text matches exactly
+// like the builder.
+
+// Reserved regex params keys. The builder owns them: registration rejects
+// params that already hold either key.
+const (
+	regexParamSourcePattern = "source_pattern"
+	regexParamFrozenUnicode = "frozen_unicode"
+)
+
+// regexWireParams is the stored params layout of RegexExtract and
+// RegexExtractInt. Pattern is the executable pattern (frozen text for a
+// frozen spec). SourcePattern and FrozenUnicode are set only for a frozen
+// spec; they are omitted for patterns the builder did not freeze, so those
+// params keep their exact bytes. The exported RegexParams type is unchanged.
+type regexWireParams struct {
+	Pattern       string `json:"pattern"`
+	Group         int    `json:"group"`
+	SourcePattern string `json:"source_pattern,omitempty"`
+	FrozenUnicode string `json:"frozen_unicode,omitempty"`
+}
+
+// isRegexTransformerSpec reports whether spec describes RegexExtract or
+// RegexExtractInt. It matches on the transformer ID OR the name, never on the
+// alias, like isLoweringSpec.
+func isRegexTransformerSpec(spec TransformerSpec) bool {
+	switch spec.ID {
+	case TransformerRegexExtract, TransformerRegexExtractInt:
+		return true
+	}
+	switch spec.Name {
+	case transformerNames[TransformerRegexExtract], transformerNames[TransformerRegexExtractInt]:
+		return true
+	}
+	return false
+}
+
+// regexParamKeysPresent reports which reserved keys raw holds. Keys match
+// case-insensitively, like encoding/json matches struct fields.
+func regexParamKeysPresent(fields map[string]json.RawMessage) (source, frozen json.RawMessage, hasSource, hasFrozen bool) {
+	for key, value := range fields {
+		switch {
+		case strings.EqualFold(key, regexParamSourcePattern):
+			source, hasSource = value, true
+		case strings.EqualFold(key, regexParamFrozenUnicode):
+			frozen, hasFrozen = value, true
+		}
+	}
+	return source, frozen, hasSource, hasFrozen
+}
+
+// regexParamsHoldReservedKeys reports whether raw is a JSON object that holds
+// source_pattern or frozen_unicode, with any value (also "" or null).
+func regexParamsHoldReservedKeys(raw json.RawMessage) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return false
+	}
+	_, _, hasSource, hasFrozen := regexParamKeysPresent(fields)
+	return hasSource || hasFrozen
+}
+
+// decodeRegexWireParams decodes stored regex params. marked reports a frozen
+// spec (source_pattern or frozen_unicode present). A marked spec must hold
+// both keys, each as a non-empty JSON string. Any frozen_unicode value is
+// accepted: an unfamiliar Unicode version never disables a frozen pattern.
+func decodeRegexWireParams(raw json.RawMessage) (regexWireParams, bool, error) {
+	var params regexWireParams
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return regexWireParams{}, false, errors.Wrap(err, "unmarshal regex params")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return regexWireParams{}, false, errors.Wrap(err, "unmarshal regex params")
+	}
+	if params.Group < 0 {
+		return regexWireParams{}, false, errors.New("regex group must be non-negative")
+	}
+	source, frozen, hasSource, hasFrozen := regexParamKeysPresent(fields)
+	if !hasSource && !hasFrozen {
+		return params, false, nil
+	}
+	if !hasSource || !hasFrozen {
+		return regexWireParams{}, false, errors.Errorf("incomplete frozen metadata: %s and %s must both be present", regexParamSourcePattern, regexParamFrozenUnicode)
+	}
+	for _, field := range []struct {
+		name  string
+		value json.RawMessage
+	}{{regexParamSourcePattern, source}, {regexParamFrozenUnicode, frozen}} {
+		var s string
+		if len(field.value) == 0 || field.value[0] != '"' || json.Unmarshal(field.value, &s) != nil || s == "" {
+			return regexWireParams{}, false, errors.Errorf("incomplete frozen metadata: %s must be a non-empty string", field.name)
+		}
+	}
+	return params, true, nil
+}
+
+// regexTableSensitive reports whether pattern may depend on the Unicode
+// tables of the toolchain that compiles it. It is conservative: false
+// positives only cost space (a pattern is frozen without need) or pruning (a
+// legacy companion degrades). It is the source rule OR the tree rule.
+func regexTableSensitive(pattern string) bool {
+	if regexSourceSensitive(pattern) {
+		return true
+	}
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return true
+	}
+	return regexTreeSensitive(re)
+}
+
+// regexSourceSensitive is the lexical source rule. It flags any \p or \P
+// escape, and any pattern that has an i flag in some flag group (scope is not
+// tracked, so (?-i) counts too) plus a code point >= 0x80, written literally
+// or as an escape (\xHH, \x{..}, octal). The tree rule cannot see these cases
+// alone, because syntax.Parse resolves classes with the toolchain tables
+// before the tree exists.
+func regexSourceSensitive(pattern string) bool {
+	hasIFlag := false
+	hasNonASCII := false
+	for i := 0; i < len(pattern); {
+		r, size := utf8.DecodeRuneInString(pattern[i:])
+		if r >= utf8.RuneSelf {
+			hasNonASCII = true
+			i += size
+			continue
+		}
+		switch r {
+		case '\\':
+			i++
+			if i >= len(pattern) {
+				continue
+			}
+			next, nextSize := utf8.DecodeRuneInString(pattern[i:])
+			i += nextSize
+			switch {
+			case next == 'p' || next == 'P':
+				return true
+			case next >= utf8.RuneSelf:
+				hasNonASCII = true
+			case next == 'x':
+				value, consumed := scanHexEscape(pattern[i:])
+				i += consumed
+				if value >= 0x80 {
+					hasNonASCII = true
+				}
+			case next >= '0' && next <= '7':
+				value := int(next - '0')
+				for n := 0; n < 2 && i < len(pattern) && pattern[i] >= '0' && pattern[i] <= '7'; n++ {
+					value = value*8 + int(pattern[i]-'0')
+					i++
+				}
+				if value >= 0x80 {
+					hasNonASCII = true
+				}
+			}
+		case '(':
+			i++
+			if strings.HasPrefix(pattern[i:], "?") {
+				if flags, ok := scanFlagGroup(pattern[i+1:]); ok && strings.ContainsRune(flags, 'i') {
+					hasIFlag = true
+				}
+			}
+		default:
+			i++
+		}
+	}
+	return hasIFlag && hasNonASCII
+}
+
+// scanHexEscape reads the digits after \x: either {hex...} or two hex digits.
+// It returns the value (saturated) and the bytes consumed.
+func scanHexEscape(s string) (int, int) {
+	value := 0
+	add := func(c byte) bool {
+		var d int
+		switch {
+		case c >= '0' && c <= '9':
+			d = int(c - '0')
+		case c >= 'a' && c <= 'f':
+			d = int(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			d = int(c-'A') + 10
+		default:
+			return false
+		}
+		if value <= unicode.MaxRune {
+			value = value*16 + d
+		}
+		return true
+	}
+	if strings.HasPrefix(s, "{") {
+		i := 1
+		for i < len(s) && add(s[i]) {
+			i++
+		}
+		if i < len(s) && s[i] == '}' {
+			i++
+		}
+		return value, i
+	}
+	i := 0
+	for i < len(s) && i < 2 && add(s[i]) {
+		i++
+	}
+	return value, i
+}
+
+// scanFlagGroup reads the text after "(?". It reports the flag characters and
+// true when the text is a flag group: only characters from "imsU-", ended by
+// ')' or ':'. "(?P<", "(?<" and a bare "(?:" are not flag groups.
+func scanFlagGroup(s string) (string, bool) {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case 'i', 'm', 's', 'U', '-':
+			continue
+		case ')', ':':
+			return s[:i], i > 0
+		default:
+			return "", false
+		}
+	}
+	return "", false
+}
+
+// regexTreeSensitive is the tree rule (spike 008): a FoldCase literal with a
+// non-ASCII rune (its fold orbit can grow), or a char class with a non-ASCII
+// range other than a negated-ASCII tail [lo..MaxRune] with lo <= 0x80, and
+// other than the two stable ASCII fold partners U+017F and U+212A.
+func regexTreeSensitive(re *syntax.Regexp) bool {
+	switch re.Op {
+	case syntax.OpLiteral:
+		if re.Flags&syntax.FoldCase != 0 {
+			for _, r := range re.Rune {
+				if r >= utf8.RuneSelf {
+					return true
+				}
+			}
+		}
+	case syntax.OpCharClass:
+		for i := 0; i+1 < len(re.Rune); i += 2 {
+			lo, hi := re.Rune[i], re.Rune[i+1]
+			if hi < utf8.RuneSelf {
+				continue
+			}
+			if hi == unicode.MaxRune && lo <= utf8.RuneSelf {
+				continue
+			}
+			if lo == hi && (lo == 0x17F || lo == 0x212A) {
+				continue
+			}
+			return true
+		}
+	}
+	for _, sub := range re.Sub {
+		if regexTreeSensitive(sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// verifyFrozenRegexText checks that an executable (frozen) pattern requests
+// no Unicode-table operation. It is lexical and runs before any parse: a
+// backslash consumes the next rune, bracket classes are tracked so their
+// content is literal, and it fails on a \p or \P escape anywhere or on an i in
+// any flag group outside a class. Explicit non-ASCII literals and ranges pass.
+// It never parses, never regenerates from source_pattern and never re-freezes.
+func verifyFrozenRegexText(pattern string) error {
+	inClass := false
+	classStart := 0
+	for i := 0; i < len(pattern); {
+		r, size := utf8.DecodeRuneInString(pattern[i:])
+		switch {
+		case r == '\\':
+			i += size
+			if i >= len(pattern) {
+				return nil
+			}
+			next, nextSize := utf8.DecodeRuneInString(pattern[i:])
+			if next == 'p' || next == 'P' {
+				return errors.Errorf("frozen regex requests a Unicode class at offset %d", i-1)
+			}
+			i += nextSize
+		case inClass:
+			switch {
+			case r == ']' && i > classStart:
+				inClass = false
+				i += size
+			case r == '[' && strings.HasPrefix(pattern[i:], "[:"):
+				if end := strings.Index(pattern[i+2:], ":]"); end >= 0 {
+					i += 2 + end + 2
+				} else {
+					i += size
+				}
+			default:
+				i += size
+			}
+		case r == '[':
+			inClass = true
+			i += size
+			if strings.HasPrefix(pattern[i:], "^") {
+				i++
+			}
+			// A ']' right after '[' or '[^' is a literal.
+			classStart = i + 1
+			if !strings.HasPrefix(pattern[i:], "]") {
+				classStart = i
+			}
+		case r == '(' && strings.HasPrefix(pattern[i:], "(?"):
+			if flags, ok := scanFlagGroup(pattern[i+2:]); ok && strings.ContainsRune(flags, 'i') {
+				return errors.Errorf("frozen regex sets the case-insensitive flag at offset %d", i)
+			}
+			i += size
+		default:
+			i += size
+		}
+	}
+	return nil
+}
+
+// freezeRegexPattern rewrites pattern so its meaning no longer depends on the
+// reader's Unicode tables. syntax.Parse already expands \p classes to explicit
+// ranges with this toolchain's tables; case-folded literals are expanded here
+// into explicit classes of this toolchain's fold orbit. The result is
+// rendered with (*syntax.Regexp).String.
+//
+// budget bounds the JSON-escaped length of the result. A lower bound of the
+// rendered length is checked before rendering, so memory stays within a
+// constant factor of budget.
+//
+// The text is not idempotent after one pass (the stdlib re-factors String
+// output), but repeated freezing reaches a fixed point. Freeze once at
+// registration and store the text; never re-freeze to compare.
+func freezeRegexPattern(pattern string, budget int) (string, error) {
+	re, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return "", errors.Wrap(err, "parse regex pattern")
+	}
+	re = freezeRegexNode(re)
+	if lower := frozenRegexLowerBound(re, budget); lower > budget {
+		return "", errors.Errorf("frozen regex needs at least %d bytes, more than the limit of %d bytes", lower, budget)
+	}
+	frozen := re.String()
+	encoded, err := json.Marshal(frozen)
+	if err != nil {
+		return "", errors.Wrap(err, "marshal frozen regex")
+	}
+	if len(encoded) > budget {
+		return "", errors.Errorf("frozen regex is %d bytes, more than the limit of %d bytes", len(encoded), budget)
+	}
+	return frozen, nil
+}
+
+// frozenRegexLowerBound returns a lower bound of the rendered length of re.
+// It stops counting once the bound passes limit.
+func frozenRegexLowerBound(re *syntax.Regexp, limit int) int {
+	total := 0
+	switch re.Op {
+	case syntax.OpCharClass:
+		total += 2
+		for i := 0; i+1 < len(re.Rune); i += 2 {
+			if re.Rune[i] == re.Rune[i+1] {
+				total++
+			} else {
+				total += 3
+			}
+		}
+	case syntax.OpLiteral:
+		total += len(re.Rune)
+	}
+	for _, sub := range re.Sub {
+		if total > limit {
+			return total
+		}
+		total += frozenRegexLowerBound(sub, limit-total)
+	}
+	return total
+}
+
+// regexFoldOrbit returns the sorted SimpleFold orbit of r with this
+// toolchain's tables.
+func regexFoldOrbit(r rune) []rune {
+	orbit := []rune{r}
+	for f := unicode.SimpleFold(r); f != r; f = unicode.SimpleFold(f) {
+		orbit = append(orbit, f)
+	}
+	sort.Slice(orbit, func(i, j int) bool { return orbit[i] < orbit[j] })
+	return orbit
+}
+
+// freezeRegexNode replaces every FoldCase literal with plain literals and
+// explicit fold-orbit classes. Adjacent orbit runes merge into ranges, the
+// canonical form, so the text reaches a fixed point.
+func freezeRegexNode(re *syntax.Regexp) *syntax.Regexp {
+	for i, sub := range re.Sub {
+		re.Sub[i] = freezeRegexNode(sub)
+	}
+	if re.Op != syntax.OpLiteral || re.Flags&syntax.FoldCase == 0 {
+		return re
+	}
+	base := re.Flags &^ syntax.FoldCase
+	var parts []*syntax.Regexp
+	var run []rune
+	flush := func() {
+		if len(run) > 0 {
+			parts = append(parts, &syntax.Regexp{Op: syntax.OpLiteral, Flags: base, Rune: run})
+			run = nil
+		}
+	}
+	for _, r := range re.Rune {
+		orbit := regexFoldOrbit(r)
+		if len(orbit) == 1 {
+			run = append(run, r)
+			continue
+		}
+		flush()
+		class := make([]rune, 0, 2*len(orbit))
+		for _, o := range orbit {
+			if n := len(class); n > 0 && class[n-1]+1 == o {
+				class[n-1] = o
+				continue
+			}
+			class = append(class, o, o)
+		}
+		parts = append(parts, &syntax.Regexp{Op: syntax.OpCharClass, Flags: base, Rune: class})
+	}
+	flush()
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return &syntax.Regexp{Op: syntax.OpConcat, Flags: base, Sub: parts}
+}

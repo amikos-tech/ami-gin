@@ -52,6 +52,8 @@ type trigramGuardAllow struct{ file, decl, sel, reason string }
 var trigramGuardAllowlist = []trigramGuardAllow{
 	{"transformers.go", "BoolNormalize", "strings.ToLower", "matches ASCII keywords and returns a bool, never a gram"},
 	{"regex.go", "foldsUnderToLower", "unicode.SimpleFold", "foldsUnderToLower: toolchain SimpleFold orbit checked against the frozen lowercase (#99)"},
+	{"regex_unicode.go", "regexFoldOrbit", "unicode.SimpleFold", "freezes a regex with the builder's fold orbit on purpose (#115); never feeds a gram"},
+	{"regex_unicode.go", "regexParamKeysPresent", "strings.EqualFold", "matches ASCII JSON keys of regex params like encoding/json; never feeds a gram"},
 }
 
 type trigramGuardFile struct {
