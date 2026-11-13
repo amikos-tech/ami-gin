@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -287,6 +288,16 @@ func TestRegexUnicodeFixtureBaseline(t *testing.T) {
 // 100 KB, so a few companions pass the 1 MiB section limits.
 var regexUnicodeLargeSafePattern = "(" + strings.Repeat("a", 100_000) + ")"
 
+// regexUnicodeLongCompileDeadline raises the regex compile deadline for this
+// test. Compiling regexUnicodeLargeSafePattern can take longer than the 100 ms
+// production limit under -race; these tests check sizes, not timeouts.
+func regexUnicodeLongCompileDeadline(t *testing.T) {
+	t.Helper()
+	previous := regexCompileDeadline
+	regexCompileDeadline = time.Minute
+	t.Cleanup(func() { regexCompileDeadline = previous })
+}
+
 func regexUnicodeLargeOptions(prefix string, n int) []ConfigOption {
 	opts := make([]ConfigOption, n)
 	for i := range opts {
@@ -296,6 +307,7 @@ func regexUnicodeLargeOptions(prefix string, n int) []ConfigOption {
 }
 
 func TestRegexUnicodeEarlySizeLimits(t *testing.T) {
+	regexUnicodeLongCompileDeadline(t)
 	if _, err := NewConfig(WithRegexExtractTransformer("$.name", "huge", strings.Repeat(`\pL`, 300), 0)); err == nil ||
 		!strings.Contains(err.Error(), "freeze regex pattern") {
 		t.Fatalf("NewConfig with 300 x \\pL: err = %v, want freezer size error", err)
@@ -319,6 +331,7 @@ func TestRegexUnicodeEarlySizeLimits(t *testing.T) {
 // TestRegexUnicodeWriteConfigSizeLimit: the config section alone exceeds the
 // limit; the representation section stays under its own.
 func TestRegexUnicodeWriteConfigSizeLimit(t *testing.T) {
+	regexUnicodeLongCompileDeadline(t)
 	small, err := NewConfig(WithRegexExtractIntTransformer("$.code", "num", regexUnicodeCodePattern, 1, WithTransformerFailureMode(IngestFailureSoft)))
 	if err != nil {
 		t.Fatal(err)
@@ -355,6 +368,7 @@ func TestRegexUnicodeWriteConfigSizeLimit(t *testing.T) {
 // TestRegexUnicodeWriteRepresentationSizeLimit: the representation section
 // alone exceeds the limit; the config section stays under its own.
 func TestRegexUnicodeWriteRepresentationSizeLimit(t *testing.T) {
+	regexUnicodeLongCompileDeadline(t)
 	small, err := NewConfig(WithRegexExtractIntTransformer("$.code", "num", regexUnicodeCodePattern, 1, WithTransformerFailureMode(IngestFailureSoft)))
 	if err != nil {
 		t.Fatal(err)
