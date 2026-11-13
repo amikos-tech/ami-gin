@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"sort"
@@ -774,17 +775,18 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		}
 		// stored is local to this application: the option value can be
 		// applied again (or concurrently) and must see the caller's params.
-		stored := params
+		var stored []byte
 		if id == TransformerRegexExtract || id == TransformerRegexExtractInt {
 			stored, err = freezeRegexTransformerParams(params)
 			if err != nil {
 				return errors.Wrapf(err, "regex transformer for %s alias %q", canonicalPath, alias)
 			}
 		}
-		// Copy the final bytes, so the stored spec never shares the caller's
-		// buffer. The bytes do not change.
-		if stored != nil {
-			stored = append(make([]byte, 0, len(stored)), stored...)
+		// A frozen pattern is a fresh buffer. Otherwise copy the caller's
+		// params, so the stored spec never shares that buffer. The bytes do
+		// not change.
+		if stored == nil {
+			stored = bytes.Clone(params)
 		}
 		fn, err := ReconstructTransformer(id, stored)
 		if err != nil {

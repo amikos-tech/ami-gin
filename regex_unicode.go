@@ -597,10 +597,11 @@ func freezeRegexNode(re *syntax.Regexp) *syntax.Regexp {
 
 // freezeRegexTransformerParams runs at registration of RegexExtract and
 // RegexExtractInt (never on Decode). It rejects the builder-owned keys
-// source_pattern and frozen_unicode. A pattern the detector does not flag
-// keeps the caller's params bytes exactly. A flagged pattern is frozen with
-// this toolchain's tables, and the params become the frozen pattern plus the
-// original pattern and unicode.Version.
+// source_pattern and frozen_unicode. For a pattern the detector does not flag
+// it returns nil: the caller keeps its params bytes exactly. A flagged
+// pattern is frozen with this toolchain's tables, and the returned params are
+// a new buffer with the frozen pattern plus the original pattern and
+// unicode.Version.
 func freezeRegexTransformerParams(params []byte) ([]byte, error) {
 	if regexParamsHoldReservedKeys(params) {
 		return nil, errors.Errorf("regex params must not set %s or %s: the builder owns these fields", regexParamSourcePattern, regexParamFrozenUnicode)
@@ -610,7 +611,7 @@ func freezeRegexTransformerParams(params []byte) ([]byte, error) {
 		return nil, err
 	}
 	if !regexTableSensitive(wire.Pattern) {
-		return params, nil
+		return nil, nil
 	}
 	frozen, err := freezeRegexPattern(wire.Pattern, maxConfigSize)
 	if err != nil {
