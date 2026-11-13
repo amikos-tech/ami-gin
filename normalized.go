@@ -150,7 +150,9 @@ func (idx *GINIndex) checkRepresentationSpecs(cfg *GINConfig) error {
 				representation.Alias, representation.SourcePath,
 				len(representation.Transformer.Params), len(configSpec.Params))
 		}
-		if isRegexTransformerSpec(configSpec) {
+		// Identical bytes decode identically; only different bytes need the
+		// wire comparison.
+		if isRegexTransformerSpec(configSpec) && !bytes.Equal(configSpec.Params, representation.Transformer.Params) {
 			if err := regexWireParamsAgree(configSpec.Params, representation.Transformer.Params); err != nil {
 				return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config regex params: %v",
 					representation.Alias, representation.SourcePath, err)
