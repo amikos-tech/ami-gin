@@ -785,6 +785,11 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 				return errors.Wrapf(err, "regex transformer for %s alias %q", canonicalPath, alias)
 			}
 		}
+		// Copy the final bytes, so the stored spec never shares the caller's
+		// buffer. The bytes do not change.
+		if stored != nil {
+			stored = append(make([]byte, 0, len(stored)), stored...)
+		}
 		fn, err := ReconstructTransformer(id, stored)
 		if err != nil {
 			return err

@@ -264,6 +264,35 @@ func TestRegexUnicodeSafePatternKeepsBytes(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeStoredParamsOwnBuffer: the stored spec does not share the
+// caller's params buffer, so a change to that buffer after NewConfig does not
+// change the stored or encoded params.
+func TestRegexUnicodeStoredParamsOwnBuffer(t *testing.T) {
+	want := `{ "pattern" : "order-(\\d+)",  "group": 1 }`
+	callerBytes := []byte(want)
+	cfg, err := NewConfig(WithRegisteredTransformer("$.code", "num", TransformerRegexExtractInt, callerBytes,
+		WithTransformerFailureMode(TransformerFailureSoft)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range callerBytes {
+		callerBytes[i] = ' '
+	}
+	if got := string(regexUnicodeStoredParams(t, &cfg, "$.code", "num")); got != want {
+		t.Fatalf("stored params = %s, want %s", got, want)
+	}
+	idx := mustDecodeRegexUnicode(t, mustEncodeUncompressed(t, buildRegexUnicodeIndex(t, cfg)))
+	// Encode stores compact JSON.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, []byte(want)); err != nil {
+		t.Fatal(err)
+	}
+	configParams, repParams := regexUnicodeSectionParams(t, idx, "num")
+	if string(configParams) != compact.String() || string(repParams) != compact.String() {
+		t.Fatalf("encoded params = %s / %s, want %s", configParams, repParams, compact.String())
+	}
+}
+
 func TestRegexUnicodeRejectsReservedKeys(t *testing.T) {
 	for _, id := range []TransformerID{TransformerRegexExtract, TransformerRegexExtractInt} {
 		for _, params := range []string{
