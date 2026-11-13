@@ -3,7 +3,10 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
+	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -14,21 +17,27 @@ import (
 type companionTransformer struct {
 	spec TransformerSpec
 	fn   FieldTransformer
+	// degraded is set for a regex companion that must return every row group
+	// (#115). The query guard reads it; the function is never consulted for
+	// that decision.
+	degraded *companionDegradation
 }
 
 // isLoweringSpec reports whether spec describes a transformer that lowercases
-// with the frozen Unicode tables: ToLower, EmailDomain or URLHost. It matches
-// on the transformer ID OR the transformer name, never on the alias, so a
-// tampered representation section that zeroes only one of the two fields still
-// classifies as lowering.
+// with the frozen Unicode tables: ToLower, EmailDomain or URLHost.
 func isLoweringSpec(spec TransformerSpec) bool {
-	switch spec.ID {
-	case TransformerToLower, TransformerEmailDomain, TransformerURLHost:
-		return true
-	}
-	switch spec.Name {
-	case transformerNames[TransformerToLower], transformerNames[TransformerEmailDomain], transformerNames[TransformerURLHost]:
-		return true
+	return specIsTransformer(spec, TransformerToLower, TransformerEmailDomain, TransformerURLHost)
+}
+
+// specIsTransformer reports whether spec describes one of ids. It matches on
+// the transformer ID OR the transformer name, never on the alias, so a
+// tampered representation section that zeroes only one of the two fields
+// still classifies.
+func specIsTransformer(spec TransformerSpec, ids ...TransformerID) bool {
+	for _, id := range ids {
+		if spec.ID == id || spec.Name == transformerNames[id] {
+			return true
+		}
 	}
 	return false
 }
@@ -37,22 +46,40 @@ func isLoweringSpec(spec TransformerSpec) bool {
 // idx.representations. Finalize passes the builder's Config, which keeps
 // in-memory custom functions. Decode passes the freshly decoded Config, after
 // checkRepresentationSpecs has accepted it. cfg is used at build time only:
-// Normalized and the unknown-token guard read the index-owned map, never
-// idx.Config.
+// Normalized and the companionReturnsAllRGs guard read the index-owned map,
+// never idx.Config.
 //
-// A representation the Config lists takes the Config's function. A
-// representation the Config does not list falls back to the registry. Failure
-// to reconstruct leaves fn nil and never fails Decode.
+// A representation the Config lists takes the Config's function and
+// degradation, so an index finalized from a decoded config inherits it. A
+// representation the Config does not list goes through
+// reconstructStoredTransformer. For a regex spec, invalid params return an
+// error, which fails Decode. For any other spec, failure to reconstruct
+// leaves fn nil and never fails Decode.
+//
+// It also fills idx.degradedCompanions from both the Config and the
+// representations, so a degraded companion that holds no values is listed.
+// The two sources never list the same (source path, alias): a representation
+// the Config lists takes the Config's degradation, and duplicate aliases are
+// rejected earlier.
 //
 // A GINIndex built by hand, without Finalize or Decode, has no companion
 // lookup. Normalized then returns every row group, and the unknown-token guard
 // cannot fire. Such an index carries no token either.
-func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) {
+func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	idx.companionTransformers = nil
-	if len(idx.representations) == 0 {
-		return
+	idx.degradedCompanions = nil
+	var degradedCompanions []DegradedCompanion
+	// A degraded config companion that holds no values has no representation
+	// entry; it is still listed.
+	for _, representation := range collectRepresentationsFromConfig(cfg) {
+		if registered, ok := configRepresentationFor(cfg, representation); ok && registered.degraded != nil {
+			degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, registered.degraded))
+		}
 	}
-	companions := make(map[uint16]companionTransformer, len(idx.representations))
+	var companions map[uint16]companionTransformer
+	if len(idx.representations) > 0 {
+		companions = make(map[uint16]companionTransformer, len(idx.representations))
+	}
 	for _, representation := range idx.representations {
 		pathID, ok := idx.pathLookup[representation.TargetPath]
 		if !ok {
@@ -61,14 +88,42 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) {
 		entry := companionTransformer{spec: representation.Transformer}
 		if registered, ok := configRepresentationFor(cfg, representation); ok {
 			entry.fn = registered.FieldTransformer
-		} else if representation.Transformer.ID != TransformerUnknown {
-			if fn, err := ReconstructTransformer(representation.Transformer.ID, representation.Transformer.Params); err == nil {
-				entry.fn = fn
+			entry.degraded = registered.degraded
+		} else {
+			fn, degraded, err := reconstructStoredTransformer(representation.Transformer)
+			switch {
+			case err == nil:
+				entry.fn, entry.degraded = fn, degraded
+				if degraded != nil {
+					degradedCompanions = append(degradedCompanions, newDegradedCompanion(representation, degraded))
+				}
+			case isRegexTransformerSpec(representation.Transformer):
+				return errors.Wrapf(err, "representation %s on %s", representation.Alias, representation.SourcePath)
 			}
+			// Any other reconstruction failure leaves fn nil.
 		}
 		companions[pathID] = entry
 	}
+	sort.Slice(degradedCompanions, func(i, j int) bool {
+		if degradedCompanions[i].SourcePath != degradedCompanions[j].SourcePath {
+			return degradedCompanions[i].SourcePath < degradedCompanions[j].SourcePath
+		}
+		return degradedCompanions[i].Alias < degradedCompanions[j].Alias
+	})
 	idx.companionTransformers = companions
+	idx.degradedCompanions = degradedCompanions
+	return nil
+}
+
+// newDegradedCompanion returns the inspection record of one degraded
+// companion.
+func newDegradedCompanion(representation RepresentationSpec, degradation *companionDegradation) DegradedCompanion {
+	return DegradedCompanion{
+		SourcePath: representation.SourcePath,
+		Alias:      representation.Alias,
+		Reason:     degradation.reason,
+		Detail:     degradation.detail,
+	}
 }
 
 // checkRepresentationSpecs runs on Decode only. A representation whose
@@ -91,12 +146,61 @@ func (idx *GINIndex) checkRepresentationSpecs(cfg *GINConfig) error {
 				representation.Transformer.Name, configSpec.Name)
 		}
 		if !transformerParamsEqual(configSpec.Params, representation.Transformer.Params) {
-			return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config transformer params (%s/%s)",
+			// The payloads can be near maxConfigSize: name only their lengths.
+			return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config transformer params (lengths %d/%d bytes)",
 				representation.Alias, representation.SourcePath,
-				representation.Transformer.Params, configSpec.Params)
+				len(representation.Transformer.Params), len(configSpec.Params))
+		}
+		// Identical bytes decode identically; only different bytes need the
+		// wire comparison.
+		if isRegexTransformerSpec(configSpec) && !bytes.Equal(configSpec.Params, representation.Transformer.Params) {
+			if err := regexWireParamsAgree(configSpec.Params, representation.Transformer.Params); err != nil {
+				return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config regex params: %v",
+					representation.Alias, representation.SourcePath, err)
+			}
 		}
 	}
 	return nil
+}
+
+// regexWireParamsAgree compares two regex params payloads as decoded wire
+// params (pattern, group, source_pattern, frozen_unicode). JSON value
+// equality is not enough: {"pattern":"a","PATTERN":"b"} and
+// {"PATTERN":"b","pattern":"a"} are equal JSON objects, but encoding/json
+// keeps the last case-insensitive match, so they decode to different
+// executable patterns. Stored bytes are never rewritten.
+func regexWireParamsAgree(configParams, representationParams json.RawMessage) error {
+	configWire, _, err := decodeRegexWireParams(configParams)
+	if err != nil {
+		return errors.Wrap(err, "config params")
+	}
+	representationWire, _, err := decodeRegexWireParams(representationParams)
+	if err != nil {
+		return errors.Wrap(err, "representation params")
+	}
+	if configWire != representationWire {
+		return errors.Errorf("decoded params differ: %s", regexWireParamsDiff(representationWire, configWire))
+	}
+	return nil
+}
+
+// regexWireParamsDiff names the fields that differ between the representation
+// and the config wire params. For a string field it gives only the lengths:
+// a frozen pattern can be near maxConfigSize, so the text is never printed.
+func regexWireParamsDiff(representation, config regexWireParams) string {
+	var diffs []string
+	addString := func(name, a, b string) {
+		if a != b {
+			diffs = append(diffs, fmt.Sprintf("%s (lengths %d/%d bytes)", name, len(a), len(b)))
+		}
+	}
+	addString("pattern", representation.Pattern, config.Pattern)
+	if representation.Group != config.Group {
+		diffs = append(diffs, fmt.Sprintf("group (%d/%d)", representation.Group, config.Group))
+	}
+	addString(regexParamSourcePattern, representation.SourcePattern, config.SourcePattern)
+	addString(regexParamFrozenUnicode, representation.FrozenUnicode, config.FrozenUnicode)
+	return strings.Join(diffs, ", ")
 }
 
 // configRepresentationFor returns the Config entry with the representation's
@@ -136,17 +240,24 @@ func transformerParamsEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// unknownUnicodeLoweringCompanion reports whether pathID is a ToLower,
-// EmailDomain or URLHost companion that this reader cannot answer exactly: the
-// index carries a trigram_unicode_version token whose tables this reader does
-// not have, so the companion terms may hold a lowercase mapping it cannot
-// reproduce. Callers return every row group.
-func (idx *GINIndex) unknownUnicodeLoweringCompanion(pathID int) bool {
-	if trigramUnicodeTokenSupported(idx.trigramUnicodeToken) {
+// companionReturnsAllRGs reports whether pathID is a companion that this
+// reader cannot answer exactly, so every predicate on it returns every row
+// group. Two cases:
+//   - a degraded regex companion (legacy, uncompilable, timed out or
+//     unverified, #115);
+//   - a ToLower, EmailDomain or URLHost companion of an index whose
+//     trigram_unicode_version token names tables this reader does not have,
+//     so the companion terms may hold a lowercase mapping it cannot
+//     reproduce (#102).
+func (idx *GINIndex) companionReturnsAllRGs(pathID int) bool {
+	companion, ok := idx.companionTransformers[uint16(pathID)]
+	if !ok {
 		return false
 	}
-	companion, ok := idx.companionTransformers[uint16(pathID)]
-	return ok && isLoweringSpec(companion.spec)
+	if companion.degraded != nil {
+		return true
+	}
+	return isLoweringSpec(companion.spec) && !trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
 }
 
 // normalizeQueryValue applies the companion's transformer to the raw value of

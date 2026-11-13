@@ -302,7 +302,7 @@ func TestPhase09ConfigValidationErrors(t *testing.T) {
 	}
 
 	cfg := DefaultConfig()
-	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, IngestFailureHard, nil)
+	err := cfg.addRepresentation("$.email", "lower", NewTransformerSpec("$.email", TransformerToLower, nil), true, IngestFailureHard, nil, nil)
 	if err == nil {
 		t.Fatal("addRepresentation(..., nil) error = nil, want transformer function validation")
 	}

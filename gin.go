@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"sort"
@@ -101,12 +102,17 @@ type GINIndex struct {
 	// Normalized and the unknown-Unicode-token guard never read Config at query
 	// time. See buildCompanionTransformers.
 	companionTransformers map[uint16]companionTransformer
+	// degradedCompanions lists every degraded regex companion (#115), sorted
+	// by source path, then alias. Finalize and Decode build it from the
+	// config and representation specs, also for companions that hold no
+	// values. DegradedCompanions returns a copy.
+	degradedCompanions []DegradedCompanion
 	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
 	// means absent (= trigramUnicodeVersion). The index owns the serialized
 	// token: Decode sets it, and Encode writes it back from here. Each
 	// TrigramIndex keeps a copy for Search, and Encode refuses a TrigramIndex
 	// whose foreign copy differs, so it never relabels foreign grams (#99).
-	// unknownUnicodeLoweringCompanion also reads it (#102).
+	// companionReturnsAllRGs also reads it (#102).
 	trigramUnicodeToken string
 }
 
@@ -376,9 +382,11 @@ type NormalizedValue struct {
 // Do not wrap a value that is already transformed. EmailDomain and URLHost are
 // not idempotent, so Normalized("domain", "example.com") fails open.
 //
-// RegexExtract and RegexExtractInt patterns with Unicode classes or (?i)
-// depend on the Unicode tables of the Go toolchain. Build and query with the
-// same Go version.
+// For RegexExtract and RegexExtractInt companions, Normalized runs the
+// pattern that the index stores (the frozen pattern for a Unicode-sensitive
+// regex), so every reader extracts like the builder. An As value that you
+// prepare by running the original regex yourself (gin.RegexExtract(p, g)(raw))
+// can still differ across Go versions.
 func Normalized(alias string, raw any) NormalizedValue {
 	if err := validateRepresentationAlias(alias); err != nil {
 		panic(err.Error())
@@ -485,6 +493,33 @@ func WithTransformerFailureMode(mode IngestFailureMode) TransformerOption {
 	}
 }
 
+// DegradeReason is a stable code for why a companion returns every row group.
+type DegradeReason string
+
+const (
+	// DegradeReasonLegacyUnfrozenRegex: a regex companion without frozen
+	// metadata whose pattern may depend on the reader's Unicode tables.
+	DegradeReasonLegacyUnfrozenRegex DegradeReason = "legacy_unfrozen_regex"
+	// DegradeReasonRegexCompileFailed: the stored regex does not compile on this reader.
+	DegradeReasonRegexCompileFailed DegradeReason = "regex_compile_failed"
+	// DegradeReasonRegexCompileTimeout: compiling the stored regex timed out.
+	// It can be transient: the reason is not stored, and a later Decode can
+	// restore pruning.
+	DegradeReasonRegexCompileTimeout DegradeReason = "regex_compile_timeout"
+	// DegradeReasonUnverifiedFrozenRegex: a regex marked as frozen still requests a Unicode-table operation.
+	DegradeReasonUnverifiedFrozenRegex DegradeReason = "unverified_frozen_regex"
+)
+
+// DegradedCompanion describes one companion that returns every row group for
+// every predicate on it. Other predicates in the same Evaluate call still
+// prune.
+type DegradedCompanion struct {
+	SourcePath string
+	Alias      string
+	Reason     DegradeReason
+	Detail     string
+}
+
 type RepresentationInfo struct {
 	SourcePath  string
 	Alias       string
@@ -502,6 +537,9 @@ type RepresentationSpec struct {
 type registeredRepresentation struct {
 	RepresentationSpec
 	FieldTransformer FieldTransformer
+	// degraded is set by Decode for a regex companion that must return every
+	// row group (#115). Finalize copies it into the index.
+	degraded *companionDegradation
 }
 
 type GINConfig struct {
@@ -631,7 +669,9 @@ func validateRepresentationAlias(alias string) error {
 	return nil
 }
 
-func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer) error {
+// addRepresentation registers one companion. degraded is set only by Decode,
+// for a degraded regex companion (#115); other callers pass nil.
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer, degraded *companionDegradation) error {
 	if err := validateRepresentationAlias(alias); err != nil {
 		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
@@ -672,6 +712,7 @@ func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSp
 	c.representationTransformers[canonicalPath] = append(c.representationTransformers[canonicalPath], registeredRepresentation{
 		RepresentationSpec: spec,
 		FieldTransformer:   fn,
+		degraded:           degraded,
 	})
 	return nil
 }
@@ -693,7 +734,7 @@ func WithCustomTransformer(path, alias string, fn FieldTransformer, opts ...Tran
 			return err
 		}
 		spec := NewTransformerSpec(canonicalPath, TransformerUnknown, nil)
-		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn)
+		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn, nil)
 	}
 }
 
@@ -707,6 +748,21 @@ func withRegisteredTransformerJSON(path, alias string, id TransformerID, params 
 	}
 }
 
+// WithRegisteredTransformer registers a built-in transformer by ID with JSON
+// params, so the companion can be reconstructed after Decode.
+//
+// Regex patterns (TransformerRegexExtract and TransformerRegexExtractInt) that
+// may depend on the Unicode tables are frozen at registration with this
+// toolchain's tables: \p{..}, \P{..}, (?i) with non-ASCII runes, and char
+// classes with non-ASCII ranges that the detector classifies conservatively
+// (for example [é-ü]). The stored params hold the frozen pattern, the original
+// pattern and the Unicode version, so every reader extracts like the builder.
+// Patterns the detector does not flag (for example order-(\d+)) keep their
+// params bytes. The params keys source_pattern and frozen_unicode are
+// reserved; registration rejects them.
+// In the stored params, pattern is the executable (frozen) pattern,
+// source_pattern is the original pattern, and frozen_unicode is provenance
+// only (readers do not use it to decide anything).
 func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
 		options, err := resolveTransformerOptions(opts...)
@@ -717,11 +773,26 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		if err != nil {
 			return err
 		}
-		fn, err := ReconstructTransformer(id, params)
+		// stored is local to this application: the option value can be
+		// applied again (or concurrently) and must see the caller's params.
+		var stored []byte
+		if id == TransformerRegexExtract || id == TransformerRegexExtractInt {
+			stored, err = freezeRegexTransformerParams(params)
+			if err != nil {
+				return errors.Wrapf(err, "regex transformer for %s alias %q", canonicalPath, alias)
+			}
+		}
+		// A frozen pattern is a fresh buffer. Otherwise copy the caller's
+		// params, so the stored spec never shares that buffer. The bytes do
+		// not change.
+		if stored == nil {
+			stored = bytes.Clone(params)
+		}
+		fn, err := ReconstructTransformer(id, stored)
 		if err != nil {
 			return err
 		}
-		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, params), true, options.failureMode, fn)
+		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, stored), true, options.failureMode, fn, nil)
 	}
 }
 
@@ -749,10 +820,25 @@ func WithSemVerTransformer(path, alias string, opts ...TransformerOption) Config
 	return WithRegisteredTransformer(path, alias, TransformerSemVerToInt, nil, opts...)
 }
 
+// WithRegexExtractTransformer adds a regex-extract companion for path under alias.
+//
+// It registers TransformerRegexExtract with WithRegisteredTransformer, which
+// freezes a Unicode-sensitive pattern at registration. In the stored params,
+// pattern is the executable (frozen) pattern and source_pattern is the
+// original pattern; see WithRegisteredTransformer. Prepare query values with
+// Normalized, which runs the index's stored pattern.
 func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
+// WithRegexExtractIntTransformer adds a companion for path under alias that
+// extracts a number with a regex.
+//
+// It registers TransformerRegexExtractInt with WithRegisteredTransformer, which
+// freezes a Unicode-sensitive pattern at registration. In the stored params,
+// pattern is the executable (frozen) pattern and source_pattern is the
+// original pattern; see WithRegisteredTransformer. Prepare query values with
+// Normalized, which runs the index's stored pattern.
 func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
@@ -860,6 +946,9 @@ func NewConfig(opts ...ConfigOption) (GINConfig, error) {
 		}
 	}
 	if err := cfg.validate(); err != nil {
+		return GINConfig{}, err
+	}
+	if err := cfg.checkSerializedSizeLimits(); err != nil {
 		return GINConfig{}, err
 	}
 	return cfg, nil
@@ -1189,6 +1278,19 @@ func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
 		return trigramUnicodeVersion, true
 	}
 	return idx.trigramUnicodeToken, trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
+}
+
+// DegradedCompanions returns the companions of this index that return every
+// row group, sorted by source path, then alias. It lists every degraded
+// companion of the config and representation specs, also a companion that
+// holds no values in this index. The result is a fresh copy built from
+// index-owned state: changing it or idx.Config changes nothing. It returns
+// nil for a healthy index.
+func (idx *GINIndex) DegradedCompanions() []DegradedCompanion {
+	if len(idx.degradedCompanions) == 0 {
+		return nil
+	}
+	return append([]DegradedCompanion(nil), idx.degradedCompanions...)
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

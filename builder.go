@@ -234,6 +234,12 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
+	if err := config.checkSerializedSizeLimits(); err != nil {
+		return nil, err
+	}
+	if err := config.checkExecutableTransformers(); err != nil {
+		return nil, err
+	}
 	config.ParserFailureMode = normalizeIngestFailureMode(config.ParserFailureMode)
 	config.NumericFailureMode = normalizeIngestFailureMode(config.NumericFailureMode)
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)
@@ -1428,7 +1434,11 @@ func (b *GINBuilder) Finalize() *GINIndex {
 		// collect only materialized representations.
 		panic(err)
 	}
-	idx.buildCompanionTransformers(idx.Config)
+	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
+		// Every representation comes from the builder's config here, so
+		// none is classified on its own.
+		panic(errors.Wrap(err, "build companion transformers"))
+	}
 	return idx
 }
 

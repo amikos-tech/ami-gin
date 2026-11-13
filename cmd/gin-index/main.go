@@ -507,6 +507,12 @@ func writeIndexInfo(w io.Writer, idx *gin.GINIndex) {
 	fmt.Fprintf(w, "  Paths: %d\n", idx.Header.NumPaths)
 	fmt.Fprintf(w, "  Cardinality Threshold: %d\n", idx.Header.CardinalityThresh)
 	fmt.Fprintf(w, "  Trigram Unicode: %s\n", formatTrigramUnicodeVersion(idx.TrigramUnicodeVersion()))
+	if degraded := idx.DegradedCompanions(); len(degraded) > 0 {
+		fmt.Fprintf(w, "  Degraded companions (every row group is returned for predicates on them):\n")
+		for _, companion := range degraded {
+			fmt.Fprintf(w, "    %s alias %s: %s: %s\n", companion.SourcePath, companion.Alias, companion.Reason, companion.Detail)
+		}
+	}
 	fmt.Fprintf(w, "\nPaths:\n")
 	for _, pe := range idx.PathDirectory {
 		if strings.HasPrefix(pe.PathName, "__derived:") {

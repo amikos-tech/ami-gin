@@ -67,23 +67,50 @@ type NumericBucketParams struct {
 	Size float64 `json:"size"`
 }
 
-const regexCompileTimeout = 100 * time.Millisecond
+// regexCompileFunc and regexCompileDeadline are test hooks. Production code
+// never changes them: every regex compile has a 100 ms timeout.
+var (
+	regexCompileFunc     = regexp.Compile
+	regexCompileDeadline = 100 * time.Millisecond
+)
 
+// regexCompileError tells a regex compile failure from a compile timeout
+// without reading the message text.
+type regexCompileError struct {
+	timeout bool
+	cause   error
+}
+
+func (e *regexCompileError) Error() string { return e.cause.Error() }
+
+func (e *regexCompileError) Cause() error { return e.cause }
+
+func (e *regexCompileError) Unwrap() error { return e.cause }
+
+// compileRegexWithTimeout compiles pattern in a goroutine. The channel is
+// buffered, so a compile that ends after the timeout is dropped and never
+// returned. Both failures return a *regexCompileError.
 func compileRegexWithTimeout(pattern string, timeout time.Duration) (*regexp.Regexp, error) {
 	type result struct {
 		re  *regexp.Regexp
 		err error
 	}
+	compile := regexCompileFunc
 	ch := make(chan result, 1)
 	go func() {
-		re, err := regexp.Compile(pattern)
+		re, err := compile(pattern)
 		ch <- result{re, err}
 	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 	select {
 	case r := <-ch:
-		return r.re, r.err
-	case <-time.After(timeout):
-		return nil, errors.New("regex compile timeout (possible ReDoS pattern)")
+		if r.err != nil {
+			return nil, &regexCompileError{cause: r.err}
+		}
+		return r.re, nil
+	case <-timer.C:
+		return nil, &regexCompileError{timeout: true, cause: errors.New("regex compile timeout (possible ReDoS pattern)")}
 	}
 }
 
@@ -108,7 +135,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		return IPv4ToInt, nil
 	case TransformerSemVerToInt:
 		return SemVerToInt, nil
-	case TransformerRegexExtract:
+	case TransformerRegexExtract, TransformerRegexExtractInt:
 		var p RegexParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
@@ -116,48 +143,11 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		if p.Group < 0 {
 			return nil, errors.New("regex group must be non-negative")
 		}
-		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
+		re, err := compileRegexWithTimeout(p.Pattern, regexCompileDeadline)
 		if err != nil {
 			return nil, errors.Wrap(err, "compile regex pattern")
 		}
-		return func(v any) (any, bool) {
-			s, ok := v.(string)
-			if !ok {
-				return nil, false
-			}
-			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
-				return nil, false
-			}
-			return matches[p.Group], true
-		}, nil
-	case TransformerRegexExtractInt:
-		var p RegexParams
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, errors.Wrap(err, "unmarshal regex params")
-		}
-		if p.Group < 0 {
-			return nil, errors.New("regex group must be non-negative")
-		}
-		re, err := compileRegexWithTimeout(p.Pattern, regexCompileTimeout)
-		if err != nil {
-			return nil, errors.Wrap(err, "compile regex pattern")
-		}
-		return func(v any) (any, bool) {
-			s, ok := v.(string)
-			if !ok {
-				return nil, false
-			}
-			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
-				return nil, false
-			}
-			n, err := parseFloat(matches[p.Group])
-			if err != nil {
-				return nil, false
-			}
-			return n, true
-		}, nil
+		return regexExtractFunc(re, p.Group, id == TransformerRegexExtractInt), nil
 	case TransformerDurationToMs:
 		return DurationToMs, nil
 	case TransformerEmailDomain:
@@ -177,6 +167,29 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		return BoolNormalize, nil
 	default:
 		return nil, errors.Errorf("unknown transformer ID: %d", id)
+	}
+}
+
+// regexExtractFunc returns the RegexExtract (numeric=false) or
+// RegexExtractInt (numeric=true) function for a compiled pattern.
+func regexExtractFunc(re *regexp.Regexp, group int, numeric bool) FieldTransformer {
+	return func(v any) (any, bool) {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		matches := re.FindStringSubmatch(s)
+		if len(matches) <= group {
+			return nil, false
+		}
+		if !numeric {
+			return matches[group], true
+		}
+		n, err := parseFloat(matches[group])
+		if err != nil {
+			return nil, false
+		}
+		return n, true
 	}
 }
 

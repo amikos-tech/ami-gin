@@ -3,19 +3,24 @@
 package gin
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"unicode"
 )
 
 // These tests are the two halves of a real artifact exchange between Go
 // toolchains with different Unicode tables (#102). `make cross-toolchain-check`
-// runs the build half under each toolchain, requires the artifacts of the two
-// toolchains to be byte-identical, and runs the query half under each
-// toolchain against the artifacts of each toolchain. Without the environment
-// variables set, both tests skip.
+// runs the build half under each toolchain, requires the drift and aggregated
+// artifacts of the two toolchains to be byte-identical, and runs the query
+// half under each toolchain against the artifacts of each toolchain. The
+// regex artifact (#115) is not compared: each builder freezes its regex
+// companions with its own tables, so the bytes legitimately differ. Each
+// reader must instead return that builder's exact baseline. Without the
+// environment variables set, both tests skip.
 //
 //	AMI_GIN_XTC_WANT_UNICODE  unicode.Version the running toolchain must report
 //	AMI_GIN_XTC_OUT           directory the build half writes the artifacts to
@@ -35,6 +40,8 @@ const (
 const (
 	xtcDriftArtifact      = "drift.gin"
 	xtcAggregatedArtifact = "aggregated.gin"
+	xtcRegexArtifact      = "regex.gin"
+	xtcRegexUnicode       = "regex.unicode" // unicode.Version of the regex.gin builder
 )
 
 // requireCrossToolchainUnicode fails unless the toolchain reports the Unicode
@@ -62,6 +69,7 @@ func TestCrossToolchainBuild(t *testing.T) {
 	for name, idx := range map[string]*GINIndex{
 		xtcDriftArtifact:      buildTransformerDriftIndex(t),
 		xtcAggregatedArtifact: buildTransformerAggregatedIndex(t),
+		xtcRegexArtifact:      buildRegexUnicodeIndex(t, regexUnicodeConfig(t)),
 	} {
 		data := mustEncodeUncompressed(t, idx)
 		path := filepath.Join(out, name)
@@ -70,6 +78,31 @@ func TestCrossToolchainBuild(t *testing.T) {
 		}
 		t.Logf("wrote %d bytes to %s", len(data), path)
 	}
+	path := filepath.Join(out, xtcRegexUnicode)
+	if err := os.WriteFile(path, []byte(unicode.Version), 0o600); err != nil {
+		t.Fatalf("WriteFile(%s): %v", path, err)
+	}
+}
+
+// requireExchangedRegexQueries checks regex.gin against the baseline of the
+// toolchain that built it (#115).
+func requireExchangedRegexQueries(t *testing.T, dir string) {
+	t.Helper()
+	builderUnicode := strings.TrimSpace(string(readTestFile(t, filepath.Join(dir, xtcRegexUnicode))))
+	idx := xtcDecode(t, dir, xtcRegexArtifact)
+	for _, alias := range []string{"upper", "n2", "ci"} {
+		configParams, repParams := regexUnicodeSectionParams(t, idx, alias)
+		for _, params := range []json.RawMessage{configParams, repParams} {
+			wire, marked, err := decodeRegexWireParams(params)
+			if err != nil || !marked || wire.FrozenUnicode != builderUnicode {
+				t.Fatalf("%s params %s: marked %v err %v, want frozen_unicode %s", alias, params, marked, err, builderUnicode)
+			}
+		}
+	}
+	if got := idx.DegradedCompanions(); len(got) != 0 {
+		t.Fatalf("DegradedCompanions = %+v, want none", got)
+	}
+	requireRegexUnicodeBaseline(t, idx, builderUnicode, "exchanged regex.gin")
 }
 
 func xtcDecode(t *testing.T, dir, name string) *GINIndex {
@@ -95,6 +128,7 @@ func TestCrossToolchainQuery(t *testing.T) {
 
 	requireTransformerDriftQueries(t, xtcDecode(t, in, xtcDriftArtifact), "exchanged")
 	requireTransformerAggregatedQueries(t, xtcDecode(t, in, xtcAggregatedArtifact), "exchanged")
+	requireExchangedRegexQueries(t, in)
 	if t.Failed() {
 		return
 	}

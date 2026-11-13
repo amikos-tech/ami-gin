@@ -707,9 +707,33 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	if err := idx.checkRepresentationSpecs(idx.Config); err != nil {
 		return nil, errors.Wrap(err, "check representation specs")
 	}
-	idx.buildCompanionTransformers(idx.Config)
+	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
+		return nil, &invalidFormatCauseError{cause: err}
+	}
 
 	return idx, nil
+}
+
+// invalidFormatCauseError reports cause as ErrInvalidFormat and keeps cause
+// in the error chain, so errors.Is matches ErrInvalidFormat and errors.As
+// still finds the cause. The message is the same as
+// errors.Wrap(ErrInvalidFormat, cause.Error()).
+type invalidFormatCauseError struct {
+	cause error
+}
+
+func (e *invalidFormatCauseError) Error() string {
+	return e.cause.Error() + ": " + ErrInvalidFormat.Error()
+}
+
+func (e *invalidFormatCauseError) Unwrap() []error {
+	return []error{ErrInvalidFormat, e.cause}
+}
+
+// Cause returns ErrInvalidFormat, so github.com/pkg/errors.Cause gives the
+// same sentinel as for any other ErrInvalidFormat error.
+func (e *invalidFormatCauseError) Cause() error {
+	return ErrInvalidFormat
 }
 
 // classifySerializeError maps a serialization error to the frozen error.type vocabulary.
@@ -1934,6 +1958,25 @@ func writeConfig(w io.Writer, cfg *GINConfig, trigramToken string) error {
 		return binary.Write(w, binary.LittleEndian, uint32(0))
 	}
 
+	data, err := marshalSerializedConfig(cfg, trigramToken)
+	if err != nil {
+		return err
+	}
+	if len(data) > maxConfigSize {
+		return errors.Errorf("config size %d exceeds max %d", len(data), maxConfigSize)
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+// marshalSerializedConfig returns the config section payload of cfg. writeConfig
+// and the registration-time size check share it, so both measure the same
+// bytes.
+func marshalSerializedConfig(cfg *GINConfig, trigramToken string) ([]byte, error) {
 	sc := SerializedConfig{
 		BloomFilterSize:         cfg.BloomFilterSize,
 		BloomFilterHashes:       cfg.BloomFilterHashes,
@@ -1971,14 +2014,9 @@ func writeConfig(w io.Writer, cfg *GINConfig, trigramToken string) error {
 
 	data, err := json.Marshal(sc)
 	if err != nil {
-		return errors.Wrap(err, "marshal config")
+		return nil, errors.Wrap(err, "marshal config")
 	}
-
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
-		return err
-	}
-	_, err = w.Write(data)
-	return err
+	return data, nil
 }
 
 // readConfig returns the decoded config and the raw trigram_unicode_version
@@ -2068,11 +2106,14 @@ func readConfig(r io.Reader) (*GINConfig, string, error) {
 			spec.Alias = alias
 			spec.TargetPath = targetPath
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
-			fn, err := ReconstructTransformer(spec.ID, spec.Params)
+			// Invalid params fail Decode. An unsafe or uncompilable regex
+			// pattern degrades only this companion and keeps its stored spec
+			// unchanged (#115).
+			fn, degraded, err := reconstructStoredTransformer(spec)
 			if err != nil {
-				return nil, "", errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
+				return nil, "", &invalidFormatCauseError{cause: errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)}
 			}
-			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
+			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn, degraded); err != nil {
 				return nil, "", errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
 			}
 		}
@@ -2110,18 +2151,9 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 		}
 	}
 
-	wireRepresentations := make([]RepresentationSpec, len(representations))
-	for i, representation := range representations {
-		copied := representation
-		transformer := representation.Transformer
-		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
-		copied.Transformer = transformer
-		wireRepresentations[i] = copied
-	}
-
-	data, err := json.Marshal(wireRepresentations)
+	data, err := marshalRepresentationSection(representations)
 	if err != nil {
-		return errors.Wrap(err, "marshal representations")
+		return err
 	}
 	if len(data) > maxRepresentationSectionSize {
 		return errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", len(data), maxRepresentationSectionSize)
@@ -2132,6 +2164,59 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 	}
 	_, err = w.Write(data)
 	return err
+}
+
+// marshalRepresentationSection returns the representation section payload.
+// writeRepresentations and the registration-time size check share it.
+func marshalRepresentationSection(representations []RepresentationSpec) ([]byte, error) {
+	wireRepresentations := make([]RepresentationSpec, len(representations))
+	for i, representation := range representations {
+		copied := representation
+		transformer := representation.Transformer
+		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
+		copied.Transformer = transformer
+		wireRepresentations[i] = copied
+	}
+	data, err := json.Marshal(wireRepresentations)
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal representations")
+	}
+	return data, nil
+}
+
+// checkSerializedSizeLimits fails when the config section or the
+// representation section of cfg would exceed the limit a reader accepts. It
+// runs when a config is built (NewConfig, NewBuilder), so an oversized config
+// fails early; writeConfig and writeRepresentations enforce the exact limits
+// again at Encode. The early representation check counts every serializable
+// representation of the config, also those that hold no values, so it is
+// stricter than Encode, which writes only materialized representations. It
+// is not part of validate, which Decode also runs.
+func (c *GINConfig) checkSerializedSizeLimits() error {
+	data, err := marshalSerializedConfig(c, "")
+	if err != nil {
+		return err
+	}
+	if len(data) > maxConfigSize {
+		return errors.Errorf("config section size %d exceeds max %d", len(data), maxConfigSize)
+	}
+	var serializable []RepresentationSpec
+	for _, representation := range collectRepresentationsFromConfig(c) {
+		if representation.Serializable {
+			serializable = append(serializable, representation)
+		}
+	}
+	if len(serializable) == 0 {
+		return nil
+	}
+	data, err = marshalRepresentationSection(serializable)
+	if err != nil {
+		return err
+	}
+	if len(data) > maxRepresentationSectionSize {
+		return errors.Errorf("representation section size %d exceeds max %d", len(data), maxRepresentationSectionSize)
+	}
+	return nil
 }
 
 func readRepresentations(r io.Reader) ([]RepresentationSpec, error) {
