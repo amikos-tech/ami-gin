@@ -709,19 +709,13 @@ func reconstructStoredTransformer(spec TransformerSpec) (FieldTransformer, *comp
 // it; Decode does not, because a reader can still query such an index (the
 // companion returns every row group).
 func (c *GINConfig) checkExecutableTransformers() error {
-	paths := make([]string, 0, len(c.representationTransformers))
-	for path := range c.representationTransformers {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
-		for _, registered := range c.representationTransformers[path] {
-			if registered.degraded == nil || !registered.degraded.placeholder {
-				continue
-			}
-			return errors.Errorf("companion %s alias %q has no executable transformer (%s: %s); register the transformer again to build",
-				registered.SourcePath, registered.Alias, registered.degraded.reason, registered.degraded.detail)
+	for _, representation := range collectRepresentationsFromConfig(c) {
+		registered, ok := configRepresentationFor(c, representation)
+		if !ok || registered.degraded == nil || !registered.degraded.placeholder {
+			continue
 		}
+		return errors.Errorf("companion %s alias %q has no executable transformer (%s: %s); register the transformer again to build",
+			registered.SourcePath, registered.Alias, registered.degraded.reason, registered.degraded.detail)
 	}
 	return nil
 }
