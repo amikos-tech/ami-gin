@@ -551,6 +551,31 @@ func TestRegexUnicodeDuplicateReservedKeyDeterministic(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeUnmarkedParamsDecodeLikeRegexParams: unmarked params with
+// case-variant pattern or group keys decode to the same pattern and group as
+// a json.Unmarshal into RegexParams, the decode that readers before #115 use.
+func TestRegexUnicodeUnmarkedParamsDecodeLikeRegexParams(t *testing.T) {
+	for _, raw := range []string{
+		`{"Pattern":"a","pattern":"b","group":0}`,
+		`{"pattern":"b","Pattern":"a","group":0}`,
+		`{"pattern":"(x)","group":1,"GROUP":0}`,
+		`{"PATTERN":"(y)","Group":1}`,
+	} {
+		var legacy RegexParams
+		if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+			t.Fatalf("%s: unmarshal RegexParams: %v", raw, err)
+		}
+		wire, marked, err := decodeRegexWireParams(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("%s: decodeRegexWireParams: %v", raw, err)
+		}
+		if marked || wire.Pattern != legacy.Pattern || wire.Group != legacy.Group {
+			t.Fatalf("%s: wire = (%q, %d, marked %v), RegexParams = (%q, %d)",
+				raw, wire.Pattern, wire.Group, marked, legacy.Pattern, legacy.Group)
+		}
+	}
+}
+
 // TestRegexUnicodeSectionsDecodeToSameParams: the config and representation
 // sections hold the same JSON object with the members in another order. The
 // objects compare equal as JSON values, but encoding/json keeps the last

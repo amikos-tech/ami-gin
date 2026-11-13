@@ -52,7 +52,8 @@
 - `RegexExtract` and `RegexExtractInt` companions no longer depend on the Go
   toolchain (#115). A pattern with `\p{..}`, `\P{..}`, `(?i)` with
   non-ASCII runes, or a char class with non-ASCII ranges that the detector
-  classifies conservatively (for example `[é-ü]`) is frozen when you register
+  classifies conservatively (for example `[é-ü]`, `[^é]` or `(?i)[^a-z]`,
+  whose fold set includes `ſ` and `K`) is frozen when you register
   it: the builder expands it into explicit ranges with its own Unicode
   tables. The stored params hold `pattern` (the frozen pattern),
   `source_pattern` (your pattern) and `frozen_unicode` (the builder's Unicode
@@ -78,7 +79,10 @@
   (`legacy_unfrozen_regex`, `regex_compile_failed`, `regex_compile_timeout`,
   `unverified_frozen_regex`) and a detail. `gin-index info` prints them.
 - `Encode` now rejects a config section larger than 1 MiB, which readers
-  reject. `NewConfig` and `NewBuilder` check both section limits early.
+  reject. `NewConfig` and `NewBuilder` check both section limits early. The
+  early representation check counts every registered companion, also one
+  that holds no values, so it can reject a config that `Encode` alone would
+  accept.
   Registration rejects the reserved regex params keys `source_pattern` and
   `frozen_unicode`.
 - New `make old-reader-check` target (local, not in CI). The pre-#115 reader
