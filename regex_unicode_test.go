@@ -801,7 +801,7 @@ func TestRegexUnicodeReasonPrecedence(t *testing.T) {
 	if err := verifyFrozenRegexText(`(\p{Lu}+`); err == nil {
 		t.Fatal("setup: the pattern must fail the verifier")
 	}
-	if _, err := regexp.Compile(`(\p{Lu}+`); err == nil {
+	if _, err := syntax.Parse(`(\p{Lu}+`, syntax.Perl); err == nil {
 		t.Fatal("setup: the pattern must fail to compile")
 	}
 	fn, degraded, err := classifyRegexCompanion(spec)
