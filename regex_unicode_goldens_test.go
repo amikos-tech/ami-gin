@@ -50,3 +50,18 @@ func TestRegenerateRegexUnicodeGoldens(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestRegenerateRegexUnicodeGarayGolden writes the frozen \p{Garay} golden
+// with the current builder. Garay is new in Unicode 16, so it runs on 17.0.0
+// only:
+//
+//	GOTOOLCHAIN=go1.27.3 go test -tags regenerate_goldens -run TestRegenerateRegexUnicodeGarayGolden .
+func TestRegenerateRegexUnicodeGarayGolden(t *testing.T) {
+	if unicode.Version != "17.0.0" {
+		t.Fatalf("unicode.Version %s: the frozen Garay golden needs 17.0.0", unicode.Version)
+	}
+	data := mustEncodeUncompressed(t, buildRegexUnicodeGarayIndex(t))
+	if err := os.WriteFile(regexUnicodeFrozenGarayGolden, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}

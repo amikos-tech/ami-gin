@@ -41,12 +41,17 @@ simd-isolation-check:
 	go vet ./...
 
 # Real artifact exchange between two Go toolchains with different Unicode tables (#102).
-# Each toolchain builds and encodes the fixture indexes (drift.gin, aggregated.gin).
-# The artifacts of the two toolchains must be byte-identical. Each toolchain then
-# decodes and queries the artifacts of both toolchains (four cells). Each query cell
-# must write its done marker, so a run that matched no test fails.
+# Each toolchain builds and encodes the fixture indexes (drift.gin, aggregated.gin,
+# regex.gin). drift.gin and aggregated.gin of the two toolchains must be
+# byte-identical. Each toolchain then decodes and queries the artifacts of both
+# toolchains (four cells). Each query cell must write its done marker, so a run
+# that matched no test fails.
 # Not part of test or lint: it downloads two toolchains.
 XTC_ARTIFACTS := drift.gin aggregated.gin
+# Not compared with cmp (#115): each builder freezes regex companions with its own
+# Unicode tables, so different builders legitimately write different frozen text.
+# The query half checks regex.gin against the baseline of its builder (regex.unicode).
+XTC_UNCOMPARED_ARTIFACTS := regex.gin regex.unicode
 
 .PHONY: cross-toolchain-check
 cross-toolchain-check:
@@ -70,6 +75,10 @@ cross-toolchain-check:
 		fi; \
 		printf '%s byte-identical (%s bytes)\n' "$$artifact" "$$(wc -c < "$$old_art" | tr -d ' ')"; \
 	done; \
+	for artifact in $(XTC_UNCOMPARED_ARTIFACTS); do \
+		test -s "$$dir/$(XTC_OLD_GO)/$$artifact"; \
+		test -s "$$dir/$(XTC_NEW_GO)/$$artifact"; \
+	done; \
 	for reader in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
 		for builder in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
 			done_file="$$dir/done-$$builder-$${reader%%:*}"; \
@@ -88,7 +97,72 @@ cross-toolchain-check:
 .PHONY: cross-toolchain-unit
 cross-toolchain-unit:
 	GOTOOLCHAIN=$(XTC_NEW_GO) go version
-	GOTOOLCHAIN=$(XTC_NEW_GO) go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard' .
+	GOTOOLCHAIN=$(XTC_NEW_GO) go test -count=1 -run 'TestFrozenToLower|TestTransformerLower|TestNormalized|TestCompanionUnicodeGuard|TestRegexUnicode|FuzzRegexUnicode' .
+
+# Legacy regex goldens from the pre-#115 builder (#115). Builds the indexes in a
+# detached worktree of $(REGEX_PRE115_REF) on both toolchains and copies them into
+# testdata/regex-unicode/. Not part of test: run it only to regenerate the goldens.
+REGEX_PRE115_REF ?= 29a3e0c
+REGEX_V160_REF ?= 2fbbd97
+REGEX_LEGACY_GOLDENS := legacy-regex-$(XTC_OLD_GO).gin legacy-regex-$(XTC_NEW_GO).gin legacy-safe-$(XTC_OLD_GO).gin legacy-garay-$(XTC_NEW_GO).gin
+
+.PHONY: regex-unicode-legacy-goldens
+regex-unicode-legacy-goldens:
+	@set -eu; \
+	dir="$$(mktemp -d)"; \
+	trap 'git worktree remove --force "$$dir/wt" || true; rm -r "$$dir"' EXIT; \
+	git worktree add --detach "$$dir/wt" $(REGEX_PRE115_REF); \
+	cp testdata/regex-unicode/gen/legacy_gen_test.go "$$dir/wt/regex_legacy_gen_test.go"; \
+	mkdir "$$dir/out"; \
+	for tc in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
+		(cd "$$dir/wt" && GOTOOLCHAIN=$$tc AMI_GIN_REGEX_GEN_OUT="$$dir/out" \
+			go test -tags regex_legacy_gen -count=1 -run '^TestRegexLegacyGen$$' .); \
+	done; \
+	for golden in $(REGEX_LEGACY_GOLDENS); do \
+		test -s "$$dir/out/$$golden"; \
+		cp "$$dir/out/$$golden" testdata/regex-unicode/; \
+		printf 'wrote testdata/regex-unicode/%s\n' "$$golden"; \
+	done
+
+# Old readers decode indexes from the current builder (#115). Builds regex.gin with
+# the current code on both toolchains, then runs the pre-#115 reader
+# ($(REGEX_PRE115_REF), As and Normalized) on both toolchains and the v1.6.0 reader
+# ($(REGEX_V160_REF), As only) on $(XTC_OLD_GO) against each builder's regex.gin and
+# the frozen Garay golden. Each cell must write its done marker.
+# Not part of test or lint: it downloads two toolchains and checks out old commits.
+.PHONY: old-reader-check
+old-reader-check:
+	@set -eu; \
+	dir="$$(mktemp -d)"; \
+	trap 'git worktree remove --force "$$dir/wt-pre115" 2>/dev/null || true; git worktree remove --force "$$dir/wt-v160" 2>/dev/null || true; rm -r "$$dir"' EXIT; \
+	for builder in $(XTC_OLD_GO):$(XTC_OLD_UNICODE) $(XTC_NEW_GO):$(XTC_NEW_UNICODE); do \
+		out="$$dir/build-$${builder%%:*}"; \
+		mkdir "$$out"; \
+		GOTOOLCHAIN="$${builder%%:*}" AMI_GIN_XTC_WANT_UNICODE="$${builder#*:}" AMI_GIN_XTC_OUT="$$out" \
+			go test -tags crosstoolchain -count=1 -run '^TestCrossToolchainBuild$$' .; \
+		test -s "$$out/regex.gin"; \
+		test -s "$$out/regex.unicode"; \
+	done; \
+	git worktree add --detach "$$dir/wt-pre115" $(REGEX_PRE115_REF); \
+	cp testdata/regex-unicode/oldreader/pre115_reader_test.go "$$dir/wt-pre115/regex_oldreader_pre115_test.go"; \
+	git worktree add --detach "$$dir/wt-v160" $(REGEX_V160_REF); \
+	cp testdata/regex-unicode/oldreader/v160_reader_test.go "$$dir/wt-v160/regex_oldreader_v160_test.go"; \
+	for cell in pre115:regex_oldreader:$(XTC_OLD_GO) pre115:regex_oldreader:$(XTC_NEW_GO) v160:regex_oldreader_v160:$(XTC_OLD_GO); do \
+		ref="$${cell%%:*}"; rest="$${cell#*:}"; tag="$${rest%%:*}"; reader="$${rest#*:}"; \
+		for builder in $(XTC_OLD_GO) $(XTC_NEW_GO); do \
+			in="$$dir/in-$$ref-$$reader-$$builder"; \
+			mkdir "$$in"; \
+			cp "$$dir/build-$$builder/regex.gin" "$$dir/build-$$builder/regex.unicode" testdata/regex-unicode/frozen-garay-go1.27.3.gin "$$in/"; \
+			done_file="$$dir/done-$$ref-$$reader-$$builder"; \
+			(cd "$$dir/wt-$$ref" && GOTOOLCHAIN="$$reader" AMI_GIN_REGEX_OLDREADER_IN="$$in" AMI_GIN_REGEX_OLDREADER_DONE="$$done_file" \
+				go test -tags "$$tag" -count=1 -run '^TestRegexOldReader' .); \
+			if ! test -s "$$done_file"; then \
+				printf '%s reader on %s, builder %s: TestRegexOldReader did not run\n' "$$ref" "$$reader" "$$builder" >&2; \
+				exit 1; \
+			fi; \
+			printf '%s reader on %s, builder %s: ok\n' "$$ref" "$$reader" "$$builder"; \
+		done; \
+	done
 
 .PHONY: gotestsum-bin
 gotestsum-bin:
@@ -250,6 +324,8 @@ help:
 	@echo "  check-simd-docs - Verify SIMD deployment docs, release copy, and Example stay aligned"
 	@echo "  cross-toolchain-check - Exchange encoded indexes between $(XTC_OLD_GO) and $(XTC_NEW_GO) and query them in all four build/query cells"
 	@echo "  cross-toolchain-unit - Run the Unicode-sensitive unit tests on $(XTC_NEW_GO)"
+	@echo "  regex-unicode-legacy-goldens - Regenerate the legacy regex goldens in testdata/regex-unicode with the pre-#115 builder ($(REGEX_PRE115_REF))"
+	@echo "  old-reader-check - Decode indexes from the current builder with the pre-#115 ($(REGEX_PRE115_REF)) and v1.6.0 ($(REGEX_V160_REF)) readers"
 	@echo "  lint      - Run validator marker checks and golangci-lint"
 	@echo "  lint-fix  - Run golangci-lint with auto-fix"
 	@echo "  security-scan - Run govulncheck against default and simdjson-tagged call graphs"
