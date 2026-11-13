@@ -1431,7 +1431,11 @@ func (b *GINBuilder) Finalize() *GINIndex {
 		// collect only materialized representations.
 		panic(err)
 	}
-	idx.buildCompanionTransformers(idx.Config)
+	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
+		// Every representation comes from the builder's config here, so
+		// none is classified on its own.
+		panic(errors.Wrap(err, "build companion transformers"))
+	}
 	return idx
 }
 

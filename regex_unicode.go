@@ -489,3 +489,66 @@ func freezeRegexTransformerParams(params []byte) ([]byte, error) {
 	}
 	return frozenParams, nil
 }
+
+// companionDegradation records why a companion returns every row group. It is
+// index-owned and never stored: every Decode classifies again.
+type companionDegradation struct {
+	reason DegradeReason
+	detail string
+}
+
+// regexDegradedPlaceholder stands in for a regex companion whose stored
+// pattern did not compile. It never produces a value. Query safety does not
+// depend on it: the degraded marker drives the query guard.
+func regexDegradedPlaceholder(any) (any, bool) { return nil, false }
+
+// classifyRegexCompanion is the one read-side classification of a stored
+// RegexExtract or RegexExtractInt spec, for config-backed and
+// representation-only specs alike. It never freezes and never uses
+// source_pattern: it runs the stored executable pattern.
+//
+// An error means invalid params (bad JSON, wrong types, negative group,
+// incomplete frozen metadata, an ID that is not a regex ID); Decode fails.
+// Otherwise it returns the function and, for an unsafe companion, a
+// degradation:
+//   - marked spec whose pattern fails verifyFrozenRegexText: unverified_frozen_regex
+//   - pattern does not compile: regex_compile_failed
+//   - compile timed out: regex_compile_timeout
+//   - unmarked spec the detector flags: legacy_unfrozen_regex
+//
+// A degraded companion keeps its compiled function when the pattern
+// compiled, so a decoded config reused by NewBuilder extracts as before #115.
+// Otherwise the function is a placeholder that never produces a value.
+func classifyRegexCompanion(spec TransformerSpec) (FieldTransformer, *companionDegradation, error) {
+	if spec.ID != TransformerRegexExtract && spec.ID != TransformerRegexExtractInt {
+		return nil, nil, errors.Errorf("transformer name %q does not match transformer id %d", spec.Name, spec.ID)
+	}
+	params, marked, err := decodeRegexWireParams(spec.Params)
+	if err != nil {
+		return nil, nil, err
+	}
+	var degraded *companionDegradation
+	if marked {
+		if err := verifyFrozenRegexText(params.Pattern); err != nil {
+			degraded = &companionDegradation{reason: DegradeReasonUnverifiedFrozenRegex, detail: err.Error()}
+		}
+	}
+	re, err := compileRegexWithTimeout(params.Pattern, regexCompileDeadline)
+	if err != nil {
+		if degraded == nil {
+			degraded = &companionDegradation{reason: DegradeReasonRegexCompileFailed, detail: err.Error()}
+			var compileErr *regexCompileError
+			if errors.As(err, &compileErr) && compileErr.timeout {
+				degraded = &companionDegradation{reason: DegradeReasonRegexCompileTimeout, detail: err.Error()}
+			}
+		}
+		return regexDegradedPlaceholder, degraded, nil
+	}
+	if degraded == nil && !marked && regexTableSensitive(params.Pattern) {
+		degraded = &companionDegradation{
+			reason: DegradeReasonLegacyUnfrozenRegex,
+			detail: "stored pattern has no frozen metadata and may depend on the Unicode tables of the reader; rebuild the index to restore pruning",
+		}
+	}
+	return regexExtractFunc(re, params.Group, spec.ID == TransformerRegexExtractInt), degraded, nil
+}

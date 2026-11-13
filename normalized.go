@@ -14,6 +14,10 @@ import (
 type companionTransformer struct {
 	spec TransformerSpec
 	fn   FieldTransformer
+	// degraded is set for a regex companion that must return every row group
+	// (#115). The query guard reads it; the function is never consulted for
+	// that decision.
+	degraded *companionDegradation
 }
 
 // isLoweringSpec reports whether spec describes a transformer that lowercases
@@ -37,20 +41,23 @@ func isLoweringSpec(spec TransformerSpec) bool {
 // idx.representations. Finalize passes the builder's Config, which keeps
 // in-memory custom functions. Decode passes the freshly decoded Config, after
 // checkRepresentationSpecs has accepted it. cfg is used at build time only:
-// Normalized and the unknown-token guard read the index-owned map, never
-// idx.Config.
+// Normalized, the unknown-token guard and the degraded-regex guard read the
+// index-owned map, never idx.Config.
 //
-// A representation the Config lists takes the Config's function. A
-// representation the Config does not list falls back to the registry. Failure
-// to reconstruct leaves fn nil and never fails Decode.
+// A representation the Config lists takes the Config's function and
+// degradation, so an index finalized from a decoded config inherits it. A
+// regex representation the Config does not list goes through
+// classifyRegexCompanion; invalid params return an error, which fails
+// Decode. Any other representation the Config does not list falls back to
+// the registry; failure to reconstruct leaves fn nil and never fails Decode.
 //
 // A GINIndex built by hand, without Finalize or Decode, has no companion
 // lookup. Normalized then returns every row group, and the unknown-token guard
 // cannot fire. Such an index carries no token either.
-func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) {
+func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	idx.companionTransformers = nil
 	if len(idx.representations) == 0 {
-		return
+		return nil
 	}
 	companions := make(map[uint16]companionTransformer, len(idx.representations))
 	for _, representation := range idx.representations {
@@ -61,6 +68,13 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) {
 		entry := companionTransformer{spec: representation.Transformer}
 		if registered, ok := configRepresentationFor(cfg, representation); ok {
 			entry.fn = registered.FieldTransformer
+			entry.degraded = registered.degraded
+		} else if isRegexTransformerSpec(representation.Transformer) {
+			fn, degraded, err := classifyRegexCompanion(representation.Transformer)
+			if err != nil {
+				return errors.Wrapf(err, "representation %s on %s", representation.Alias, representation.SourcePath)
+			}
+			entry.fn, entry.degraded = fn, degraded
 		} else if representation.Transformer.ID != TransformerUnknown {
 			if fn, err := ReconstructTransformer(representation.Transformer.ID, representation.Transformer.Params); err == nil {
 				entry.fn = fn
@@ -69,6 +83,15 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) {
 		companions[pathID] = entry
 	}
 	idx.companionTransformers = companions
+	return nil
+}
+
+// degradedRegexCompanion reports whether pathID is a regex companion that
+// must return every row group (legacy, uncompilable, timed out or
+// unverified, #115).
+func (idx *GINIndex) degradedRegexCompanion(pathID int) bool {
+	companion, ok := idx.companionTransformers[uint16(pathID)]
+	return ok && companion.degraded != nil
 }
 
 // checkRepresentationSpecs runs on Decode only. A representation whose

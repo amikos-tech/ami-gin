@@ -137,7 +137,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		return IPv4ToInt, nil
 	case TransformerSemVerToInt:
 		return SemVerToInt, nil
-	case TransformerRegexExtract:
+	case TransformerRegexExtract, TransformerRegexExtractInt:
 		var p RegexParams
 		if err := json.Unmarshal(params, &p); err != nil {
 			return nil, errors.Wrap(err, "unmarshal regex params")
@@ -149,44 +149,7 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		if err != nil {
 			return nil, errors.Wrap(err, "compile regex pattern")
 		}
-		return func(v any) (any, bool) {
-			s, ok := v.(string)
-			if !ok {
-				return nil, false
-			}
-			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
-				return nil, false
-			}
-			return matches[p.Group], true
-		}, nil
-	case TransformerRegexExtractInt:
-		var p RegexParams
-		if err := json.Unmarshal(params, &p); err != nil {
-			return nil, errors.Wrap(err, "unmarshal regex params")
-		}
-		if p.Group < 0 {
-			return nil, errors.New("regex group must be non-negative")
-		}
-		re, err := compileRegexWithTimeout(p.Pattern, regexCompileDeadline)
-		if err != nil {
-			return nil, errors.Wrap(err, "compile regex pattern")
-		}
-		return func(v any) (any, bool) {
-			s, ok := v.(string)
-			if !ok {
-				return nil, false
-			}
-			matches := re.FindStringSubmatch(s)
-			if len(matches) <= p.Group {
-				return nil, false
-			}
-			n, err := parseFloat(matches[p.Group])
-			if err != nil {
-				return nil, false
-			}
-			return n, true
-		}, nil
+		return regexExtractFunc(re, p.Group, id == TransformerRegexExtractInt), nil
 	case TransformerDurationToMs:
 		return DurationToMs, nil
 	case TransformerEmailDomain:
@@ -206,6 +169,29 @@ func ReconstructTransformer(id TransformerID, params json.RawMessage) (FieldTran
 		return BoolNormalize, nil
 	default:
 		return nil, errors.Errorf("unknown transformer ID: %d", id)
+	}
+}
+
+// regexExtractFunc returns the RegexExtract (numeric=false) or
+// RegexExtractInt (numeric=true) function for a compiled pattern.
+func regexExtractFunc(re *regexp.Regexp, group int, numeric bool) FieldTransformer {
+	return func(v any) (any, bool) {
+		s, ok := v.(string)
+		if !ok {
+			return nil, false
+		}
+		matches := re.FindStringSubmatch(s)
+		if len(matches) <= group {
+			return nil, false
+		}
+		if !numeric {
+			return matches[group], true
+		}
+		n, err := parseFloat(matches[group])
+		if err != nil {
+			return nil, false
+		}
+		return n, true
 	}
 }
 

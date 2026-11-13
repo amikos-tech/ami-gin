@@ -81,10 +81,15 @@ func (idx *GINIndex) evaluatePredicate(p Predicate) *RGSet {
 		return AllRGs(int(idx.Header.NumRowGroups))
 	}
 
-	// Guard right after path resolution, before bloom, string-length,
-	// adaptive and negative-predicate pruning: it covers As, Normalized and
-	// every operator, and keys on the transformer spec, never on the alias.
+	// Guards right after path resolution, before bloom, string-length,
+	// adaptive and negative-predicate pruning: they cover As, Normalized and
+	// every operator, and key on index-owned companion state, never on the
+	// alias or idx.Config. The second guard covers regex companions that
+	// Decode degraded (#115).
 	if idx.unknownUnicodeLoweringCompanion(pathID) {
+		return AllRGs(int(idx.Header.NumRowGroups))
+	}
+	if idx.degradedRegexCompanion(pathID) {
 		return AllRGs(int(idx.Header.NumRowGroups))
 	}
 

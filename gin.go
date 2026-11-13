@@ -485,6 +485,31 @@ func WithTransformerFailureMode(mode IngestFailureMode) TransformerOption {
 	}
 }
 
+// DegradeReason is a stable code for why a companion returns every row group.
+type DegradeReason string
+
+const (
+	// DegradeReasonLegacyUnfrozenRegex: a regex companion without frozen
+	// metadata whose pattern may depend on the reader's Unicode tables.
+	DegradeReasonLegacyUnfrozenRegex DegradeReason = "legacy_unfrozen_regex"
+	// DegradeReasonRegexCompileFailed: the stored regex does not compile on this reader.
+	DegradeReasonRegexCompileFailed DegradeReason = "regex_compile_failed"
+	// DegradeReasonRegexCompileTimeout: compiling the stored regex timed out.
+	DegradeReasonRegexCompileTimeout DegradeReason = "regex_compile_timeout"
+	// DegradeReasonUnverifiedFrozenRegex: a regex marked as frozen still requests a Unicode-table operation.
+	DegradeReasonUnverifiedFrozenRegex DegradeReason = "unverified_frozen_regex"
+)
+
+// DegradedCompanion describes one companion that returns every row group for
+// every predicate on it. Other predicates in the same Evaluate call still
+// prune.
+type DegradedCompanion struct {
+	SourcePath string
+	Alias      string
+	Reason     DegradeReason
+	Detail     string
+}
+
 type RepresentationInfo struct {
 	SourcePath  string
 	Alias       string
@@ -502,6 +527,9 @@ type RepresentationSpec struct {
 type registeredRepresentation struct {
 	RepresentationSpec
 	FieldTransformer FieldTransformer
+	// degraded is set by Decode for a regex companion that must return every
+	// row group (#115). Finalize copies it into the index.
+	degraded *companionDegradation
 }
 
 type GINConfig struct {
@@ -632,6 +660,12 @@ func validateRepresentationAlias(alias string) error {
 }
 
 func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer) error {
+	return c.addRepresentationWithDegradation(canonicalPath, alias, transformerSpec, serializable, failureMode, fn, nil)
+}
+
+// addRepresentationWithDegradation is addRepresentation for Decode: it also
+// records a degraded regex companion.
+func (c *GINConfig) addRepresentationWithDegradation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer, degraded *companionDegradation) error {
 	if err := validateRepresentationAlias(alias); err != nil {
 		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
@@ -672,6 +706,7 @@ func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSp
 	c.representationTransformers[canonicalPath] = append(c.representationTransformers[canonicalPath], registeredRepresentation{
 		RepresentationSpec: spec,
 		FieldTransformer:   fn,
+		degraded:           degraded,
 	})
 	return nil
 }
@@ -1198,6 +1233,34 @@ func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
 		return trigramUnicodeVersion, true
 	}
 	return idx.trigramUnicodeToken, trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
+}
+
+// DegradedCompanions returns the companions of this index that return every
+// row group, sorted by source path, then alias. Only companions that hold
+// values in this index are listed; a predicate on any other companion
+// already returns every row group. The result is a fresh copy
+// built from index-owned state: changing it or idx.Config changes nothing.
+// It returns nil for a healthy index.
+func (idx *GINIndex) DegradedCompanions() []DegradedCompanion {
+	var out []DegradedCompanion
+	for _, companion := range idx.companionTransformers {
+		if companion.degraded == nil {
+			continue
+		}
+		out = append(out, DegradedCompanion{
+			SourcePath: companion.spec.Path,
+			Alias:      companion.spec.Alias,
+			Reason:     companion.degraded.reason,
+			Detail:     companion.degraded.detail,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourcePath != out[j].SourcePath {
+			return out[i].SourcePath < out[j].SourcePath
+		}
+		return out[i].Alias < out[j].Alias
+	})
+	return out
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

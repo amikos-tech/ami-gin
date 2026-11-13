@@ -707,7 +707,9 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	if err := idx.checkRepresentationSpecs(idx.Config); err != nil {
 		return nil, errors.Wrap(err, "check representation specs")
 	}
-	idx.buildCompanionTransformers(idx.Config)
+	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
+		return nil, errors.Wrap(ErrInvalidFormat, err.Error())
+	}
 
 	return idx, nil
 }
@@ -2082,11 +2084,20 @@ func readConfig(r io.Reader) (*GINConfig, string, error) {
 			spec.Alias = alias
 			spec.TargetPath = targetPath
 			spec.FailureMode = normalizeTransformerFailureMode(spec.FailureMode)
-			fn, err := ReconstructTransformer(spec.ID, spec.Params)
+			var fn FieldTransformer
+			var degraded *companionDegradation
+			if isRegexTransformerSpec(spec) {
+				// One classification for regex specs (#115): invalid params fail
+				// Decode; an unsafe or uncompilable pattern degrades only this
+				// companion and keeps its stored spec unchanged.
+				fn, degraded, err = classifyRegexCompanion(spec)
+			} else {
+				fn, err = ReconstructTransformer(spec.ID, spec.Params)
+			}
 			if err != nil {
 				return nil, "", errors.Wrapf(ErrInvalidFormat, "reconstruct transformer for path %s: %v", spec.Path, err)
 			}
-			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn); err != nil {
+			if err := cfg.addRepresentationWithDegradation(canonicalPath, alias, spec, true, spec.FailureMode, fn, degraded); err != nil {
 				return nil, "", errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
 			}
 		}
