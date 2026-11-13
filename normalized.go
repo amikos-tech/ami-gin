@@ -3,8 +3,10 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"sort"
+	"strings"
 
 	"github.com/pkg/errors"
 )
@@ -165,9 +167,10 @@ func (idx *GINIndex) checkRepresentationSpecs(cfg *GINConfig) error {
 				representation.Transformer.Name, configSpec.Name)
 		}
 		if !transformerParamsEqual(configSpec.Params, representation.Transformer.Params) {
-			return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config transformer params (%s/%s)",
+			// The payloads can be near maxConfigSize: name only their lengths.
+			return errors.Wrapf(ErrInvalidFormat, "representation %s on %s disagrees with config transformer params (lengths %d/%d bytes)",
 				representation.Alias, representation.SourcePath,
-				representation.Transformer.Params, configSpec.Params)
+				len(representation.Transformer.Params), len(configSpec.Params))
 		}
 		if isRegexTransformerSpec(configSpec) {
 			if err := regexWireParamsAgree(configSpec.Params, representation.Transformer.Params); err != nil {
@@ -195,9 +198,28 @@ func regexWireParamsAgree(configParams, representationParams json.RawMessage) er
 		return errors.Wrap(err, "representation params")
 	}
 	if configWire != representationWire {
-		return errors.Errorf("decoded params differ (%+v/%+v)", representationWire, configWire)
+		return errors.Errorf("decoded params differ: %s", regexWireParamsDiff(representationWire, configWire))
 	}
 	return nil
+}
+
+// regexWireParamsDiff names the fields that differ between the representation
+// and the config wire params. For a string field it gives only the lengths:
+// a frozen pattern can be near maxConfigSize, so the text is never printed.
+func regexWireParamsDiff(representation, config regexWireParams) string {
+	var diffs []string
+	addString := func(name, a, b string) {
+		if a != b {
+			diffs = append(diffs, fmt.Sprintf("%s (lengths %d/%d bytes)", name, len(a), len(b)))
+		}
+	}
+	addString("pattern", representation.Pattern, config.Pattern)
+	if representation.Group != config.Group {
+		diffs = append(diffs, fmt.Sprintf("group (%d/%d)", representation.Group, config.Group))
+	}
+	addString(regexParamSourcePattern, representation.SourcePattern, config.SourcePattern)
+	addString(regexParamFrozenUnicode, representation.FrozenUnicode, config.FrozenUnicode)
+	return strings.Join(diffs, ", ")
 }
 
 // configRepresentationFor returns the Config entry with the representation's

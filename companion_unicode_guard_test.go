@@ -361,6 +361,9 @@ func TestCompanionTransformerParamsMismatchRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "params") || !strings.Contains(err.Error(), "$.n") {
 		t.Errorf("Decode error %q should name the params and the source path", err)
 	}
+	if strings.Contains(err.Error(), `"size"`) {
+		t.Errorf("Decode error %q should not print the params payloads", err)
+	}
 }
 
 func TestTransformerParamsEqual(t *testing.T) {

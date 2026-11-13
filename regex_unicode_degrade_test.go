@@ -600,6 +600,28 @@ func TestRegexUnicodeSectionsDecodeToSameParams(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeParamsDiffNamesFields: the regex params mismatch error names
+// the fields that differ and their lengths, never the pattern text.
+func TestRegexUnicodeParamsDiffNamesFields(t *testing.T) {
+	long := strings.Repeat("Z", 4096)
+	config, err := json.Marshal(regexWireParams{Pattern: long, Group: 1, SourcePattern: long, FrozenUnicode: regexUnicodeV17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	representation, err := json.Marshal(regexWireParams{Pattern: "a", Group: 2, SourcePattern: long, FrozenUnicode: regexUnicodeV17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = regexWireParamsAgree(config, representation)
+	if err == nil {
+		t.Fatal("regexWireParamsAgree accepted different params")
+	}
+	want := "decoded params differ: pattern (lengths 1/4096 bytes), group (2/1)"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+}
+
 // TestRegexUnicodeDecodeErrorKeepsCause: a config-backed or
 // representation-only regex spec with invalid params fails Decode with
 // ErrInvalidFormat, and the error chain still holds the JSON cause.
