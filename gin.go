@@ -751,6 +751,9 @@ func withRegisteredTransformerJSON(path, alias string, id TransformerID, params 
 // the original pattern and the Unicode version, so every reader extracts like
 // the builder. Other patterns keep their params bytes. The params keys
 // source_pattern and frozen_unicode are reserved; registration rejects them.
+// In the stored params, pattern is the executable (frozen) pattern,
+// source_pattern is the original pattern, and frozen_unicode is provenance
+// only (readers do not use it to decide anything).
 func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
 		options, err := resolveTransformerOptions(opts...)
@@ -805,6 +808,9 @@ func WithSemVerTransformer(path, alias string, opts ...TransformerOption) Config
 // registration with this toolchain's Unicode tables. Prepare query values with
 // Normalized, which runs the index's stored pattern. The params keys
 // source_pattern and frozen_unicode are reserved.
+// In the stored params, pattern is the executable (frozen) pattern,
+// source_pattern is the original pattern, and frozen_unicode is provenance
+// only (readers do not use it to decide anything).
 func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
@@ -816,6 +822,9 @@ func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ..
 // registration with this toolchain's Unicode tables. Prepare query values with
 // Normalized, which runs the index's stored pattern. The params keys
 // source_pattern and frozen_unicode are reserved.
+// In the stored params, pattern is the executable (frozen) pattern,
+// source_pattern is the original pattern, and frozen_unicode is provenance
+// only (readers do not use it to decide anything).
 func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
