@@ -599,3 +599,27 @@ func TestRegexUnicodeSectionsDecodeToSameParams(t *testing.T) {
 		}
 	}
 }
+
+// TestRegexUnicodeDecodeErrorKeepsCause: a representation-only regex spec
+// with invalid params fails Decode with ErrInvalidFormat, and the error chain
+// still holds the JSON cause.
+func TestRegexUnicodeDecodeErrorKeepsCause(t *testing.T) {
+	spec := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, `{"pattern":"([A-Z]+)","group":"1"}`}
+	idx := buildRegexUnicodeIndex(t, regexUnicodeRawConfig(t, spec, regexUnicodeSafeNum))
+	other := regexUnicodeRawConfig(t, regexUnicodeSafeNum)
+	idx.Config = &other
+	_, err := Decode(mustEncodeUncompressed(t, idx))
+	if !errors.Is(err, ErrInvalidFormat) {
+		t.Fatalf("Decode err = %v, want ErrInvalidFormat", err)
+	}
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		t.Fatalf("Decode err = %v, want the *json.UnmarshalTypeError cause in the chain", err)
+	}
+	if !strings.HasSuffix(err.Error(), ": invalid format") || !strings.Contains(err.Error(), "representation upper on $.name") {
+		t.Fatalf("Decode err message = %q", err.Error())
+	}
+	if got := classifySerializeError(err); got != "invalid_format" {
+		t.Fatalf("classifySerializeError = %q, want invalid_format", got)
+	}
+}

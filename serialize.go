@@ -708,10 +708,26 @@ func decodeCore(data []byte) (*GINIndex, error) {
 		return nil, errors.Wrap(err, "check representation specs")
 	}
 	if err := idx.buildCompanionTransformers(idx.Config); err != nil {
-		return nil, errors.Wrap(ErrInvalidFormat, err.Error())
+		return nil, &invalidFormatCauseError{cause: err}
 	}
 
 	return idx, nil
+}
+
+// invalidFormatCauseError reports cause as ErrInvalidFormat and keeps cause
+// in the error chain, so errors.Is matches ErrInvalidFormat and errors.As
+// still finds the cause. The message is the same as
+// errors.Wrap(ErrInvalidFormat, cause.Error()).
+type invalidFormatCauseError struct {
+	cause error
+}
+
+func (e *invalidFormatCauseError) Error() string {
+	return e.cause.Error() + ": " + ErrInvalidFormat.Error()
+}
+
+func (e *invalidFormatCauseError) Unwrap() []error {
+	return []error{ErrInvalidFormat, e.cause}
 }
 
 // classifySerializeError maps a serialization error to the frozen error.type vocabulary.
