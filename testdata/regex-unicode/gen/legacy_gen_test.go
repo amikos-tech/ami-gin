@@ -17,7 +17,7 @@ import (
 var regexLegacyGenDocs = []string{
 	`{"name":"ABC` + "Ƛ" + `","ref":"1` + "Ƛ" + `2A","code":"order-7","status":"error"}`,
 	`{"name":"ABC","ref":"2A","code":"order-8","status":"ok"}`,
-	`{"name":"xyz","ref":"1B","code":"x","status":"error"}`,
+	`{"name":"xyz` + "ƛ" + `","ref":"1B","code":"x","status":"error"}`,
 	`{"name":"DEF","ref":"none","code":"order-7","status":"ok"}`,
 }
 

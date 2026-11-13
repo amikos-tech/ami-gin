@@ -9,6 +9,14 @@ package gin
 //
 //	AMI_GIN_REGEX_OLDREADER_IN    directory with regex.gin, regex.unicode and frozen-garay-go1.27.3.gin
 //	AMI_GIN_REGEX_OLDREADER_DONE  file the test writes after its assertions
+//
+// TestRegexNegativeControlPre115 is the negative control: the pre-#115 reader
+// on Unicode 15.0.0 decodes legacy-regex-go1.27.3.gin (pre-#115 builder on
+// 17.0.0, unfrozen patterns) and must return the known wrong sets. It proves
+// that the exact-set checks above detect the drift.
+//
+//	AMI_GIN_REGEX_NEGCTL_IN    path of legacy-regex-go1.27.3.gin
+//	AMI_GIN_REGEX_NEGCTL_DONE  file the test writes after its assertions
 
 import (
 	"os"
@@ -39,13 +47,17 @@ func regexOldReaderQueries() []regexOldReaderQuery {
 			EQ("$.name", Normalized("upper", "ABCꟜ")),
 			EQ("$.status", "error"),
 		}},
+		{"ci Normalized A7DC", []Predicate{EQ("$.name", Normalized("ci", "Ƛ"))}},
+		{"ci Normalized 019B", []Predicate{EQ("$.name", Normalized("ci", "ƛ"))}},
+		{"ci As A7DC", []Predicate{EQ("$.name", As("ci", "Ƛ"))}},
+		{"n2 GTE Normalized 1+A7DC+2A", []Predicate{GTE("$.ref", Normalized("n2", "1Ƛ2A"))}},
 	}
 }
 
 // regexOldReaderBaselines duplicates regexUnicodeBaselines (regex_unicode_build_test.go).
 var regexOldReaderBaselines = map[string][][]int{
-	"15.0.0": {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}},
-	"17.0.0": {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}},
+	"15.0.0": {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}, {0, 1, 2, 3}, {2}, {}, {0, 1}},
+	"17.0.0": {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}, {0}, {2}, {0}, {0, 1, 2}},
 }
 
 func regexOldReaderDecode(t *testing.T, path string) *GINIndex {
@@ -101,6 +113,33 @@ func TestRegexOldReaderPre115(t *testing.T) {
 	regexOldReaderRequire(t, garay, "garay As", []Predicate{EQ("$.name", As("garay", "\U00010D4A\U00010D4B"))}, []int{0})
 	regexOldReaderRequire(t, garay, "garay Normalized", []Predicate{EQ("$.name", Normalized("garay", "x\U00010D4Cy"))}, []int{2})
 
+	if t.Failed() {
+		return
+	}
+	if err := os.WriteFile(done, []byte(runtime.Version()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegexNegativeControlPre115(t *testing.T) {
+	in := os.Getenv("AMI_GIN_REGEX_NEGCTL_IN")
+	if in == "" {
+		t.Skip("AMI_GIN_REGEX_NEGCTL_IN is not set; run make old-reader-check")
+	}
+	done := os.Getenv("AMI_GIN_REGEX_NEGCTL_DONE")
+	if done == "" {
+		t.Fatal("AMI_GIN_REGEX_NEGCTL_DONE is not set")
+	}
+	if unicode.Version != "15.0.0" {
+		t.Fatalf("negative control needs a Unicode 15.0.0 reader, running %s", unicode.Version)
+	}
+	idx := regexOldReaderDecode(t, in)
+	// The 17.0.0 builder baseline is {0} and {0, 1, 2}. The reader extracts
+	// "ABC" and 2 with its 15.0.0 tables and prunes row groups that match.
+	regexOldReaderRequire(t, idx, "negative control upper Normalized ABC+A7DC",
+		[]Predicate{EQ("$.name", Normalized("upper", "ABC\uA7DC"))}, []int{1})
+	regexOldReaderRequire(t, idx, "negative control n2 GTE Normalized 1+A7DC+2A",
+		[]Predicate{GTE("$.ref", Normalized("n2", "1\uA7DC2A"))}, []int{1})
 	if t.Failed() {
 		return
 	}

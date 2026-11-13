@@ -14,15 +14,19 @@ import (
 // Measured with the stdlib on go1.26.9 (15.0.0) and go1.27.3 (17.0.0):
 //   - (\p{Lu}+) group 1: "ABCꟜ" -> "ABC" (15) / "ABCꟜ" (17).
 //   - (\d+)\p{Lu} group 1: "1Ƛ2A" -> "2" (15) / "1" (17).
+//   - (?i)(ƛ+) group 1: U+A7DC and U+019B are fold partners in 17.0.0 only.
+//     "ABCƛ" -> no match (15) / "Ƛ" (17); "xyzƛ" -> "ƛ" (both).
 //
-// Pre-fix negative control (documented, not run): on the code before #115 a
-// 17.0.0 builder and a 15.0.0 reader return {1} for
+// Pre-fix negative control (make old-reader-check, TestRegexNegativeControlPre115):
+// on the code before #115 a 17.0.0 builder and a 15.0.0 reader return {1} for
 // EQ $.name Normalized("upper", "ABCꟜ"); the reader extracts "ABC",
-// which RG1 holds, and wrongly prunes RG0. The fixed result is {0}.
+// which RG1 holds, and wrongly prunes RG0. The fixed result is {0}. The same
+// pair returns {1} for GTE $.ref Normalized("n2", "1Ƛ2A"); the fixed result
+// is {0, 1, 2}.
 var regexUnicodeDocs = []string{
 	`{"name":"ABC` + "Ƛ" + `","ref":"1` + "Ƛ" + `2A","code":"order-7","status":"error"}`,
 	`{"name":"ABC","ref":"2A","code":"order-8","status":"ok"}`,
-	`{"name":"xyz","ref":"1B","code":"x","status":"error"}`,
+	`{"name":"xyz` + "ƛ" + `","ref":"1B","code":"x","status":"error"}`,
 	`{"name":"DEF","ref":"none","code":"order-7","status":"ok"}`,
 }
 
@@ -36,6 +40,7 @@ const (
 	regexUnicodeUpperPattern = `(\p{Lu}+)`
 	regexUnicodeRefPattern   = `(\d+)\p{Lu}`
 	regexUnicodeCodePattern  = `order-(\d+)`
+	regexUnicodeFoldPattern  = `(?i)(ƛ+)`
 )
 
 // regexUnicodeConfig is the fixture config through the convenience options.
@@ -44,6 +49,7 @@ func regexUnicodeConfig(t *testing.T) GINConfig {
 	soft := WithTransformerFailureMode(IngestFailureSoft)
 	cfg, err := NewConfig(
 		WithRegexExtractTransformer("$.name", "upper", regexUnicodeUpperPattern, 1, soft),
+		WithRegexExtractTransformer("$.name", "ci", regexUnicodeFoldPattern, 1, soft),
 		WithRegexExtractIntTransformer("$.ref", "n2", regexUnicodeRefPattern, 1, soft),
 		WithRegexExtractIntTransformer("$.code", "num", regexUnicodeCodePattern, 1, soft),
 	)
@@ -67,6 +73,7 @@ func regexUnicodeRegisteredConfig(t *testing.T) GINConfig {
 	}
 	cfg, err := NewConfig(
 		WithRegisteredTransformer("$.name", "upper", TransformerRegexExtract, params(regexUnicodeUpperPattern), soft),
+		WithRegisteredTransformer("$.name", "ci", TransformerRegexExtract, params(regexUnicodeFoldPattern), soft),
 		WithRegisteredTransformer("$.ref", "n2", TransformerRegexExtractInt, params(regexUnicodeRefPattern), soft),
 		WithRegisteredTransformer("$.code", "num", TransformerRegexExtractInt, params(regexUnicodeCodePattern), soft),
 	)
@@ -113,14 +120,20 @@ func regexUnicodeQueries() []regexUnicodeQuery {
 			EQ("$.name", Normalized("upper", "ABCꟜ")),
 			EQ("$.status", "error"),
 		}},
+		{"ci Normalized A7DC", []Predicate{EQ("$.name", Normalized("ci", "Ƛ"))}},
+		{"ci Normalized 019B", []Predicate{EQ("$.name", Normalized("ci", "ƛ"))}},
+		{"ci As A7DC", []Predicate{EQ("$.name", As("ci", "Ƛ"))}},
+		{"n2 GTE Normalized 1+A7DC+2A", []Predicate{GTE("$.ref", Normalized("n2", "1Ƛ2A"))}},
 	}
 }
 
 // regexUnicodeBaselines holds the exact expected sets per builder Unicode
 // version, in the order of regexUnicodeQueries.
 var regexUnicodeBaselines = map[string][][]int{
-	regexUnicodeV15: {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}},
-	regexUnicodeV17: {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}},
+	// On 15.0.0, U+A7DC has no fold partner, so ci does not match it:
+	// Normalized gets ok=false (every row group) and As finds no row group.
+	regexUnicodeV15: {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}, {0, 1, 2, 3}, {2}, {}, {0, 1}},
+	regexUnicodeV17: {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}, {0}, {2}, {0}, {0, 1, 2}},
 }
 
 // requireRegexUnicodeBaseline asserts the exact baseline of a builder with
@@ -174,6 +187,7 @@ func TestRegexUnicodeFreezeAtRegistration(t *testing.T) {
 		for _, tc := range []struct{ path, alias, pattern string }{
 			{"$.name", "upper", regexUnicodeUpperPattern},
 			{"$.ref", "n2", regexUnicodeRefPattern},
+			{"$.name", "ci", regexUnicodeFoldPattern},
 		} {
 			raw := regexUnicodeStoredParams(t, &cfg, tc.path, tc.alias)
 			wire, marked, err := decodeRegexWireParams(raw)

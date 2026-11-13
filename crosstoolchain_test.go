@@ -90,7 +90,7 @@ func requireExchangedRegexQueries(t *testing.T, dir string) {
 	t.Helper()
 	builderUnicode := strings.TrimSpace(string(readTestFile(t, filepath.Join(dir, xtcRegexUnicode))))
 	idx := xtcDecode(t, dir, xtcRegexArtifact)
-	for _, alias := range []string{"upper", "n2"} {
+	for _, alias := range []string{"upper", "n2", "ci"} {
 		configParams, repParams := regexUnicodeSectionParams(t, idx, alias)
 		for _, params := range []json.RawMessage{configParams, repParams} {
 			wire, marked, err := decodeRegexWireParams(params)

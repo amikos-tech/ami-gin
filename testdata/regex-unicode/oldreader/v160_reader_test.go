@@ -32,12 +32,14 @@ func regexOldReaderV160Queries() []regexOldReaderV160Query {
 		{"n2 As 1", EQ("$.ref", As("n2", float64(1)))},
 		{"n2 As 2", EQ("$.ref", As("n2", float64(2)))},
 		{"num As 7", EQ("$.code", As("num", float64(7)))},
+		{"ci As A7DC", EQ("$.name", As("ci", "Ƛ"))},
+		{"ci As 019B", EQ("$.name", As("ci", "ƛ"))},
 	}
 }
 
 var regexOldReaderV160Baselines = map[string][][]int{
-	"15.0.0": {{}, {3}, {2}, {0, 1}, {0, 3}},
-	"17.0.0": {{0}, {3}, {0, 2}, {1}, {0, 3}},
+	"15.0.0": {{}, {3}, {2}, {0, 1}, {0, 3}, {}, {2}},
+	"17.0.0": {{0}, {3}, {0, 2}, {1}, {0, 3}, {0}, {2}},
 }
 
 func regexOldReaderV160Decode(t *testing.T, path string) *GINIndex {

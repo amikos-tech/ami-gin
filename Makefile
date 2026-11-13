@@ -128,7 +128,9 @@ regex-unicode-legacy-goldens:
 # the current code on both toolchains, then runs the pre-#115 reader
 # ($(REGEX_PRE115_REF), As and Normalized) on both toolchains and the v1.6.0 reader
 # ($(REGEX_V160_REF), As only) on $(XTC_OLD_GO) against each builder's regex.gin and
-# the frozen Garay golden. Each cell must write its done marker.
+# the frozen Garay golden. Each cell must write its done marker. A last negative
+# control cell runs the pre-#115 reader on $(XTC_OLD_GO) against the pre-#115
+# go1.27.3 legacy golden and must see the known wrong sets.
 # Not part of test or lint: it downloads two toolchains and checks out old commits.
 .PHONY: old-reader-check
 old-reader-check:
@@ -162,7 +164,15 @@ old-reader-check:
 			fi; \
 			printf '%s reader on %s, builder %s: ok\n' "$$ref" "$$reader" "$$builder"; \
 		done; \
-	done
+	done; \
+	negctl_done="$$dir/done-negctl"; \
+	(cd "$$dir/wt-pre115" && GOTOOLCHAIN=$(XTC_OLD_GO) AMI_GIN_REGEX_NEGCTL_IN="$(CURDIR)/testdata/regex-unicode/legacy-regex-go1.27.3.gin" AMI_GIN_REGEX_NEGCTL_DONE="$$negctl_done" \
+		go test -tags regex_oldreader -count=1 -run '^TestRegexNegativeControlPre115$$' .); \
+	if ! test -s "$$negctl_done"; then \
+		printf 'negative control (pre115 reader on %s, pre-#115 builder go1.27.3): TestRegexNegativeControlPre115 did not run\n' "$(XTC_OLD_GO)" >&2; \
+		exit 1; \
+	fi; \
+	printf 'negative control (pre115 reader on %s, pre-#115 builder go1.27.3): drift detected as expected\n' "$(XTC_OLD_GO)"
 
 .PHONY: gotestsum-bin
 gotestsum-bin:
