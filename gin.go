@@ -742,6 +742,15 @@ func withRegisteredTransformerJSON(path, alias string, id TransformerID, params 
 	}
 }
 
+// WithRegisteredTransformer registers a built-in transformer by ID with JSON
+// params, so the companion can be reconstructed after Decode.
+//
+// Regex patterns (TransformerRegexExtract and TransformerRegexExtractInt) with
+// \p{..}, \P{..}, or (?i) with non-ASCII runes are frozen at registration with
+// this toolchain's Unicode tables: the stored params hold the frozen pattern,
+// the original pattern and the Unicode version, so every reader extracts like
+// the builder. Other patterns keep their params bytes. The params keys
+// source_pattern and frozen_unicode are reserved; registration rejects them.
 func WithRegisteredTransformer(path, alias string, id TransformerID, params []byte, opts ...TransformerOption) ConfigOption {
 	return func(c *GINConfig) error {
 		options, err := resolveTransformerOptions(opts...)
@@ -790,10 +799,23 @@ func WithSemVerTransformer(path, alias string, opts ...TransformerOption) Config
 	return WithRegisteredTransformer(path, alias, TransformerSemVerToInt, nil, opts...)
 }
 
+// WithRegexExtractTransformer adds a regex-extract companion for path under alias.
+//
+// A pattern with \p{..}, \P{..}, or (?i) with non-ASCII runes is frozen at
+// registration with this toolchain's Unicode tables. Prepare query values with
+// Normalized, which runs the index's stored pattern. The params keys
+// source_pattern and frozen_unicode are reserved.
 func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
 
+// WithRegexExtractIntTransformer adds a companion for path under alias that
+// extracts a number with a regex.
+//
+// A pattern with \p{..}, \P{..}, or (?i) with non-ASCII runes is frozen at
+// registration with this toolchain's Unicode tables. Prepare query values with
+// Normalized, which runs the index's stored pattern. The params keys
+// source_pattern and frozen_unicode are reserved.
 func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }

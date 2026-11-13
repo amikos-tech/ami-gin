@@ -22,30 +22,6 @@ var (
 	regexUnicodeSafeNumParamsBytes = `{"pattern":"order-(\\d+)","group":1}`
 )
 
-// regexUnicodeGarayDocs: RG0 holds two Garay letters, RG1 none, RG2 one.
-var regexUnicodeGarayDocs = []string{
-	`{"name":"ab` + "\U00010D4A\U00010D4B" + `cd"}`,
-	`{"name":"abcd"}`,
-	`{"name":"` + "\U00010D4C" + `"}`,
-}
-
-// buildRegexUnicodeGarayIndex builds the Garay docs with the current builder.
-// It needs Unicode 16 or later to register the pattern.
-func buildRegexUnicodeGarayIndex(t *testing.T) *GINIndex {
-	t.Helper()
-	cfg, err := NewConfig(WithRegexExtractTransformer("$.name", "garay", regexUnicodeGarayPattern, 1, WithTransformerFailureMode(IngestFailureSoft)))
-	if err != nil {
-		t.Fatalf("NewConfig: %v", err)
-	}
-	builder := mustNewBuilder(t, cfg, len(regexUnicodeGarayDocs))
-	for rg, doc := range regexUnicodeGarayDocs {
-		if err := builder.AddDocument(DocID(rg), []byte(doc)); err != nil {
-			t.Fatalf("AddDocument(%d): %v", rg, err)
-		}
-	}
-	return builder.Finalize()
-}
-
 func TestRegexUnicodeLegacyRegexGoldens(t *testing.T) {
 	all := []int{0, 1, 2, 3}
 	for _, path := range regexUnicodeLegacyRegexGoldens {
@@ -82,7 +58,7 @@ func TestRegexUnicodeLegacySafeGolden(t *testing.T) {
 		t.Fatalf("stored params: config %s, representation %s", configParams, repParams)
 	}
 	requireRows(t, idx, EQ("$.code", As("num", float64(7))), []int{0, 3})
-	if unicode.Version != "15.0.0" {
+	if unicode.Version != regexUnicodeV15 {
 		t.Logf("byte identity is checked on 15.0.0 only (running %s)", unicode.Version)
 		return
 	}
@@ -99,9 +75,9 @@ func TestRegexUnicodeLegacyGarayGolden(t *testing.T) {
 	idx := mustDecodeRegexUnicode(t, readTestFile(t, regexUnicodeLegacyGarayGolden))
 	var reason DegradeReason
 	switch unicode.Version {
-	case "15.0.0":
+	case regexUnicodeV15:
 		reason = DegradeReasonRegexCompileFailed
-	case "17.0.0":
+	case regexUnicodeV17:
 		reason = DegradeReasonLegacyUnfrozenRegex
 	default:
 		t.Fatalf("unicode.Version %s has no literal expectation", unicode.Version)
@@ -122,7 +98,7 @@ func TestRegexUnicodeFrozenGarayGolden(t *testing.T) {
 
 	configParams, repParams := regexUnicodeSectionParams(t, idx, "garay")
 	wire, marked, err := decodeRegexWireParams(configParams)
-	if err != nil || !marked || wire.SourcePattern != regexUnicodeGarayPattern || wire.FrozenUnicode != "17.0.0" {
+	if err != nil || !marked || wire.SourcePattern != regexUnicodeGarayPattern || wire.FrozenUnicode != regexUnicodeV17 {
 		t.Fatalf("stored params %s: marked %v err %v", configParams, marked, err)
 	}
 	reencoded := mustEncodeUncompressed(t, idx)

@@ -124,8 +124,11 @@ func SemVerToInt(v any) (any, bool) {
 // RegexExtract returns a transformer that extracts a substring via regex capture group.
 // Pattern is compiled once at config time. Group 0 = full match, group 1+ = capture groups.
 //
-// Patterns with Unicode classes or (?i) depend on the Unicode tables of the Go
-// toolchain. Build and query with the same Go version.
+// This function compiles the pattern with the Unicode tables of the caller's
+// Go toolchain. An index stores a frozen pattern for a Unicode-sensitive regex
+// (\p{..}, \P{..}, or (?i) with non-ASCII runes), so prepare query values with
+// Normalized. A value prepared with this function and sent with As can still
+// differ across Go versions.
 func RegexExtract(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {
@@ -143,8 +146,11 @@ func RegexExtract(pattern string, group int) FieldTransformer {
 
 // RegexExtractInt extracts a substring via regex and converts it to float64.
 //
-// Patterns with Unicode classes or (?i) depend on the Unicode tables of the Go
-// toolchain. Build and query with the same Go version.
+// This function compiles the pattern with the Unicode tables of the caller's
+// Go toolchain. An index stores a frozen pattern for a Unicode-sensitive regex
+// (\p{..}, \P{..}, or (?i) with non-ASCII runes), so prepare query values with
+// Normalized. A value prepared with this function and sent with As can still
+// differ across Go versions.
 func RegexExtractInt(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {

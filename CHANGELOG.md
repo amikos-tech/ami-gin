@@ -49,6 +49,37 @@
   0.123456789012345678 can round differently. `As` can then miss a match.
   `Normalized` avoids this.
 
+- `RegexExtract` and `RegexExtractInt` companions no longer depend on the Go
+  toolchain (#115). A pattern with `\p{..}`, `\P{..}`, or `(?i)` with
+  non-ASCII runes is frozen when you register it: the builder expands it into
+  explicit ranges with its own Unicode tables. The stored params hold
+  `pattern` (the frozen pattern), `source_pattern` (your pattern) and
+  `frozen_unicode` (the builder's Unicode version). Before, a builder on Go
+  1.27 and a reader on Go 1.26, or the reverse, could extract different
+  values and prune a matching row group. Other patterns are stored byte for
+  byte as before. The wire format stays v11. `Normalized` runs the stored
+  pattern. An `As` value that you prepare with `gin.RegexExtract(p, g)(raw)`
+  on another Go version can still differ.
+- On upgraded readers, legacy regex companions without frozen metadata stop
+  pruning when their patterns are classified as potentially Unicode-sensitive.
+  This includes Unicode classes, some non-ASCII case-insensitive patterns, and
+  conservatively classified explicit ranges. Other companions retain pruning.
+  Rebuild affected indexes from source data to restore pruning.
+- `Decode` no longer fails when a stored regex does not compile (for example
+  `\p{Garay}` on Go 1.26) or its compile times out. That companion returns
+  all row groups, and other predicates still prune. Invalid regex params
+  still fail `Decode`.
+- New additive API `GINIndex.DegradedCompanions()`. It lists the companions
+  that return all row groups, with the source path, alias, a reason code
+  (`legacy_unfrozen_regex`, `regex_compile_failed`, `regex_compile_timeout`,
+  `unverified_frozen_regex`) and a detail. `gin-index info` prints them.
+- `Encode` now rejects a config section larger than 1 MiB, which readers
+  reject. `NewConfig` and `NewBuilder` check both section limits early.
+  Registration rejects the reserved regex params keys `source_pattern` and
+  `frozen_unicode`.
+- New `make old-reader-check` target (local, not in CI). The pre-#115 reader
+  and the v1.6.0 reader decode indexes that this release builds.
+
 ## v1.6.0 (2026-10-21)
 
 - The Go floor is now 1.26 (#97).

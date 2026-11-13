@@ -1054,3 +1054,52 @@ func TestFormatTrigramUnicodeVersionQuotesUntrustedTokens(t *testing.T) {
 		}
 	}
 }
+
+func TestRunInfoReportsDegradedCompanions(t *testing.T) {
+	golden, err := os.ReadFile(filepath.Join("..", "..", "testdata", "regex-unicode", "legacy-regex-go1.26.9.gin"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "legacy.gin")
+	if err := os.WriteFile(indexPath, golden, 0o644); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if code := runInfo([]string{indexPath}, &stdout, &stderr); code != 0 {
+		t.Fatalf("runInfo() code = %d, stderr = %s", code, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"Degraded companions",
+		"$.name alias upper: legacy_unfrozen_regex: ",
+		"$.ref alias n2: legacy_unfrozen_regex: ",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("info output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "alias num") {
+		t.Fatalf("info output lists the healthy num companion:\n%s", out)
+	}
+}
+
+func TestWriteIndexInfoHealthyIndexHasNoDegradedBlock(t *testing.T) {
+	cfg, err := gin.NewConfig(gin.WithRegexExtractIntTransformer("$.code", "num", `order-(\d+)`, 1))
+	if err != nil {
+		t.Fatalf("NewConfig() error = %v", err)
+	}
+	builder, err := gin.NewBuilder(cfg, 1)
+	if err != nil {
+		t.Fatalf("NewBuilder() error = %v", err)
+	}
+	if err := builder.AddDocument(0, []byte(`{"code":"order-7"}`)); err != nil {
+		t.Fatalf("AddDocument() error = %v", err)
+	}
+	var buf bytes.Buffer
+	writeIndexInfo(&buf, builder.Finalize())
+	if strings.Contains(buf.String(), "Degraded companions") {
+		t.Fatalf("healthy index info has a degraded block:\n%s", buf.String())
+	}
+}

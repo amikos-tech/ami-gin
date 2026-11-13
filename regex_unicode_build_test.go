@@ -26,6 +26,12 @@ var regexUnicodeDocs = []string{
 	`{"name":"DEF","ref":"none","code":"order-7","status":"ok"}`,
 }
 
+// Unicode versions of the two toolchains the #115 tests know.
+const (
+	regexUnicodeV15 = "15.0.0" // go1.26.9
+	regexUnicodeV17 = "17.0.0" // go1.27.3
+)
+
 const (
 	regexUnicodeUpperPattern = `(\p{Lu}+)`
 	regexUnicodeRefPattern   = `(\d+)\p{Lu}`
@@ -113,8 +119,8 @@ func regexUnicodeQueries() []regexUnicodeQuery {
 // regexUnicodeBaselines holds the exact expected sets per builder Unicode
 // version, in the order of regexUnicodeQueries.
 var regexUnicodeBaselines = map[string][][]int{
-	"15.0.0": {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}},
-	"17.0.0": {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}},
+	regexUnicodeV15: {{0, 1}, {0, 1}, {}, {3}, {0, 1}, {2}, {0, 1}, {0, 3}, {0}},
+	regexUnicodeV17: {{0}, {1}, {0}, {3}, {0, 2}, {0, 2}, {1}, {0, 3}, {0}},
 }
 
 // requireRegexUnicodeBaseline asserts the exact baseline of a builder with
@@ -230,11 +236,11 @@ func TestRegexUnicodeRejectsReservedKeys(t *testing.T) {
 func TestRegexUnicodeGarayRegistration(t *testing.T) {
 	cfg, err := NewConfig(WithRegexExtractTransformer("$.name", "garay", `(\p{Garay}+)`, 1))
 	switch unicode.Version {
-	case "15.0.0":
+	case regexUnicodeV15:
 		if err == nil {
 			t.Fatal("register \\p{Garay} on 15.0.0: want error")
 		}
-	case "17.0.0":
+	case regexUnicodeV17:
 		if err != nil {
 			t.Fatalf("register \\p{Garay} on 17.0.0: %v", err)
 		}

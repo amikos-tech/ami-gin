@@ -125,8 +125,8 @@ func TestRegexUnicodeClassifyCompileFailures(t *testing.T) {
 
 	garayReason := DegradeReasonRegexCompileFailed
 	switch unicode.Version {
-	case "15.0.0":
-	case "17.0.0":
+	case regexUnicodeV15:
+	case regexUnicodeV17:
 		garayReason = DegradeReasonLegacyUnfrozenRegex
 	default:
 		t.Fatalf("unicode.Version %s has no literal expectation", unicode.Version)
