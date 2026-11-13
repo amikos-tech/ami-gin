@@ -668,13 +668,9 @@ func validateRepresentationAlias(alias string) error {
 	return nil
 }
 
-func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer) error {
-	return c.addRepresentationWithDegradation(canonicalPath, alias, transformerSpec, serializable, failureMode, fn, nil)
-}
-
-// addRepresentationWithDegradation is addRepresentation for Decode: it also
-// records a degraded regex companion.
-func (c *GINConfig) addRepresentationWithDegradation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer, degraded *companionDegradation) error {
+// addRepresentation registers one companion. degraded is set only by Decode,
+// for a degraded regex companion (#115); other callers pass nil.
+func (c *GINConfig) addRepresentation(canonicalPath, alias string, transformerSpec TransformerSpec, serializable bool, failureMode IngestFailureMode, fn FieldTransformer, degraded *companionDegradation) error {
 	if err := validateRepresentationAlias(alias); err != nil {
 		return errors.Wrapf(err, "transformer alias invalid for %s", canonicalPath)
 	}
@@ -737,7 +733,7 @@ func WithCustomTransformer(path, alias string, fn FieldTransformer, opts ...Tran
 			return err
 		}
 		spec := NewTransformerSpec(canonicalPath, TransformerUnknown, nil)
-		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn)
+		return c.addRepresentation(canonicalPath, alias, spec, false, options.failureMode, fn, nil)
 	}
 }
 
@@ -794,7 +790,7 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		if err != nil {
 			return err
 		}
-		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, stored), true, options.failureMode, fn)
+		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, stored), true, options.failureMode, fn, nil)
 	}
 }
 

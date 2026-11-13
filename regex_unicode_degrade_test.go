@@ -54,7 +54,7 @@ func regexUnicodeRawConfig(t *testing.T, specs ...regexUnicodeRawSpec) GINConfig
 			t.Fatal(err)
 		}
 		transformerSpec := NewTransformerSpec(canonicalPath, spec.id, json.RawMessage(spec.params))
-		if err := cfg.addRepresentation(canonicalPath, spec.alias, transformerSpec, true, IngestFailureSoft, regexUnicodeRawFunc(spec)); err != nil {
+		if err := cfg.addRepresentation(canonicalPath, spec.alias, transformerSpec, true, IngestFailureSoft, regexUnicodeRawFunc(spec), nil); err != nil {
 			t.Fatalf("addRepresentation(%+v): %v", spec, err)
 		}
 	}

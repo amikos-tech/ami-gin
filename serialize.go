@@ -2113,7 +2113,7 @@ func readConfig(r io.Reader) (*GINConfig, string, error) {
 			if err != nil {
 				return nil, "", &invalidFormatCauseError{cause: errors.Wrapf(err, "reconstruct transformer for path %s", spec.Path)}
 			}
-			if err := cfg.addRepresentationWithDegradation(canonicalPath, alias, spec, true, spec.FailureMode, fn, degraded); err != nil {
+			if err := cfg.addRepresentation(canonicalPath, alias, spec, true, spec.FailureMode, fn, degraded); err != nil {
 				return nil, "", errors.Wrapf(ErrInvalidFormat, "register transformer for %s alias %q: %v", canonicalPath, alias, err)
 			}
 		}
