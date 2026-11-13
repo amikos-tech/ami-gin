@@ -485,3 +485,59 @@ func TestRegexUnicodeDegradedCompanionsWithoutValues(t *testing.T) {
 	decoded := mustDecodeRegexUnicode(t, reencoded)
 	requireList("finalized from decoded config", buildRegexUnicodeIndex(t, *decoded.Config).DegradedCompanions())
 }
+
+// TestRegexUnicodeNewBuilderRejectsPlaceholder: a decoded config whose regex
+// companion did not compile has no executable transformer. NewBuilder fails
+// and names the source path, alias and reason. Decode itself succeeds.
+func TestRegexUnicodeNewBuilderRejectsPlaceholder(t *testing.T) {
+	requireRejected := func(t *testing.T, cfg GINConfig, alias string, reason DegradeReason) {
+		t.Helper()
+		_, err := NewBuilder(cfg, 4)
+		if err == nil {
+			t.Fatalf("NewBuilder: err = nil, want error for alias %q", alias)
+		}
+		for _, want := range []string{"$.name", `"` + alias + `"`, string(reason), "no executable transformer"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("NewBuilder: err = %v, want it to hold %q", err, want)
+			}
+		}
+	}
+
+	t.Run("compile failed", func(t *testing.T) {
+		invalid := regexUnicodeRawSpec{"$.name", "bad", TransformerRegexExtract, `{"pattern":"[invalid","group":0}`}
+		idx := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t, invalid, regexUnicodeSafeNum))
+		requireRejected(t, *idx.Config, "bad", DegradeReasonRegexCompileFailed)
+	})
+
+	t.Run("unverified and uncompilable", func(t *testing.T) {
+		spec := regexUnicodeRawSpec{"$.name", "fbad", TransformerRegexExtract,
+			`{"pattern":"(\\p{Lu}+","group":1,"source_pattern":"(\\p{Lu}+","frozen_unicode":"17.0.0"}`}
+		idx := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t, spec, regexUnicodeSafeNum))
+		requireRegexUnicodeDegraded(t, idx, map[string]DegradeReason{"$.name#fbad": DegradeReasonUnverifiedFrozenRegex})
+		requireRejected(t, *idx.Config, "fbad", DegradeReasonUnverifiedFrozenRegex)
+	})
+
+	t.Run("compile timeout", func(t *testing.T) {
+		safeUpper := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, `{"pattern":"([A-Z]+)","group":1}`}
+		data := regexUnicodeRawIndex(t, safeUpper)
+		release := make(chan struct{})
+		previous, previousDeadline := regexCompileFunc, regexCompileDeadline
+		t.Cleanup(func() { regexCompileFunc, regexCompileDeadline = previous, previousDeadline })
+		regexCompileDeadline = 20 * time.Millisecond
+		regexCompileFunc = func(pattern string) (*regexp.Regexp, error) {
+			<-release
+			return regexp.Compile(pattern)
+		}
+		idx := mustDecodeRegexUnicode(t, data)
+		close(release)
+		regexCompileFunc, regexCompileDeadline = previous, previousDeadline
+		requireRejected(t, *idx.Config, "upper", DegradeReasonRegexCompileTimeout)
+	})
+
+	t.Run("legacy compiled keeps building", func(t *testing.T) {
+		idx := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t, regexUnicodeLegacyUpper, regexUnicodeSafeNum))
+		if _, err := NewBuilder(*idx.Config, 4); err != nil {
+			t.Fatalf("NewBuilder with a legacy compiled companion: %v", err)
+		}
+	})
+}

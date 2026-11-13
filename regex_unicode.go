@@ -534,6 +534,12 @@ func freezeRegexTransformerParams(params []byte) ([]byte, error) {
 type companionDegradation struct {
 	reason DegradeReason
 	detail string
+	// placeholder is true when the stored pattern did not compile, so the
+	// companion function is regexDegradedPlaceholder and never produces a
+	// value. It is tracked apart from reason: a marked spec that fails the
+	// verifier and also fails to compile reports unverified_frozen_regex.
+	// NewBuilder rejects a config with such a companion.
+	placeholder bool
 }
 
 // regexDegradedPlaceholder stands in for a regex companion whose stored
@@ -557,7 +563,8 @@ func regexDegradedPlaceholder(any) (any, bool) { return nil, false }
 //
 // A degraded companion keeps its compiled function when the pattern
 // compiled, so a decoded config reused by NewBuilder extracts as before #115.
-// Otherwise the function is a placeholder that never produces a value.
+// Otherwise the function is a placeholder that never produces a value, and
+// the degradation is marked so NewBuilder rejects the config.
 func classifyRegexCompanion(spec TransformerSpec) (FieldTransformer, *companionDegradation, error) {
 	if spec.ID != TransformerRegexExtract && spec.ID != TransformerRegexExtractInt {
 		return nil, nil, errors.Errorf("transformer name %q does not match transformer id %d", spec.Name, spec.ID)
@@ -581,6 +588,7 @@ func classifyRegexCompanion(spec TransformerSpec) (FieldTransformer, *companionD
 				degraded = &companionDegradation{reason: DegradeReasonRegexCompileTimeout, detail: err.Error()}
 			}
 		}
+		degraded.placeholder = true
 		return regexDegradedPlaceholder, degraded, nil
 	}
 	if degraded == nil && !marked && regexTableSensitive(params.Pattern) {
@@ -590,4 +598,27 @@ func classifyRegexCompanion(spec TransformerSpec) (FieldTransformer, *companionD
 		}
 	}
 	return regexExtractFunc(re, params.Group, spec.ID == TransformerRegexExtractInt), degraded, nil
+}
+
+// checkExecutableTransformers fails when a registration has no executable
+// transformer: a decoded regex companion whose stored pattern did not compile
+// (#115). The error names the source path, alias and reason. NewBuilder runs
+// it; Decode does not, because a reader can still query such an index (the
+// companion returns every row group).
+func (c *GINConfig) checkExecutableTransformers() error {
+	paths := make([]string, 0, len(c.representationTransformers))
+	for path := range c.representationTransformers {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		for _, registered := range c.representationTransformers[path] {
+			if registered.degraded == nil || !registered.degraded.placeholder {
+				continue
+			}
+			return errors.Errorf("companion %s alias %q has no executable transformer (%s: %s); register the transformer again to build",
+				registered.SourcePath, registered.Alias, registered.degraded.reason, registered.degraded.detail)
+		}
+	}
+	return nil
 }
