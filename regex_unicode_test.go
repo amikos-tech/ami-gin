@@ -743,6 +743,55 @@ func TestRegexUnicodeIsRegexTransformerSpec(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeTreeRuleExemptions pins the two exemptions of the tree
+// rule at their boundaries: a negated-ASCII tail [lo..MaxRune] with
+// lo <= 0x80, and the single runes U+017F and U+212A. Each safe pattern must
+// stay unflagged; each pattern just past a boundary must stay flagged. A
+// class of one rune parses to a plain literal, so the single-rune cases add
+// an ASCII rune to keep a char class.
+func TestRegexUnicodeTreeRuleExemptions(t *testing.T) {
+	tree := func(pattern string) bool {
+		t.Helper()
+		re, err := syntax.Parse(pattern, syntax.Perl)
+		if err != nil {
+			t.Fatalf("parse %q: %v", pattern, err)
+		}
+		return regexTreeSensitive(re)
+	}
+	for _, pattern := range []string{
+		`[^a-z]`,              // tail from 0x7B
+		`[\x{80}-\x{10FFFF}]`, // tail from 0x80, the upper bound
+		`(?i)k`,               // [Kk\x{212A}]
+		`(?i)s`,               // [Ss\x{17F}]
+		`[\x{17F}\x{212A}]`,   // both single runes
+		`[a-z\x{17F}]`,        // single rune next to ASCII
+	} {
+		if tree(pattern) {
+			t.Errorf("tree rule flags %q, want an exemption", pattern)
+		}
+		if regexTableSensitive(pattern) {
+			t.Errorf("regexTableSensitive(%q) = true, want false", pattern)
+		}
+	}
+	for _, pattern := range []string{
+		`[\x{81}-\x{10FFFF}]`, // tail starts after 0x80
+		`[\x{80}-\x{10FFFE}]`, // does not reach MaxRune
+		`[a\x{17E}]`,          // next to U+017F
+		`[a\x{180}]`,          // next to U+017F
+		`[\x{17F}-\x{180}]`,   // a range, not the single rune
+		`[a\x{2129}]`,         // next to U+212A
+		`[a\x{212B}]`,         // next to U+212A
+		`[\x{212A}-\x{212B}]`, // a range, not the single rune
+	} {
+		if !tree(pattern) {
+			t.Errorf("tree rule does not flag %q", pattern)
+		}
+		if !regexTableSensitive(pattern) {
+			t.Errorf("regexTableSensitive(%q) = false, want true", pattern)
+		}
+	}
+}
+
 // TestRegexUnicodeReasonPrecedence: a marked spec whose pattern fails the
 // verifier and also fails to compile reports unverified_frozen_regex, and its
 // degradation is marked as a placeholder.
