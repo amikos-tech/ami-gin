@@ -360,7 +360,8 @@ func freezeRegexPattern(pattern string, budget int) (string, error) {
 		return "", errors.Wrap(err, "parse regex pattern")
 	}
 	re = freezeRegexNode(re)
-	if lower := frozenRegexLowerBound(re, budget); lower > budget {
+	// The JSON form adds two quotes to the rendered text.
+	if lower := frozenRegexLowerBound(re, budget) + 2; lower > budget {
 		return "", errors.Errorf("frozen regex needs at least %d bytes, more than the limit of %d bytes", lower, budget)
 	}
 	frozen := re.String()
@@ -374,22 +375,45 @@ func freezeRegexPattern(pattern string, budget int) (string, error) {
 	return frozen, nil
 }
 
-// frozenRegexLowerBound returns a lower bound of the rendered length of re.
-// It stops counting once the bound passes limit.
+// frozenRegexLowerBound returns a lower bound of the rendered byte length of
+// re, as (*syntax.Regexp).String writes it. It follows the char class layout
+// of String (gaps for a class that holds 0 and MaxRune, no '-' between two
+// adjacent runes) and counts each rune as at least its UTF-8 length, because
+// String writes a rune either as itself (perhaps after a backslash) or as a
+// longer escape. JSON encoding only adds bytes. The bound therefore never
+// exceeds the real size, and a pattern whose frozen text fits is never
+// rejected. It stops counting once the bound passes limit.
 func frozenRegexLowerBound(re *syntax.Regexp, limit int) int {
 	total := 0
 	switch re.Op {
 	case syntax.OpCharClass:
 		total += 2
-		for i := 0; i+1 < len(re.Rune); i += 2 {
-			if re.Rune[i] == re.Rune[i+1] {
-				total++
-			} else {
-				total += 3
+		addRange := func(lo, hi rune) {
+			total += regexRuneLowerBound(lo)
+			if lo != hi {
+				if hi != lo+1 {
+					total++
+				}
+				total += regexRuneLowerBound(hi)
+			}
+		}
+		switch {
+		case len(re.Rune) == 0:
+			total += len(`^\x00-\x{10FFFF}`)
+		case re.Rune[0] == 0 && re.Rune[len(re.Rune)-1] == unicode.MaxRune && len(re.Rune) > 2:
+			total++
+			for i := 1; i+1 < len(re.Rune)-1 && total <= limit; i += 2 {
+				addRange(re.Rune[i]+1, re.Rune[i+1]-1)
+			}
+		default:
+			for i := 0; i+1 < len(re.Rune) && total <= limit; i += 2 {
+				addRange(re.Rune[i], re.Rune[i+1])
 			}
 		}
 	case syntax.OpLiteral:
-		total += len(re.Rune)
+		for _, r := range re.Rune {
+			total += regexRuneLowerBound(r)
+		}
 	}
 	for _, sub := range re.Sub {
 		if total > limit {
@@ -398,6 +422,15 @@ func frozenRegexLowerBound(re *syntax.Regexp, limit int) int {
 		total += frozenRegexLowerBound(sub, limit-total)
 	}
 	return total
+}
+
+// regexRuneLowerBound is the fewest bytes String uses to write r: its UTF-8
+// length, or 1 for a rune that has no UTF-8 form (String escapes it).
+func regexRuneLowerBound(r rune) int {
+	if n := utf8.RuneLen(r); n > 0 {
+		return n
+	}
+	return 1
 }
 
 // regexFoldOrbit returns the sorted SimpleFold orbit of r with this
