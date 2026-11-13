@@ -44,8 +44,8 @@ func isLoweringSpec(spec TransformerSpec) bool {
 // idx.representations. Finalize passes the builder's Config, which keeps
 // in-memory custom functions. Decode passes the freshly decoded Config, after
 // checkRepresentationSpecs has accepted it. cfg is used at build time only:
-// Normalized, the unknown-token guard and the degraded-regex guard read the
-// index-owned map, never idx.Config.
+// Normalized and the companionReturnsAllRGs guard read the index-owned map,
+// never idx.Config.
 //
 // A representation the Config lists takes the Config's function and
 // degradation, so an index finalized from a decoded config inherits it. A
@@ -123,14 +123,6 @@ func newDegradedCompanion(representation RepresentationSpec, degradation *compan
 		Reason:     degradation.reason,
 		Detail:     degradation.detail,
 	}
-}
-
-// degradedRegexCompanion reports whether pathID is a regex companion that
-// must return every row group (legacy, uncompilable, timed out or
-// unverified, #115).
-func (idx *GINIndex) degradedRegexCompanion(pathID int) bool {
-	companion, ok := idx.companionTransformers[uint16(pathID)]
-	return ok && companion.degraded != nil
 }
 
 // checkRepresentationSpecs runs on Decode only. A representation whose
@@ -245,17 +237,24 @@ func transformerParamsEqual(a, b json.RawMessage) bool {
 	return reflect.DeepEqual(av, bv)
 }
 
-// unknownUnicodeLoweringCompanion reports whether pathID is a ToLower,
-// EmailDomain or URLHost companion that this reader cannot answer exactly: the
-// index carries a trigram_unicode_version token whose tables this reader does
-// not have, so the companion terms may hold a lowercase mapping it cannot
-// reproduce. Callers return every row group.
-func (idx *GINIndex) unknownUnicodeLoweringCompanion(pathID int) bool {
-	if trigramUnicodeTokenSupported(idx.trigramUnicodeToken) {
+// companionReturnsAllRGs reports whether pathID is a companion that this
+// reader cannot answer exactly, so every predicate on it returns every row
+// group. Two cases:
+//   - a degraded regex companion (legacy, uncompilable, timed out or
+//     unverified, #115);
+//   - a ToLower, EmailDomain or URLHost companion of an index whose
+//     trigram_unicode_version token names tables this reader does not have,
+//     so the companion terms may hold a lowercase mapping it cannot
+//     reproduce (#102).
+func (idx *GINIndex) companionReturnsAllRGs(pathID int) bool {
+	companion, ok := idx.companionTransformers[uint16(pathID)]
+	if !ok {
 		return false
 	}
-	companion, ok := idx.companionTransformers[uint16(pathID)]
-	return ok && isLoweringSpec(companion.spec)
+	if companion.degraded != nil {
+		return true
+	}
+	return isLoweringSpec(companion.spec) && !trigramUnicodeTokenSupported(idx.trigramUnicodeToken)
 }
 
 // normalizeQueryValue applies the companion's transformer to the raw value of

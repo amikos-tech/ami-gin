@@ -111,7 +111,7 @@ type GINIndex struct {
 	// token: Decode sets it, and Encode writes it back from here. Each
 	// TrigramIndex keeps a copy for Search, and Encode refuses a TrigramIndex
 	// whose foreign copy differs, so it never relabels foreign grams (#99).
-	// unknownUnicodeLoweringCompanion also reads it (#102).
+	// companionReturnsAllRGs also reads it (#102).
 	trigramUnicodeToken string
 }
 
