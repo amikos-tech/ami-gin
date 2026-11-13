@@ -717,6 +717,12 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		if err != nil {
 			return err
 		}
+		if id == TransformerRegexExtract || id == TransformerRegexExtractInt {
+			params, err = freezeRegexTransformerParams(params)
+			if err != nil {
+				return errors.Wrapf(err, "regex transformer for %s alias %q", canonicalPath, alias)
+			}
+		}
 		fn, err := ReconstructTransformer(id, params)
 		if err != nil {
 			return err
@@ -860,6 +866,9 @@ func NewConfig(opts ...ConfigOption) (GINConfig, error) {
 		}
 	}
 	if err := cfg.validate(); err != nil {
+		return GINConfig{}, err
+	}
+	if err := cfg.checkSerializedSizeLimits(); err != nil {
 		return GINConfig{}, err
 	}
 	return cfg, nil

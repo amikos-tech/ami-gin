@@ -1934,6 +1934,25 @@ func writeConfig(w io.Writer, cfg *GINConfig, trigramToken string) error {
 		return binary.Write(w, binary.LittleEndian, uint32(0))
 	}
 
+	data, err := marshalSerializedConfig(cfg, trigramToken)
+	if err != nil {
+		return err
+	}
+	if len(data) > maxConfigSize {
+		return errors.Errorf("config size %d exceeds max %d", len(data), maxConfigSize)
+	}
+
+	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
+		return err
+	}
+	_, err = w.Write(data)
+	return err
+}
+
+// marshalSerializedConfig returns the config section payload of cfg. writeConfig
+// and the registration-time size check share it, so both measure the same
+// bytes.
+func marshalSerializedConfig(cfg *GINConfig, trigramToken string) ([]byte, error) {
 	sc := SerializedConfig{
 		BloomFilterSize:         cfg.BloomFilterSize,
 		BloomFilterHashes:       cfg.BloomFilterHashes,
@@ -1971,14 +1990,9 @@ func writeConfig(w io.Writer, cfg *GINConfig, trigramToken string) error {
 
 	data, err := json.Marshal(sc)
 	if err != nil {
-		return errors.Wrap(err, "marshal config")
+		return nil, errors.Wrap(err, "marshal config")
 	}
-
-	if err := binary.Write(w, binary.LittleEndian, uint32(len(data))); err != nil {
-		return err
-	}
-	_, err = w.Write(data)
-	return err
+	return data, nil
 }
 
 // readConfig returns the decoded config and the raw trigram_unicode_version
@@ -2110,18 +2124,9 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 		}
 	}
 
-	wireRepresentations := make([]RepresentationSpec, len(representations))
-	for i, representation := range representations {
-		copied := representation
-		transformer := representation.Transformer
-		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
-		copied.Transformer = transformer
-		wireRepresentations[i] = copied
-	}
-
-	data, err := json.Marshal(wireRepresentations)
+	data, err := marshalRepresentationSection(representations)
 	if err != nil {
-		return errors.Wrap(err, "marshal representations")
+		return err
 	}
 	if len(data) > maxRepresentationSectionSize {
 		return errors.Wrapf(ErrInvalidFormat, "representation metadata size %d exceeds max %d", len(data), maxRepresentationSectionSize)
@@ -2132,6 +2137,56 @@ func writeRepresentations(w io.Writer, idx *GINIndex) error {
 	}
 	_, err = w.Write(data)
 	return err
+}
+
+// marshalRepresentationSection returns the representation section payload.
+// writeRepresentations and the registration-time size check share it.
+func marshalRepresentationSection(representations []RepresentationSpec) ([]byte, error) {
+	wireRepresentations := make([]RepresentationSpec, len(representations))
+	for i, representation := range representations {
+		copied := representation
+		transformer := representation.Transformer
+		transformer.FailureMode = transformerFailureModeWireToken(transformer.FailureMode)
+		copied.Transformer = transformer
+		wireRepresentations[i] = copied
+	}
+	data, err := json.Marshal(wireRepresentations)
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal representations")
+	}
+	return data, nil
+}
+
+// checkSerializedSizeLimits fails when the config section or the
+// representation section of cfg would exceed the limit a reader accepts. It
+// runs when a config is built (NewConfig, NewBuilder), so an oversized config
+// fails early; writeConfig and writeRepresentations enforce the exact limits
+// again at Encode. It is not part of validate, which Decode also runs.
+func (c *GINConfig) checkSerializedSizeLimits() error {
+	data, err := marshalSerializedConfig(c, "")
+	if err != nil {
+		return err
+	}
+	if len(data) > maxConfigSize {
+		return errors.Errorf("config section size %d exceeds max %d", len(data), maxConfigSize)
+	}
+	var serializable []RepresentationSpec
+	for _, representation := range collectRepresentationsFromConfig(c) {
+		if representation.Serializable {
+			serializable = append(serializable, representation)
+		}
+	}
+	if len(serializable) == 0 {
+		return nil
+	}
+	data, err = marshalRepresentationSection(serializable)
+	if err != nil {
+		return err
+	}
+	if len(data) > maxRepresentationSectionSize {
+		return errors.Errorf("representation section size %d exceeds max %d", len(data), maxRepresentationSectionSize)
+	}
+	return nil
 }
 
 func readRepresentations(r io.Reader) ([]RepresentationSpec, error) {

@@ -234,6 +234,9 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	if err := config.validate(); err != nil {
 		return nil, err
 	}
+	if err := config.checkSerializedSizeLimits(); err != nil {
+		return nil, err
+	}
 	config.ParserFailureMode = normalizeIngestFailureMode(config.ParserFailureMode)
 	config.NumericFailureMode = normalizeIngestFailureMode(config.NumericFailureMode)
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)

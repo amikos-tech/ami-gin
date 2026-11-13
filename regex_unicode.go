@@ -453,3 +453,39 @@ func freezeRegexNode(re *syntax.Regexp) *syntax.Regexp {
 	}
 	return &syntax.Regexp{Op: syntax.OpConcat, Flags: base, Sub: parts}
 }
+
+// freezeRegexTransformerParams runs at registration of RegexExtract and
+// RegexExtractInt (never on Decode). It rejects the builder-owned keys
+// source_pattern and frozen_unicode. A pattern the detector does not flag
+// keeps the caller's params bytes exactly. A flagged pattern is frozen with
+// this toolchain's tables, and the params become the frozen pattern plus the
+// original pattern and unicode.Version.
+func freezeRegexTransformerParams(params []byte) ([]byte, error) {
+	if regexParamsHoldReservedKeys(params) {
+		return nil, errors.Errorf("regex params must not set %s or %s: the builder owns these fields", regexParamSourcePattern, regexParamFrozenUnicode)
+	}
+	wire, _, err := decodeRegexWireParams(params)
+	if err != nil {
+		return nil, err
+	}
+	if !regexTableSensitive(wire.Pattern) {
+		return params, nil
+	}
+	frozen, err := freezeRegexPattern(wire.Pattern, maxConfigSize)
+	if err != nil {
+		return nil, errors.Wrap(err, "freeze regex pattern")
+	}
+	if err := verifyFrozenRegexText(frozen); err != nil {
+		return nil, errors.Wrapf(err, "frozen regex %q fails verification", frozen)
+	}
+	frozenParams, err := json.Marshal(regexWireParams{
+		Pattern:       frozen,
+		Group:         wire.Group,
+		SourcePattern: wire.Pattern,
+		FrozenUnicode: unicode.Version,
+	})
+	if err != nil {
+		return nil, errors.Wrap(err, "marshal frozen regex params")
+	}
+	return frozenParams, nil
+}
