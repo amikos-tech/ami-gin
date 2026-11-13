@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"sort"
 
 	"github.com/pkg/errors"
 )
@@ -51,11 +52,28 @@ func isLoweringSpec(spec TransformerSpec) bool {
 // Decode. Any other representation the Config does not list falls back to
 // the registry; failure to reconstruct leaves fn nil and never fails Decode.
 //
+// It also fills idx.degradedCompanions from both the Config and the
+// representations, so a degraded companion that holds no values is listed.
+//
 // A GINIndex built by hand, without Finalize or Decode, has no companion
 // lookup. Normalized then returns every row group, and the unknown-token guard
 // cannot fire. Such an index carries no token either.
 func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	idx.companionTransformers = nil
+	idx.degradedCompanions = nil
+	degradedRecords := make(map[[2]string]DegradedCompanion)
+	if cfg != nil {
+		// A degraded config companion that holds no values has no
+		// representation entry; it is still listed.
+		for _, registrations := range cfg.representationTransformers {
+			for _, registered := range registrations {
+				if registered.degraded != nil {
+					recordDegradedCompanion(degradedRecords, registered.SourcePath, registered.Alias, registered.degraded)
+				}
+			}
+		}
+	}
+	defer func() { idx.degradedCompanions = sortedDegradedCompanions(degradedRecords) }()
 	if len(idx.representations) == 0 {
 		return nil
 	}
@@ -75,6 +93,9 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 				return errors.Wrapf(err, "representation %s on %s", representation.Alias, representation.SourcePath)
 			}
 			entry.fn, entry.degraded = fn, degraded
+			if degraded != nil {
+				recordDegradedCompanion(degradedRecords, representation.SourcePath, representation.Alias, degraded)
+			}
 		} else if representation.Transformer.ID != TransformerUnknown {
 			if fn, err := ReconstructTransformer(representation.Transformer.ID, representation.Transformer.Params); err == nil {
 				entry.fn = fn
@@ -84,6 +105,36 @@ func (idx *GINIndex) buildCompanionTransformers(cfg *GINConfig) error {
 	}
 	idx.companionTransformers = companions
 	return nil
+}
+
+// recordDegradedCompanion adds one degraded companion, keyed by source path
+// and alias. The first record of a key wins: the config entry, which also
+// drives the companion function, is recorded first.
+func recordDegradedCompanion(into map[[2]string]DegradedCompanion, sourcePath, alias string, degradation *companionDegradation) {
+	key := [2]string{sourcePath, alias}
+	if _, ok := into[key]; ok {
+		return
+	}
+	into[key] = DegradedCompanion{SourcePath: sourcePath, Alias: alias, Reason: degradation.reason, Detail: degradation.detail}
+}
+
+// sortedDegradedCompanions returns the records sorted by source path, then
+// alias, or nil when there are none.
+func sortedDegradedCompanions(records map[[2]string]DegradedCompanion) []DegradedCompanion {
+	if len(records) == 0 {
+		return nil
+	}
+	out := make([]DegradedCompanion, 0, len(records))
+	for _, record := range records {
+		out = append(out, record)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SourcePath != out[j].SourcePath {
+			return out[i].SourcePath < out[j].SourcePath
+		}
+		return out[i].Alias < out[j].Alias
+	})
+	return out
 }
 
 // degradedRegexCompanion reports whether pathID is a regex companion that

@@ -101,6 +101,11 @@ type GINIndex struct {
 	// Normalized and the unknown-Unicode-token guard never read Config at query
 	// time. See buildCompanionTransformers.
 	companionTransformers map[uint16]companionTransformer
+	// degradedCompanions lists every degraded regex companion (#115), sorted
+	// by source path, then alias. Finalize and Decode build it from the
+	// config and representation specs, also for companions that hold no
+	// values. DegradedCompanions returns a copy.
+	degradedCompanions []DegradedCompanion
 	// trigramUnicodeToken is the raw serialized trigram_unicode_version; ""
 	// means absent (= trigramUnicodeVersion). The index owns the serialized
 	// token: Decode sets it, and Encode writes it back from here. Each
@@ -1267,31 +1272,16 @@ func (idx *GINIndex) TrigramUnicodeVersion() (version string, supported bool) {
 }
 
 // DegradedCompanions returns the companions of this index that return every
-// row group, sorted by source path, then alias. Only companions that hold
-// values in this index are listed; a predicate on any other companion
-// already returns every row group. The result is a fresh copy
-// built from index-owned state: changing it or idx.Config changes nothing.
-// It returns nil for a healthy index.
+// row group, sorted by source path, then alias. It lists every degraded
+// companion of the config and representation specs, also a companion that
+// holds no values in this index. The result is a fresh copy built from
+// index-owned state: changing it or idx.Config changes nothing. It returns
+// nil for a healthy index.
 func (idx *GINIndex) DegradedCompanions() []DegradedCompanion {
-	var out []DegradedCompanion
-	for _, companion := range idx.companionTransformers {
-		if companion.degraded == nil {
-			continue
-		}
-		out = append(out, DegradedCompanion{
-			SourcePath: companion.spec.Path,
-			Alias:      companion.spec.Alias,
-			Reason:     companion.degraded.reason,
-			Detail:     companion.degraded.detail,
-		})
+	if len(idx.degradedCompanions) == 0 {
+		return nil
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].SourcePath != out[j].SourcePath {
-			return out[i].SourcePath < out[j].SourcePath
-		}
-		return out[i].Alias < out[j].Alias
-	})
-	return out
+	return append([]DegradedCompanion(nil), idx.degradedCompanions...)
 }
 
 func (idx *GINIndex) Representations(path string) []RepresentationInfo {

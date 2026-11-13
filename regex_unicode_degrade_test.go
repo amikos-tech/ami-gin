@@ -415,3 +415,46 @@ func TestRegexUnicodeFinalizeFromDecodedConfig(t *testing.T) {
 		t.Fatalf("rebuilt config does not keep the legacy params: %s", buf.Bytes())
 	}
 }
+
+// TestRegexUnicodeDegradedCompanionsWithoutValues: a legacy companion that
+// holds no values (no fixture doc has a Greek letter) is still listed, sorted
+// with the others, and the list survives re-encode, Finalize from the decoded
+// config and changes to idx.Config or the returned slice.
+func TestRegexUnicodeDegradedCompanionsWithoutValues(t *testing.T) {
+	greek := regexUnicodeRawSpec{"$.name", "greek", TransformerRegexExtract, `{"pattern":"(\\p{Greek}+)","group":1}`}
+	idx := mustDecodeRegexUnicode(t, regexUnicodeRawIndex(t, regexUnicodeLegacyUpper, greek, regexUnicodeSafeNum))
+	for _, info := range idx.Representations("$.name") {
+		if info.Alias == "greek" {
+			t.Fatal("setup: the greek companion must hold no values")
+		}
+	}
+	want := []DegradedCompanion{
+		{SourcePath: "$.name", Alias: "greek", Reason: DegradeReasonLegacyUnfrozenRegex},
+		{SourcePath: "$.name", Alias: "upper", Reason: DegradeReasonLegacyUnfrozenRegex},
+	}
+	requireList := func(label string, got []DegradedCompanion) {
+		t.Helper()
+		if len(got) != len(want) {
+			t.Fatalf("%s: DegradedCompanions = %+v, want %+v", label, got, want)
+		}
+		for i := range want {
+			if got[i].SourcePath != want[i].SourcePath || got[i].Alias != want[i].Alias || got[i].Reason != want[i].Reason || got[i].Detail == "" {
+				t.Fatalf("%s: DegradedCompanions[%d] = %+v, want %+v with detail", label, i, got[i], want[i])
+			}
+		}
+	}
+	first := idx.DegradedCompanions()
+	requireList("decoded", first)
+	requireRows(t, idx, EQ("$.name", As("greek", "αβ")), []int{0, 1, 2, 3})
+
+	first[0].Alias = "changed"
+	_ = append(first[:1], DegradedCompanion{Alias: "extra"})
+	plain := DefaultConfig()
+	reencoded := mustEncodeUncompressed(t, idx)
+	idx.Config = &plain
+	requireList("after mutation and Config swap", idx.DegradedCompanions())
+
+	requireList("re-encoded", mustDecodeRegexUnicode(t, reencoded).DegradedCompanions())
+	decoded := mustDecodeRegexUnicode(t, reencoded)
+	requireList("finalized from decoded config", buildRegexUnicodeIndex(t, *decoded.Config).DegradedCompanions())
+}
