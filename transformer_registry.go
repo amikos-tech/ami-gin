@@ -67,13 +67,11 @@ type NumericBucketParams struct {
 	Size float64 `json:"size"`
 }
 
-const regexCompileTimeout = 100 * time.Millisecond
-
 // regexCompileFunc and regexCompileDeadline are test hooks. Production code
-// never changes them.
+// never changes them: every regex compile has a 100 ms timeout.
 var (
 	regexCompileFunc     = regexp.Compile
-	regexCompileDeadline = regexCompileTimeout
+	regexCompileDeadline = 100 * time.Millisecond
 )
 
 // regexCompileError tells a regex compile failure from a compile timeout
