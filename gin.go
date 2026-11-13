@@ -769,17 +769,20 @@ func WithRegisteredTransformer(path, alias string, id TransformerID, params []by
 		if err != nil {
 			return err
 		}
+		// stored is local to this application: the option value can be
+		// applied again (or concurrently) and must see the caller's params.
+		stored := params
 		if id == TransformerRegexExtract || id == TransformerRegexExtractInt {
-			params, err = freezeRegexTransformerParams(params)
+			stored, err = freezeRegexTransformerParams(params)
 			if err != nil {
 				return errors.Wrapf(err, "regex transformer for %s alias %q", canonicalPath, alias)
 			}
 		}
-		fn, err := ReconstructTransformer(id, params)
+		fn, err := ReconstructTransformer(id, stored)
 		if err != nil {
 			return err
 		}
-		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, params), true, options.failureMode, fn)
+		return c.addRepresentation(canonicalPath, alias, NewTransformerSpec(canonicalPath, id, stored), true, options.failureMode, fn)
 	}
 }
 

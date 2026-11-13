@@ -209,6 +209,42 @@ func TestRegexUnicodeFreezeAtRegistration(t *testing.T) {
 	}
 }
 
+// TestRegexUnicodeOptionReusable: one option value applied to two configs
+// freezes the caller's params both times and stores the same spec.
+func TestRegexUnicodeOptionReusable(t *testing.T) {
+	for _, id := range []TransformerID{TransformerRegexExtract, TransformerRegexExtractInt} {
+		params, err := json.Marshal(RegexParams{Pattern: regexUnicodeUpperPattern, Group: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		convenience := WithRegexExtractTransformer("$.name", "upper", regexUnicodeUpperPattern, 1)
+		if id == TransformerRegexExtractInt {
+			convenience = WithRegexExtractIntTransformer("$.name", "upper", regexUnicodeUpperPattern, 1)
+		}
+		for name, opt := range map[string]ConfigOption{
+			"registered":  WithRegisteredTransformer("$.name", "upper", id, params),
+			"convenience": convenience,
+		} {
+			first, err := NewConfig(opt)
+			if err != nil {
+				t.Fatalf("id %d %s: first NewConfig: %v", id, name, err)
+			}
+			second, err := NewConfig(opt)
+			if err != nil {
+				t.Fatalf("id %d %s: second NewConfig: %v", id, name, err)
+			}
+			a := regexUnicodeStoredParams(t, &first, "$.name", "upper")
+			b := regexUnicodeStoredParams(t, &second, "$.name", "upper")
+			if !bytes.Equal(a, b) {
+				t.Fatalf("id %d %s: stored params differ: %s / %s", id, name, a, b)
+			}
+			if _, marked, err := decodeRegexWireParams(a); err != nil || !marked {
+				t.Fatalf("id %d %s: stored params %s: marked %v err %v, want frozen", id, name, a, marked, err)
+			}
+		}
+	}
+}
+
 func TestRegexUnicodeSafePatternKeepsBytes(t *testing.T) {
 	cfg, err := NewConfig(WithRegexExtractIntTransformer("$.code", "num", regexUnicodeCodePattern, 1))
 	if err != nil {
