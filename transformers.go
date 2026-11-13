@@ -125,11 +125,9 @@ func SemVerToInt(v any) (any, bool) {
 // Pattern is compiled once at config time. Group 0 = full match, group 1+ = capture groups.
 //
 // This function compiles the pattern with the Unicode tables of the caller's
-// Go toolchain. An index stores a frozen pattern for a Unicode-sensitive regex
-// (\p{..}, \P{..}, (?i) with non-ASCII runes, or a char class with non-ASCII
-// ranges such as [é-ü]), so prepare query values with Normalized. A value
-// prepared with this function and sent with As can still differ across Go
-// versions.
+// Go toolchain. A value prepared with it and sent with As can differ from the
+// index values on another Go version. Normalized uses the index's stored
+// (frozen) pattern; see WithRegisteredTransformer.
 func RegexExtract(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {
@@ -148,11 +146,9 @@ func RegexExtract(pattern string, group int) FieldTransformer {
 // RegexExtractInt extracts a substring via regex and converts it to float64.
 //
 // This function compiles the pattern with the Unicode tables of the caller's
-// Go toolchain. An index stores a frozen pattern for a Unicode-sensitive regex
-// (\p{..}, \P{..}, (?i) with non-ASCII runes, or a char class with non-ASCII
-// ranges such as [é-ü]), so prepare query values with Normalized. A value
-// prepared with this function and sent with As can still differ across Go
-// versions.
+// Go toolchain. A value prepared with it and sent with As can differ from the
+// index values on another Go version. Normalized uses the index's stored
+// (frozen) pattern; see WithRegisteredTransformer.
 func RegexExtractInt(pattern string, group int) FieldTransformer {
 	re := regexp.MustCompile(pattern)
 	return func(v any) (any, bool) {

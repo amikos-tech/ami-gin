@@ -822,16 +822,11 @@ func WithSemVerTransformer(path, alias string, opts ...TransformerOption) Config
 
 // WithRegexExtractTransformer adds a regex-extract companion for path under alias.
 //
-// A pattern with \p{..}, \P{..}, (?i) with non-ASCII runes, or a char class
-// with non-ASCII ranges that the detector classifies conservatively (for
-// example [é-ü]) is frozen at registration with this toolchain's Unicode
-// tables. Patterns the detector does not flag (for example order-(\d+)) keep
-// their params bytes. Prepare query values with Normalized, which runs the
-// index's stored pattern. The params keys source_pattern and frozen_unicode
-// are reserved.
-// In the stored params, pattern is the executable (frozen) pattern,
-// source_pattern is the original pattern, and frozen_unicode is provenance
-// only (readers do not use it to decide anything).
+// It registers TransformerRegexExtract with WithRegisteredTransformer, which
+// freezes a Unicode-sensitive pattern at registration. In the stored params,
+// pattern is the executable (frozen) pattern and source_pattern is the
+// original pattern; see WithRegisteredTransformer. Prepare query values with
+// Normalized, which runs the index's stored pattern.
 func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtract, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
@@ -839,16 +834,11 @@ func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ..
 // WithRegexExtractIntTransformer adds a companion for path under alias that
 // extracts a number with a regex.
 //
-// A pattern with \p{..}, \P{..}, (?i) with non-ASCII runes, or a char class
-// with non-ASCII ranges that the detector classifies conservatively (for
-// example [é-ü]) is frozen at registration with this toolchain's Unicode
-// tables. Patterns the detector does not flag (for example order-(\d+)) keep
-// their params bytes. Prepare query values with Normalized, which runs the
-// index's stored pattern. The params keys source_pattern and frozen_unicode
-// are reserved.
-// In the stored params, pattern is the executable (frozen) pattern,
-// source_pattern is the original pattern, and frozen_unicode is provenance
-// only (readers do not use it to decide anything).
+// It registers TransformerRegexExtractInt with WithRegisteredTransformer, which
+// freezes a Unicode-sensitive pattern at registration. In the stored params,
+// pattern is the executable (frozen) pattern and source_pattern is the
+// original pattern; see WithRegisteredTransformer. Prepare query values with
+// Normalized, which runs the index's stored pattern.
 func WithRegexExtractIntTransformer(path, alias, pattern string, group int, opts ...TransformerOption) ConfigOption {
 	return withRegisteredTransformerJSON(path, alias, TransformerRegexExtractInt, RegexParams{Pattern: pattern, Group: group}, opts...)
 }
