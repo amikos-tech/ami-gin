@@ -3,6 +3,7 @@ package gin
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -361,6 +362,40 @@ func TestRegexUnicodeEarlySizeLimits(t *testing.T) {
 	}
 	if _, err := NewBuilder(cfg, 1); err == nil || !strings.Contains(err.Error(), "config section size") {
 		t.Fatalf("NewBuilder with 11 large companions: err = %v, want config size error", err)
+	}
+}
+
+// TestRegexUnicodeEarlyRepresentationSizeLimit: the config section fits, but
+// the representation section, which repeats each alias and target path, does
+// not. NewConfig and NewBuilder fail early.
+func TestRegexUnicodeEarlyRepresentationSizeLimit(t *testing.T) {
+	var opts []ConfigOption
+	for i := 0; i < 40; i++ {
+		alias := fmt.Sprintf("a%02d%s", i, strings.Repeat("x", 10_000))
+		opts = append(opts, WithRegexExtractTransformer("$.name", alias, "([A-Z]+)", 1))
+	}
+	cfg := DefaultConfig()
+	for _, opt := range opts {
+		if err := opt(&cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configData, err := marshalSerializedConfig(&cfg, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repData, err := marshalRepresentationSection(collectRepresentationsFromConfig(&cfg))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(configData) > maxConfigSize || len(repData) <= maxRepresentationSectionSize {
+		t.Fatalf("setup: config %d bytes, representations %d bytes", len(configData), len(repData))
+	}
+	if _, err := NewConfig(opts...); err == nil || !strings.Contains(err.Error(), "representation section size") {
+		t.Fatalf("NewConfig: err = %v, want representation section size error", err)
+	}
+	if _, err := NewBuilder(cfg, 1); err == nil || !strings.Contains(err.Error(), "representation section size") {
+		t.Fatalf("NewBuilder: err = %v, want representation section size error", err)
 	}
 }
 

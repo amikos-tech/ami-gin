@@ -1073,8 +1073,8 @@ func TestRunInfoReportsDegradedCompanions(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"Degraded companions",
-		"$.name alias upper: legacy_unfrozen_regex: ",
-		"$.ref alias n2: legacy_unfrozen_regex: ",
+		"$.name alias upper: legacy_unfrozen_regex: stored pattern has no frozen metadata and may depend on the Unicode tables of the reader; rebuild the index to restore pruning\n",
+		"$.ref alias n2: legacy_unfrozen_regex: stored pattern has no frozen metadata and may depend on the Unicode tables of the reader; rebuild the index to restore pruning\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("info output missing %q:\n%s", want, out)

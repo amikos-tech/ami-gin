@@ -401,6 +401,18 @@ func TestRegexUnicodeDetectorCorpusGolden(t *testing.T) {
 		if got := regexUnicodeCorpusCell(row.pattern); got != own(row) {
 			t.Fatalf("row %d %q: local frozen text %s, golden %s", i, row.pattern, got, own(row))
 		}
+		for _, cell := range []string{row.frozen15, row.frozen17} {
+			if cell == regexUnicodeCorpusErrorMarker {
+				continue
+			}
+			frozen, err := strconv.Unquote(cell)
+			if err != nil {
+				t.Fatalf("row %d: unquote %s: %v", i, cell, err)
+			}
+			if err := verifyFrozenRegexText(frozen); err != nil {
+				t.Fatalf("row %d %q: frozen %q fails the verifier: %v", i, row.pattern, frozen, err)
+			}
+		}
 		if row.frozen15 == row.frozen17 {
 			continue
 		}
@@ -606,6 +618,9 @@ func FuzzRegexUnicodeFreeze(f *testing.F) {
 		if err != nil {
 			t.Fatalf("freeze %q: %v", pattern, err)
 		}
+		if err := verifyFrozenRegexText(frozen); err != nil {
+			t.Fatalf("frozen %q of %q fails the verifier: %v", frozen, pattern, err)
+		}
 		requireRegexUnicodeFrozenEquivalent(t, pattern, frozen, []string{in})
 		requireRegexUnicodeFixedPoint(t, pattern, frozen)
 	})
@@ -725,5 +740,43 @@ func TestRegexUnicodeIsRegexTransformerSpec(t *testing.T) {
 		if got := isRegexTransformerSpec(tc.spec); got != tc.want {
 			t.Errorf("isRegexTransformerSpec(%+v) = %v, want %v", tc.spec, got, tc.want)
 		}
+	}
+}
+
+// TestRegexUnicodeReasonPrecedence: a marked spec whose pattern fails the
+// verifier and also fails to compile reports unverified_frozen_regex, and its
+// degradation is marked as a placeholder.
+func TestRegexUnicodeReasonPrecedence(t *testing.T) {
+	spec := NewTransformerSpec("$.name", TransformerRegexExtract,
+		json.RawMessage(`{"pattern":"(\\p{Lu}+","group":1,"source_pattern":"(\\p{Lu}+","frozen_unicode":"17.0.0"}`))
+	if err := verifyFrozenRegexText(`(\p{Lu}+`); err == nil {
+		t.Fatal("setup: the pattern must fail the verifier")
+	}
+	if _, err := regexp.Compile(`(\p{Lu}+`); err == nil {
+		t.Fatal("setup: the pattern must fail to compile")
+	}
+	fn, degraded, err := classifyRegexCompanion(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if degraded == nil || degraded.reason != DegradeReasonUnverifiedFrozenRegex || !degraded.placeholder {
+		t.Fatalf("degradation = %+v, want unverified_frozen_regex with placeholder", degraded)
+	}
+	if _, ok := fn("ABC"); ok {
+		t.Fatal("placeholder produced a value")
+	}
+
+	// Unmarked and uncompilable: regex_compile_failed with placeholder.
+	spec = NewTransformerSpec("$.name", TransformerRegexExtract, json.RawMessage(`{"pattern":"(\\p{Lu}+","group":1}`))
+	if _, degraded, err = classifyRegexCompanion(spec); err != nil || degraded == nil ||
+		degraded.reason != DegradeReasonRegexCompileFailed || !degraded.placeholder {
+		t.Fatalf("unmarked: degradation = %+v err %v, want regex_compile_failed with placeholder", degraded, err)
+	}
+
+	// Legacy that compiles: no placeholder.
+	spec = NewTransformerSpec("$.name", TransformerRegexExtract, json.RawMessage(`{"pattern":"(\\p{Lu}+)","group":1}`))
+	if _, degraded, err = classifyRegexCompanion(spec); err != nil || degraded == nil ||
+		degraded.reason != DegradeReasonLegacyUnfrozenRegex || degraded.placeholder {
+		t.Fatalf("legacy: degradation = %+v err %v, want legacy_unfrozen_regex without placeholder", degraded, err)
 	}
 }
