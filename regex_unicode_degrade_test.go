@@ -600,26 +600,37 @@ func TestRegexUnicodeSectionsDecodeToSameParams(t *testing.T) {
 	}
 }
 
-// TestRegexUnicodeDecodeErrorKeepsCause: a representation-only regex spec
-// with invalid params fails Decode with ErrInvalidFormat, and the error chain
-// still holds the JSON cause.
+// TestRegexUnicodeDecodeErrorKeepsCause: a config-backed or
+// representation-only regex spec with invalid params fails Decode with
+// ErrInvalidFormat, and the error chain still holds the JSON cause.
 func TestRegexUnicodeDecodeErrorKeepsCause(t *testing.T) {
 	spec := regexUnicodeRawSpec{"$.name", "upper", TransformerRegexExtract, `{"pattern":"([A-Z]+)","group":"1"}`}
+	configBacked := regexUnicodeRawIndex(t, spec, regexUnicodeSafeNum)
 	idx := buildRegexUnicodeIndex(t, regexUnicodeRawConfig(t, spec, regexUnicodeSafeNum))
 	other := regexUnicodeRawConfig(t, regexUnicodeSafeNum)
 	idx.Config = &other
-	_, err := Decode(mustEncodeUncompressed(t, idx))
-	if !errors.Is(err, ErrInvalidFormat) {
-		t.Fatalf("Decode err = %v, want ErrInvalidFormat", err)
-	}
-	var typeErr *json.UnmarshalTypeError
-	if !errors.As(err, &typeErr) {
-		t.Fatalf("Decode err = %v, want the *json.UnmarshalTypeError cause in the chain", err)
-	}
-	if !strings.HasSuffix(err.Error(), ": invalid format") || !strings.Contains(err.Error(), "representation upper on $.name") {
-		t.Fatalf("Decode err message = %q", err.Error())
-	}
-	if got := classifySerializeError(err); got != "invalid_format" {
-		t.Fatalf("classifySerializeError = %q, want invalid_format", got)
+	representationOnly := mustEncodeUncompressed(t, idx)
+	for _, tc := range []struct {
+		name    string
+		data    []byte
+		context string
+	}{
+		{"config-backed", configBacked, "reconstruct transformer for path $.name"},
+		{"representation-only", representationOnly, "representation upper on $.name"},
+	} {
+		_, err := Decode(tc.data)
+		if !errors.Is(err, ErrInvalidFormat) {
+			t.Fatalf("%s: Decode err = %v, want ErrInvalidFormat", tc.name, err)
+		}
+		var typeErr *json.UnmarshalTypeError
+		if !errors.As(err, &typeErr) {
+			t.Fatalf("%s: Decode err = %v, want the *json.UnmarshalTypeError cause in the chain", tc.name, err)
+		}
+		if !strings.HasSuffix(err.Error(), ": invalid format") || !strings.Contains(err.Error(), tc.context) {
+			t.Fatalf("%s: Decode err message = %q", tc.name, err.Error())
+		}
+		if got := classifySerializeError(err); got != "invalid_format" {
+			t.Fatalf("%s: classifySerializeError = %q, want invalid_format", tc.name, got)
+		}
 	}
 }
