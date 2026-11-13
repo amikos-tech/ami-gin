@@ -24,18 +24,20 @@ type companionTransformer struct {
 }
 
 // isLoweringSpec reports whether spec describes a transformer that lowercases
-// with the frozen Unicode tables: ToLower, EmailDomain or URLHost. It matches
-// on the transformer ID OR the transformer name, never on the alias, so a
-// tampered representation section that zeroes only one of the two fields still
-// classifies as lowering.
+// with the frozen Unicode tables: ToLower, EmailDomain or URLHost.
 func isLoweringSpec(spec TransformerSpec) bool {
-	switch spec.ID {
-	case TransformerToLower, TransformerEmailDomain, TransformerURLHost:
-		return true
-	}
-	switch spec.Name {
-	case transformerNames[TransformerToLower], transformerNames[TransformerEmailDomain], transformerNames[TransformerURLHost]:
-		return true
+	return specIsTransformer(spec, TransformerToLower, TransformerEmailDomain, TransformerURLHost)
+}
+
+// specIsTransformer reports whether spec describes one of ids. It matches on
+// the transformer ID OR the transformer name, never on the alias, so a
+// tampered representation section that zeroes only one of the two fields
+// still classifies.
+func specIsTransformer(spec TransformerSpec, ids ...TransformerID) bool {
+	for _, id := range ids {
+		if spec.ID == id || spec.Name == transformerNames[id] {
+			return true
+		}
 	}
 	return false
 }

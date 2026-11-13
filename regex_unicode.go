@@ -43,18 +43,9 @@ type regexWireParams struct {
 }
 
 // isRegexTransformerSpec reports whether spec describes RegexExtract or
-// RegexExtractInt. It matches on the transformer ID OR the name, never on the
-// alias, like isLoweringSpec.
+// RegexExtractInt, by ID or name (see specIsTransformer).
 func isRegexTransformerSpec(spec TransformerSpec) bool {
-	switch spec.ID {
-	case TransformerRegexExtract, TransformerRegexExtractInt:
-		return true
-	}
-	switch spec.Name {
-	case transformerNames[TransformerRegexExtract], transformerNames[TransformerRegexExtractInt]:
-		return true
-	}
-	return false
+	return specIsTransformer(spec, TransformerRegexExtract, TransformerRegexExtractInt)
 }
 
 // regexReservedParamMembers scans the top-level members of raw in their
