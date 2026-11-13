@@ -153,11 +153,11 @@ func TestRegexUnicodeDetectorAdversarial(t *testing.T) {
 	}
 }
 
-// regexUnicodeCorpusAtoms is the spike 008 atom list.
+// regexUnicodeCorpusAtoms is the atom list of the detector corpus (#115).
 var regexUnicodeCorpusAtoms = []string{`a`, `Z`, `k`, `s`, `\d`, `\w`, `\s`, `.`, `[a-z]`, `[^a]`, `[[:alpha:]]`, `\W`, `-`, `\b`,
 	`\p{L}`, `\p{Lu}`, `\p{Ll}`, `\P{L}`, `\p{Han}`, `\p{Greek}`, `\pN`, `[^\p{L}]`, `ƛ`, `ΐ`, `ɤ`, `ß`, `é`, `[é-ü]`, `Ꟛ`, `漢`}
 
-// regexUnicodeCorpusPatterns is the spike 008 generator (seed 8).
+// regexUnicodeCorpusPatterns is the detector corpus generator (#115, seed 8).
 func regexUnicodeCorpusPatterns(n int) []string {
 	rng := rand.New(rand.NewSource(8))
 	quantifiers := []string{"", "", "+", "*", "?", "{1,2}"}
@@ -370,7 +370,7 @@ func regexUnicodeDriftInputs(a, b *syntax.Regexp) []string {
 }
 
 // TestRegexUnicodeDetectorCorpusGolden proves zero false negatives on the
-// spike 008 corpus. The golden holds the frozen text of every pattern on
+// detector corpus (#115). The golden holds the frozen text of every pattern on
 // 15.0.0 and on 17.0.0. Both frozen texts are table-free, so this toolchain
 // can compile both and compare them: a semantic difference is real drift of
 // the original pattern between the two toolchains, and the local detector

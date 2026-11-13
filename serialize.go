@@ -2188,7 +2188,10 @@ func marshalRepresentationSection(representations []RepresentationSpec) ([]byte,
 // representation section of cfg would exceed the limit a reader accepts. It
 // runs when a config is built (NewConfig, NewBuilder), so an oversized config
 // fails early; writeConfig and writeRepresentations enforce the exact limits
-// again at Encode. It is not part of validate, which Decode also runs.
+// again at Encode. The early representation check counts every serializable
+// representation of the config, also those that hold no values, so it is
+// stricter than Encode, which writes only materialized representations. It
+// is not part of validate, which Decode also runs.
 func (c *GINConfig) checkSerializedSizeLimits() error {
 	data, err := marshalSerializedConfig(c, "")
 	if err != nil {

@@ -273,7 +273,7 @@ func scanFlagGroup(s string) (string, bool) {
 	return "", false
 }
 
-// regexTreeSensitive is the tree rule (spike 008): a FoldCase literal with a
+// regexTreeSensitive is the tree rule (#115): a FoldCase literal with a
 // non-ASCII rune (its fold orbit can grow), or a char class with a non-ASCII
 // range other than a negated-ASCII tail [lo..MaxRune] with lo <= 0x80, and
 // other than the two stable ASCII fold partners U+017F and U+212A.
@@ -382,8 +382,9 @@ func verifyFrozenRegexText(pattern string) error {
 // rendered with (*syntax.Regexp).String.
 //
 // budget bounds the JSON-escaped length of the result. A lower bound of the
-// rendered length is checked before rendering, so memory stays within a
-// constant factor of budget.
+// rendered length is checked before rendering, so the rendered text stays
+// within a constant factor of budget. The check bounds only the rendered
+// text, not the parse or the expanded tree.
 //
 // The text is not idempotent after one pass (the stdlib re-factors String
 // output), but repeated freezing reaches a fixed point. Freeze once at

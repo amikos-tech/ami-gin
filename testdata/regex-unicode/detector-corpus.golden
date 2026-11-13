@@ -1,4 +1,4 @@
-# Detector corpus (spike 008 generator, seed 8). Rows: index, frozen text on Unicode 15.0.0, frozen text on Unicode 17.0.0, pattern.
+# Detector corpus (#115 generator, seed 8). Rows: index, frozen text on Unicode 15.0.0, frozen text on Unicode 17.0.0, pattern.
 # A cell is a Go-quoted frozen text, "!error" (freeze failed) or - (not generated yet).
 # \x00N\x00 inside a cell refers to class line @N. Long expanded classes repeat, so they are stored once.
 # Regenerate in two steps: GOTOOLCHAIN=go1.26.9, then GOTOOLCHAIN=go1.27.3, each running

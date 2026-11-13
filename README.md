@@ -258,15 +258,15 @@ errorResult := idx.Evaluate([]gin.Predicate{
 
 Go's `regexp` resolves `\p{..}`, `\P{..}` and `(?i)` with the Unicode tables of the Go version that compiles the pattern. Go 1.26 uses Unicode 15.0.0 and Go 1.27 uses Unicode 17.0.0. For example, `(\p{Lu}+)` extracts `"ABC"` from `"ABC\uA7DC"` on Go 1.26 and `"ABC\uA7DC"` on Go 1.27.
 
-- `WithRegexExtractTransformer`, `WithRegexExtractIntTransformer` and `WithRegisteredTransformer` freeze such a pattern when you register it. The builder expands the Unicode classes and case folds into explicit ranges with its own tables. The index stores the frozen pattern, the original pattern (`source_pattern`) and the builder's Unicode version (`frozen_unicode`). Other patterns, such as `order-(\d+)`, are stored byte for byte as before.
+- `WithRegexExtractTransformer`, `WithRegexExtractIntTransformer` and `WithRegisteredTransformer` freeze such a pattern when you register it. Freezing also covers char classes with non-ASCII ranges that the detector classifies conservatively, for example `[é-ü]`. The builder expands the Unicode classes and case folds into explicit ranges with its own tables. The index stores the frozen pattern, the original pattern (`source_pattern`) and the builder's Unicode version (`frozen_unicode`). Patterns that the detector does not flag, such as `order-(\d+)`, are stored byte for byte as before.
 - `Normalized` runs the frozen pattern that the index stores. Every reader extracts the same value as the builder.
 - `As` sends your value unchanged. If you prepare it yourself with the original regex (`gin.RegexExtract(p, g)(raw)`) on a different Go version, the value can still differ from the index. Use `Normalized` instead.
 - Old readers (v1.6.0 and later) can read new indexes. A v1.6.0 reader on Go 1.26 can also read a `\p{Garay}` index that Go 1.27 built. But `As` values that an old reader prepares can still differ.
 - On upgraded readers, legacy regex companions without frozen metadata stop pruning when their patterns are classified as potentially Unicode-sensitive. This includes Unicode classes, some non-ASCII case-insensitive patterns, and conservatively classified explicit ranges. Other companions retain pruning. Rebuild affected indexes from source data to restore pruning.
-- A stored regex that does not compile on the reader (for example `\p{Garay}` on Go 1.26) or times out no longer fails `Decode`. Only that companion returns all row groups.
+- A stored regex that does not compile on the reader (for example `\p{Garay}` on Go 1.26) or times out no longer fails `Decode`. Only that companion returns all row groups. To restore pruning for `regex_compile_failed`, rebuild with a Go version that knows the Unicode class in the pattern. A compile timeout (`regex_compile_timeout`) can be transient: a later `Decode` can restore pruning.
+- `NewBuilder` rejects a decoded config with a companion whose stored regex did not compile. Register the transformer again to build.
 - A degraded companion affects only predicates on it. Other predicates in the same `Evaluate` call still prune.
 - Inspect degraded companions with `idx.DegradedCompanions()` or `gin-index info`. Each entry has the source path, the alias, a reason code (`legacy_unfrozen_regex`, `regex_compile_failed`, `regex_compile_timeout`, `unverified_frozen_regex`) and a detail.
-- Rebuild the index from source data to restore pruning.
 
 **Custom companions:**
 ```go

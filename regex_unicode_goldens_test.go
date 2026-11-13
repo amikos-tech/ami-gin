@@ -151,7 +151,7 @@ func formatRegexUnicodeCorpusGolden(rows []regexUnicodeCorpusRow) string {
 			strconv.QuoteToASCII(row.pattern))
 	}
 	var b strings.Builder
-	b.WriteString("# Detector corpus (spike 008 generator, seed 8). Rows: index, frozen text on Unicode 15.0.0, frozen text on Unicode 17.0.0, pattern.\n")
+	b.WriteString("# Detector corpus (#115 generator, seed 8). Rows: index, frozen text on Unicode 15.0.0, frozen text on Unicode 17.0.0, pattern.\n")
 	b.WriteString("# A cell is a Go-quoted frozen text, \"" + regexUnicodeCorpusErrorMarker + "\" (freeze failed) or " + regexUnicodeCorpusEmptyMarker + " (not generated yet).\n")
 	b.WriteString("# \\x00N\\x00 inside a cell refers to class line @N. Long expanded classes repeat, so they are stored once.\n")
 	b.WriteString("# Regenerate in two steps: GOTOOLCHAIN=go1.26.9, then GOTOOLCHAIN=go1.27.3, each running\n")

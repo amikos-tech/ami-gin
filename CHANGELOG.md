@@ -50,15 +50,17 @@
   `Normalized` avoids this.
 
 - `RegexExtract` and `RegexExtractInt` companions no longer depend on the Go
-  toolchain (#115). A pattern with `\p{..}`, `\P{..}`, or `(?i)` with
-  non-ASCII runes is frozen when you register it: the builder expands it into
-  explicit ranges with its own Unicode tables. The stored params hold
-  `pattern` (the frozen pattern), `source_pattern` (your pattern) and
-  `frozen_unicode` (the builder's Unicode version). Before, a builder on Go
-  1.27 and a reader on Go 1.26, or the reverse, could extract different
-  values and prune a matching row group. Other patterns are stored byte for
-  byte as before. The wire format stays v11. `Normalized` runs the stored
-  pattern. An `As` value that you prepare with `gin.RegexExtract(p, g)(raw)`
+  toolchain (#115). A pattern with `\p{..}`, `\P{..}`, `(?i)` with
+  non-ASCII runes, or a char class with non-ASCII ranges that the detector
+  classifies conservatively (for example `[é-ü]`) is frozen when you register
+  it: the builder expands it into explicit ranges with its own Unicode
+  tables. The stored params hold `pattern` (the frozen pattern),
+  `source_pattern` (your pattern) and `frozen_unicode` (the builder's Unicode
+  version). Before, a builder on Go 1.27 and a reader on Go 1.26, or the
+  reverse, could extract different values and prune a matching row group.
+  Patterns that the detector does not flag, such as `order-(\d+)`, are stored
+  byte for byte as before. The wire format stays v11. `Normalized` runs the
+  stored pattern. An `As` value that you prepare with `gin.RegexExtract(p, g)(raw)`
   on another Go version can still differ.
 - On upgraded readers, legacy regex companions without frozen metadata stop
   pruning when their patterns are classified as potentially Unicode-sensitive.
@@ -68,7 +70,9 @@
 - `Decode` no longer fails when a stored regex does not compile (for example
   `\p{Garay}` on Go 1.26) or its compile times out. That companion returns
   all row groups, and other predicates still prune. Invalid regex params
-  still fail `Decode`.
+  still fail `Decode`. A compile timeout can be transient: a later `Decode`
+  can restore pruning. `NewBuilder` rejects a decoded config with such a
+  companion and names the source path, alias and reason.
 - New additive API `GINIndex.DegradedCompanions()`. It lists the companions
   that return all row groups, with the source path, alias, a reason code
   (`legacy_unfrozen_regex`, `regex_compile_failed`, `regex_compile_timeout`,

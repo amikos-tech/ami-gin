@@ -381,9 +381,11 @@ type NormalizedValue struct {
 // Do not wrap a value that is already transformed. EmailDomain and URLHost are
 // not idempotent, so Normalized("domain", "example.com") fails open.
 //
-// RegexExtract and RegexExtractInt patterns with Unicode classes or (?i)
-// depend on the Unicode tables of the Go toolchain. Build and query with the
-// same Go version.
+// For RegexExtract and RegexExtractInt companions, Normalized runs the
+// pattern that the index stores (the frozen pattern for a Unicode-sensitive
+// regex), so every reader extracts like the builder. An As value that you
+// prepare by running the original regex yourself (gin.RegexExtract(p, g)(raw))
+// can still differ across Go versions.
 func Normalized(alias string, raw any) NormalizedValue {
 	if err := validateRepresentationAlias(alias); err != nil {
 		panic(err.Error())
@@ -500,6 +502,8 @@ const (
 	// DegradeReasonRegexCompileFailed: the stored regex does not compile on this reader.
 	DegradeReasonRegexCompileFailed DegradeReason = "regex_compile_failed"
 	// DegradeReasonRegexCompileTimeout: compiling the stored regex timed out.
+	// It can be transient: the reason is not stored, and a later Decode can
+	// restore pruning.
 	DegradeReasonRegexCompileTimeout DegradeReason = "regex_compile_timeout"
 	// DegradeReasonUnverifiedFrozenRegex: a regex marked as frozen still requests a Unicode-table operation.
 	DegradeReasonUnverifiedFrozenRegex DegradeReason = "unverified_frozen_regex"
@@ -750,12 +754,15 @@ func withRegisteredTransformerJSON(path, alias string, id TransformerID, params 
 // WithRegisteredTransformer registers a built-in transformer by ID with JSON
 // params, so the companion can be reconstructed after Decode.
 //
-// Regex patterns (TransformerRegexExtract and TransformerRegexExtractInt) with
-// \p{..}, \P{..}, or (?i) with non-ASCII runes are frozen at registration with
-// this toolchain's Unicode tables: the stored params hold the frozen pattern,
-// the original pattern and the Unicode version, so every reader extracts like
-// the builder. Other patterns keep their params bytes. The params keys
-// source_pattern and frozen_unicode are reserved; registration rejects them.
+// Regex patterns (TransformerRegexExtract and TransformerRegexExtractInt) that
+// may depend on the Unicode tables are frozen at registration with this
+// toolchain's tables: \p{..}, \P{..}, (?i) with non-ASCII runes, and char
+// classes with non-ASCII ranges that the detector classifies conservatively
+// (for example [é-ü]). The stored params hold the frozen pattern, the original
+// pattern and the Unicode version, so every reader extracts like the builder.
+// Patterns the detector does not flag (for example order-(\d+)) keep their
+// params bytes. The params keys source_pattern and frozen_unicode are
+// reserved; registration rejects them.
 // In the stored params, pattern is the executable (frozen) pattern,
 // source_pattern is the original pattern, and frozen_unicode is provenance
 // only (readers do not use it to decide anything).
@@ -812,10 +819,13 @@ func WithSemVerTransformer(path, alias string, opts ...TransformerOption) Config
 
 // WithRegexExtractTransformer adds a regex-extract companion for path under alias.
 //
-// A pattern with \p{..}, \P{..}, or (?i) with non-ASCII runes is frozen at
-// registration with this toolchain's Unicode tables. Prepare query values with
-// Normalized, which runs the index's stored pattern. The params keys
-// source_pattern and frozen_unicode are reserved.
+// A pattern with \p{..}, \P{..}, (?i) with non-ASCII runes, or a char class
+// with non-ASCII ranges that the detector classifies conservatively (for
+// example [é-ü]) is frozen at registration with this toolchain's Unicode
+// tables. Patterns the detector does not flag (for example order-(\d+)) keep
+// their params bytes. Prepare query values with Normalized, which runs the
+// index's stored pattern. The params keys source_pattern and frozen_unicode
+// are reserved.
 // In the stored params, pattern is the executable (frozen) pattern,
 // source_pattern is the original pattern, and frozen_unicode is provenance
 // only (readers do not use it to decide anything).
@@ -826,10 +836,13 @@ func WithRegexExtractTransformer(path, alias, pattern string, group int, opts ..
 // WithRegexExtractIntTransformer adds a companion for path under alias that
 // extracts a number with a regex.
 //
-// A pattern with \p{..}, \P{..}, or (?i) with non-ASCII runes is frozen at
-// registration with this toolchain's Unicode tables. Prepare query values with
-// Normalized, which runs the index's stored pattern. The params keys
-// source_pattern and frozen_unicode are reserved.
+// A pattern with \p{..}, \P{..}, (?i) with non-ASCII runes, or a char class
+// with non-ASCII ranges that the detector classifies conservatively (for
+// example [é-ü]) is frozen at registration with this toolchain's Unicode
+// tables. Patterns the detector does not flag (for example order-(\d+)) keep
+// their params bytes. Prepare query values with Normalized, which runs the
+// index's stored pattern. The params keys source_pattern and frozen_unicode
+// are reserved.
 // In the stored params, pattern is the executable (frozen) pattern,
 // source_pattern is the original pattern, and frozen_unicode is provenance
 // only (readers do not use it to decide anything).
