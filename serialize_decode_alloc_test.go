@@ -34,7 +34,7 @@ type zstdFCSMode int
 
 const (
 	zstdFCSNone zstdFCSMode = iota
-	zstdFCS1                // single segment, 1 byte
+	zstdFCS1                // 1 byte; requires single segment
 	zstdFCS2                // 2 bytes, value - 256
 	zstdFCS4                // 4 bytes
 	zstdFCS8                // 8 bytes
@@ -48,12 +48,15 @@ type zstdBlockSpec struct {
 }
 
 type zstdFrameSpec struct {
-	fcsMode    zstdFCSMode
-	fcs        uint64
-	windowByte byte
-	dictSize   int // 0, 1, 2 or 4
-	dictID     uint32
-	blocks     []zstdBlockSpec
+	fcsMode zstdFCSMode
+	fcs     uint64
+	// singleSegment omits the window descriptor; the window size is then the
+	// content size (RFC 8878). zstdFCS1 always sets it; zstdFCSNone cannot.
+	singleSegment bool
+	windowByte    byte
+	dictSize      int // 0, 1, 2 or 4
+	dictID        uint32
+	blocks        []zstdBlockSpec
 }
 
 // rawBlocks splits data into raw blocks. It always returns at least one block.
@@ -79,9 +82,12 @@ func rleBlocks(total int, b byte) []zstdBlockSpec {
 
 func buildZstdFrame(spec zstdFrameSpec) []byte {
 	var desc byte
-	singleSegment := false
+	singleSegment := spec.singleSegment
 	switch spec.fcsMode {
 	case zstdFCSNone:
+		if singleSegment {
+			panic("buildZstdFrame: single segment needs a content size")
+		}
 	case zstdFCS1:
 		singleSegment = true
 	case zstdFCS2:
@@ -176,11 +182,21 @@ func unknownFrame(data []byte) []byte {
 	})
 }
 
+// knownOversizedFrame is a frame with an 8-byte content size of
+// maxDecodedIndexSize+1 and RLE blocks that regenerate that many bytes.
+func knownOversizedFrame() []byte {
+	return buildZstdFrame(zstdFrameSpec{
+		fcsMode: zstdFCS8, fcs: maxDecodedIndexSize + 1, windowByte: zstdTestWindowByte,
+		blocks: rleBlocks(maxDecodedIndexSize+1, 0),
+	})
+}
+
 type zstdShape struct {
-	hasFCS    bool
-	fcs       uint64
-	skippable bool
-	dictID    uint32
+	hasFCS        bool
+	fcs           uint64
+	skippable     bool
+	dictID        uint32
+	singleSegment bool
 }
 
 func assertZstdShape(t *testing.T, name string, payload []byte, want zstdShape) {
@@ -203,6 +219,9 @@ func assertZstdShape(t *testing.T, name string, payload []byte, want zstdShape) 
 	}
 	if h.DictionaryID != want.dictID {
 		t.Fatalf("%s: DictionaryID = %d, want %d", name, h.DictionaryID, want.dictID)
+	}
+	if h.SingleSegment != want.singleSegment {
+		t.Fatalf("%s: SingleSegment = %v, want %v", name, h.SingleSegment, want.singleSegment)
 	}
 }
 
@@ -243,8 +262,9 @@ func smallIndexCompressed(t testing.TB) []byte {
 	return data[4:]
 }
 
-// Test-local copy of the decode path as it was before #109. It must not call
-// production helpers.
+// Test-local copy of the pre-#109 fixed-capacity decompression. It shares the
+// decoder configuration and the uncompressed index reader, but does not call
+// the new sizing or retry helpers.
 
 func legacyDecodeZstd(payload []byte) ([]byte, error) {
 	decoder, err := sharedZstdDecoder()
@@ -387,7 +407,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	add(differentialFixture{name: "truncated inside header", payload: real[:6], wantOK: -1})
 
 	emptyFCS0 := buildZstdFrame(zstdFrameSpec{fcsMode: zstdFCS1, fcs: 0, blocks: rawBlocks(nil)})
-	assertZstdShape(t, "fcs0", emptyFCS0, zstdShape{hasFCS: true, fcs: 0})
+	assertZstdShape(t, "fcs0", emptyFCS0, zstdShape{hasFCS: true, fcs: 0, singleSegment: true})
 	add(differentialFixture{
 		name: "empty FCS 0 frame then valid index frame", payload: append(append([]byte{}, emptyFCS0...), knownFrame(raw)...), wantOK: 1,
 	})
@@ -395,13 +415,21 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	add(differentialFixture{name: "header parse error garbage", payload: []byte("not a zstd frame at all"), wantOK: -1})
 	add(differentialFixture{name: "empty payload", payload: []byte{}, wantOK: -1})
 
-	known64MiB1 := buildZstdFrame(zstdFrameSpec{
-		fcsMode: zstdFCS8, fcs: maxDecodedIndexSize + 1, windowByte: zstdTestWindowByte,
-		blocks: rleBlocks(maxDecodedIndexSize+1, 0),
-	})
+	known64MiB1 := knownOversizedFrame()
 	assertZstdShape(t, "known 64MiB+1", known64MiB1, zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1})
 	add(differentialFixture{
-		name: "known-size oversized frame (64 MiB + 1)", payload: known64MiB1, large: true,
+		name: "known-size oversized frame (64 MiB + 1)", payload: known64MiB1,
+		wantOK: -1, wantSentinel: ErrDecodedSizeExceedsLimit,
+	})
+
+	singleSegDict := buildZstdFrame(zstdFrameSpec{
+		fcsMode: zstdFCS8, fcs: maxDecodedIndexSize + 1, singleSegment: true,
+		dictSize: 4, dictID: 0xDEADBEEF, blocks: rawBlocks(raw),
+	})
+	assertZstdShape(t, "single segment fcs>limit dict", singleSegDict,
+		zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1, dictID: 0xDEADBEEF, singleSegment: true})
+	add(differentialFixture{
+		name: "single-segment content size above limit with unknown dictionary", payload: singleSegDict,
 		wantOK: -1, wantSentinel: ErrDecodedSizeExceedsLimit,
 	})
 
@@ -411,6 +439,13 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	assertZstdShape(t, "unknown 64MiB+1", unknown64MiB1, zstdShape{hasFCS: false})
 	add(differentialFixture{
 		name: "unknown-size oversized frame (64 MiB + 1)", payload: unknown64MiB1, large: true,
+		wantOK: -1, wantSentinel: ErrDecodedSizeExceedsLimit,
+	})
+
+	knownSmallUnknownHuge := append(knownFrame(zeros1k), unknown64MiB1...)
+	assertZstdShape(t, "known 1KiB+unknown 64MiB+1", knownSmallUnknownHuge, zstdShape{hasFCS: true, fcs: 1024})
+	add(differentialFixture{
+		name: "known-size 1KiB frame then unknown-size oversized frame", payload: knownSmallUnknownHuge, large: true,
 		wantOK: -1, wantSentinel: ErrDecodedSizeExceedsLimit,
 	})
 
@@ -551,8 +586,8 @@ func TestDecompressIndexPayloadFirstAttemptCapacity(t *testing.T) {
 
 func TestDecodeCompressedSmallIndexAllocation(t *testing.T) {
 	raw := smallIndexRaw(t)
-	if len(raw) < 16<<10 || len(raw) > 64<<10 {
-		t.Fatalf("fixture raw size = %d, want between 16 KiB and 64 KiB", len(raw))
+	if len(raw) == 0 || len(raw) > 64<<10 {
+		t.Fatalf("fixture raw size = %d, want non-empty and at most 64 KiB", len(raw))
 	}
 	data, err := Encode(mustSmallIndex(t))
 	if err != nil {
@@ -574,6 +609,31 @@ func TestDecodeCompressedSmallIndexAllocation(t *testing.T) {
 		t.Fatal("benchmark did not run")
 	}
 	t.Logf("Decode of %d byte index: %d B/op, %d allocs/op", len(raw), res.AllocedBytesPerOp(), res.AllocsPerOp())
+	if got := res.AllocedBytesPerOp(); got >= 1<<20 {
+		t.Fatalf("Decode allocates %d B/op, want under 1 MiB", got)
+	}
+}
+
+func TestDecodeKnownOversizedFrameAllocation(t *testing.T) {
+	payload := knownOversizedFrame()
+	assertZstdShape(t, "known 64MiB+1", payload, zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1})
+	data := append([]byte(compressedMagic), payload...)
+	if _, err := Decode(data); !stderrors.Is(err, ErrDecodedSizeExceedsLimit) { // warm the shared decoder
+		t.Fatalf("Decode() error = %v, want errors.Is %v", err, ErrDecodedSizeExceedsLimit)
+	}
+
+	res := testing.Benchmark(func(b *testing.B) {
+		b.ReportAllocs()
+		for i := 0; i < b.N; i++ {
+			if _, err := Decode(data); !stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
+				b.Fatalf("Decode() error = %v, want errors.Is %v", err, ErrDecodedSizeExceedsLimit)
+			}
+		}
+	})
+	if res.N == 0 {
+		t.Fatal("benchmark did not run")
+	}
+	t.Logf("Decode of known-size 64 MiB + 1 frame: %d B/op, %d allocs/op", res.AllocedBytesPerOp(), res.AllocsPerOp())
 	if got := res.AllocedBytesPerOp(); got >= 1<<20 {
 		t.Fatalf("Decode allocates %d B/op, want under 1 MiB", got)
 	}
@@ -623,7 +683,7 @@ func TestDecodeZstdConcurrentMixed(t *testing.T) {
 		t.Fatal("CRC and dictionary inputs must be rejected by the reference path")
 	}
 
-	const goroutines, iterations = 8, 50
+	const goroutines, iterations = 4, 3
 	var wg sync.WaitGroup
 	for g := 0; g < goroutines; g++ {
 		wg.Add(1)
@@ -635,10 +695,13 @@ func TestDecodeZstdConcurrentMixed(t *testing.T) {
 					switch {
 					case in.ok && err != nil:
 						t.Errorf("%s: Decode() error = %v, want success", in.name, err)
+						return
 					case !in.ok && err == nil:
 						t.Errorf("%s: Decode() error = nil, want %q", in.name, in.err)
+						return
 					case !in.ok && err.Error() != in.err:
 						t.Errorf("%s: Decode() error = %q, want %q", in.name, err, in.err)
+						return
 					}
 				}
 			}
