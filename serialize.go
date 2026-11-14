@@ -31,9 +31,10 @@ const (
 	// content size, the first destination buffer is sized from that header, so
 	// a well-formed index uses a smaller buffer. A frame without a content size,
 	// with an all-ones content size or with a skippable first frame uses a
-	// 64 MiB buffer. About 192 MiB of total allocation was observed for oversized
-	// unknown-size frames at klauspost/compress v1.20.3; this is an observation,
-	// not a guaranteed bound.
+	// 64 MiB buffer. For a malformed or oversized frame, the decoder can grow the
+	// buffer past either starting size before it rejects the frame. About 192 MiB
+	// of total allocation was observed for oversized unknown-size frames at
+	// klauspost/compress v1.20.3; this is an observation, not a guaranteed bound.
 	maxDecodedIndexSize = 64 << 20
 
 	// maxRGSetSize limits roaring bitmap deserialization.
