@@ -402,9 +402,9 @@ func sharedZstdDecoder() (*zstd.Decoder, error) {
 // Missing or all-ones content sizes, a skippable first frame, and header
 // parse errors use maxDecodedIndexSize with sized = false.
 //
-// For a known content size above maxDecodedIndexSize, n = 0 lets DecodeAll
-// reject the payload with the same error as the full-size buffer, without
-// allocating that buffer.
+// For a known content size above maxDecodedIndexSize, n = 0 with
+// sized = false lets DecodeAll reject the payload with the same error as
+// the full-size buffer, without allocating that buffer.
 func zstdFirstAttemptCap(payload []byte) (n int, sized bool) {
 	var h zstd.Header
 	if err := h.Decode(payload); err != nil {
