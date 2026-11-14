@@ -393,8 +393,14 @@ func sharedZstdDecoder() (*zstd.Decoder, error) {
 
 // zstdFirstAttemptCap picks the capacity of the first DecodeAll destination
 // from the first frame header. The header is a sizing hint only: it never
-// accepts or rejects a payload. sized is true when n is the known frame content
-// size; a failure of that attempt must be retried with the full-size buffer.
+// accepts or rejects a payload.
+//
+// sized is true when n is the known frame content size; if that attempt
+// fails and n is below maxDecodedIndexSize, the caller retries with the
+// full-size buffer.
+//
+// Missing or all-ones content sizes, a skippable first frame, and header
+// parse errors use maxDecodedIndexSize with sized = false.
 //
 // For a known content size above maxDecodedIndexSize, n = 0 lets DecodeAll
 // reject the payload with the same error as the full-size buffer, without
