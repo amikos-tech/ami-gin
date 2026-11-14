@@ -25,10 +25,16 @@ const (
 )
 
 const (
-	// maxDecodedIndexSize caps zstd.DecodeAll's output buffer to defend against
-	// decompression bombs. 64 MiB accommodates multi-TB Parquet catalogs (tested
-	// up to ~1M row groups / 100M docs) while bounding per-decode allocation to a
-	// value safe on 1 GiB heaps.
+	// maxDecodedIndexSize caps the decoded size of a compressed index to defend
+	// against decompression bombs. 64 MiB accommodates multi-TB Parquet catalogs
+	// (tested up to ~1M row groups / 100M docs). See zstdFirstAttemptCap for how
+	// the first buffer is sized. For a malformed or oversized frame, the decoder
+	// can grow the buffer past the starting size before it rejects the frame. A
+	// failed header-sized attempt can allocate nearly 128 MiB of destination
+	// buffers in total over both attempts, and decoder growth can add more.
+	// About 192 MiB of total allocation was observed for oversized unknown-size
+	// frames at klauspost/compress v1.20.3; this is an observation, not a
+	// guaranteed bound.
 	maxDecodedIndexSize = 64 << 20
 
 	// maxRGSetSize limits roaring bitmap deserialization.
@@ -385,6 +391,55 @@ func sharedZstdDecoder() (*zstd.Decoder, error) {
 	return zstdDecoder, zstdDecoderErr
 }
 
+// zstdFirstAttemptCap picks the capacity of the first DecodeAll destination
+// from the first frame header. The header is a sizing hint only: it never
+// accepts or rejects a payload.
+//
+// sized is true when n is the known frame content size; if that attempt
+// fails and n is below maxDecodedIndexSize, the caller retries with the
+// full-size buffer.
+//
+// Missing or all-ones content sizes, a skippable first frame, and header
+// parse errors use maxDecodedIndexSize with sized = false.
+//
+// For a known content size above maxDecodedIndexSize, n = 0 with
+// sized = false lets DecodeAll reject the payload with the same error as
+// the full-size buffer, without allocating that buffer.
+func zstdFirstAttemptCap(payload []byte) (n int, sized bool) {
+	var h zstd.Header
+	if err := h.Decode(payload); err != nil {
+		return maxDecodedIndexSize, false
+	}
+	// The decoder treats an all-ones content size as unknown.
+	if h.Skippable || !h.HasFCS || h.FrameContentSize == math.MaxUint64 {
+		return maxDecodedIndexSize, false
+	}
+	if h.FrameContentSize > maxDecodedIndexSize {
+		return 0, false
+	}
+	return int(h.FrameContentSize), true
+}
+
+// decompressIndexPayload decompresses one compressed index payload. The first
+// attempt uses a destination buffer sized from the frame header, so a small
+// index does not pay for maxDecodedIndexSize bytes.
+//
+// A failed header-sized attempt below maxDecodedIndexSize is retried once with
+// the full-size buffer, and that result is returned. The retry keeps
+// multi-frame, false content size, corrupt and other odd payloads accepted or
+// rejected exactly as before, with the same errors. Retrying repeats
+// decompression and can add a full-size buffer allocation; decompression
+// cannot be cancelled. The returned error is the raw decoder error; the caller
+// maps it.
+func decompressIndexPayload(decoder *zstd.Decoder, payload []byte) ([]byte, error) {
+	n, sized := zstdFirstAttemptCap(payload)
+	out, err := decoder.DecodeAll(payload, make([]byte, 0, n))
+	if err != nil && sized && n < maxDecodedIndexSize {
+		out, err = decoder.DecodeAll(payload, make([]byte, 0, maxDecodedIndexSize))
+	}
+	return out, err
+}
+
 // Encode serializes the index using zstd-15 compression (recommended default).
 // It delegates to EncodeContext with context.Background().
 func Encode(idx *GINIndex) ([]byte, error) {
@@ -613,7 +668,7 @@ func decodeCore(data []byte) (*GINIndex, error) {
 			return nil, errors.Wrap(err, "create zstd decoder")
 		}
 
-		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
+		decompressed, err = decompressIndexPayload(decoder, data[4:])
 		if err != nil {
 			if stderrors.Is(err, zstd.ErrDecoderSizeExceeded) {
 				return nil, errors.Wrap(ErrDecodedSizeExceedsLimit, "decompress data")
