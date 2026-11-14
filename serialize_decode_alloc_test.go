@@ -606,7 +606,7 @@ func TestDecodeZstdConcurrentMixed(t *testing.T) {
 		})},
 	}
 
-	var inputs []input
+	inputs := make([]input, 0, len(payloads))
 	for _, p := range payloads {
 		in := input{name: p.name, data: append([]byte(compressedMagic), p.payload...)}
 		if err := legacyDecodeError(p.payload); err != nil {
