@@ -385,6 +385,17 @@ func sharedZstdDecoder() (*zstd.Decoder, error) {
 	return zstdDecoder, zstdDecoderErr
 }
 
+// zstdFirstAttemptCap picks the capacity of the first DecodeAll destination.
+func zstdFirstAttemptCap(payload []byte) (n int, sized bool) {
+	return maxDecodedIndexSize, false
+}
+
+// decompressIndexPayload decompresses one compressed index payload.
+func decompressIndexPayload(decoder *zstd.Decoder, payload []byte) ([]byte, error) {
+	n, _ := zstdFirstAttemptCap(payload)
+	return decoder.DecodeAll(payload, make([]byte, 0, n))
+}
+
 // Encode serializes the index using zstd-15 compression (recommended default).
 // It delegates to EncodeContext with context.Background().
 func Encode(idx *GINIndex) ([]byte, error) {
@@ -613,7 +624,7 @@ func decodeCore(data []byte) (*GINIndex, error) {
 			return nil, errors.Wrap(err, "create zstd decoder")
 		}
 
-		decompressed, err = decoder.DecodeAll(data[4:], make([]byte, 0, maxDecodedIndexSize))
+		decompressed, err = decompressIndexPayload(decoder, data[4:])
 		if err != nil {
 			if stderrors.Is(err, zstd.ErrDecoderSizeExceeded) {
 				return nil, errors.Wrap(ErrDecodedSizeExceedsLimit, "decompress data")
