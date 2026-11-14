@@ -3562,16 +3562,22 @@ func BenchmarkEncode(b *testing.B) {
 }
 
 func BenchmarkDecode(b *testing.B) {
-	sizes := []int{100, 500, 1000}
+	sizes := []int{1, 10, 100, 500, 1000}
 
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("RGs=%d", size), func(b *testing.B) {
 			idx := setupTestIndex(size)
-			data, _ := Encode(idx)
+			data, err := Encode(idx)
+			if err != nil {
+				b.Fatalf("Encode() error = %v", err)
+			}
+			b.ReportAllocs()
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_, _ = Decode(data)
+				if _, err := Decode(data); err != nil {
+					b.Fatalf("Decode() error = %v", err)
+				}
 			}
 		})
 	}
