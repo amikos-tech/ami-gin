@@ -311,7 +311,7 @@ var differentialSentinels = []struct {
 type differentialFixture struct {
 	name    string
 	payload []byte
-	large   bool // 64 MiB-plus decode work; skipped under -short
+	large   bool // 64 MiB or larger decode work; skipped under -short
 	// wantOK: 1 must accept, -1 must reject, 0 differential only.
 	wantOK int
 	// wantSentinel is checked with errors.Is when wantOK == -1.
@@ -468,7 +468,7 @@ func TestDecodeZstdDifferential(t *testing.T) {
 	for _, fx := range differentialFixtures(t) {
 		t.Run(fx.name, func(t *testing.T) {
 			if fx.large && testing.Short() {
-				t.Skip("64 MiB-plus fixture skipped in short mode")
+				t.Skip("64 MiB or larger fixture skipped in short mode")
 			}
 
 			wantIdx, wantErr := legacyDecode(fx.payload)
