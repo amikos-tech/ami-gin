@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	stderrors "errors"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -35,7 +36,6 @@ type zstdFCSMode int
 const (
 	zstdFCSNone zstdFCSMode = iota
 	zstdFCS1                // 1 byte; requires single segment
-	zstdFCS2                // 2 bytes, value - 256
 	zstdFCS4                // 4 bytes
 	zstdFCS8                // 8 bytes
 )
@@ -54,8 +54,7 @@ type zstdFrameSpec struct {
 	// content size (RFC 8878). zstdFCS1 always sets it; zstdFCSNone cannot.
 	singleSegment bool
 	windowByte    byte
-	dictSize      int // 0, 1, 2 or 4
-	dictID        uint32
+	dictID        uint32 // non-zero: written as a 4-byte dictionary ID
 	blocks        []zstdBlockSpec
 }
 
@@ -90,8 +89,6 @@ func buildZstdFrame(spec zstdFrameSpec) []byte {
 		}
 	case zstdFCS1:
 		singleSegment = true
-	case zstdFCS2:
-		desc |= 1 << 6
 	case zstdFCS4:
 		desc |= 2 << 6
 	case zstdFCS8:
@@ -100,16 +97,8 @@ func buildZstdFrame(spec zstdFrameSpec) []byte {
 	if singleSegment {
 		desc |= 1 << 5
 	}
-	switch spec.dictSize {
-	case 0:
-	case 1:
-		desc |= 1
-	case 2:
-		desc |= 2
-	case 4:
+	if spec.dictID != 0 {
 		desc |= 3
-	default:
-		panic("buildZstdFrame: bad dictSize")
 	}
 
 	out := binary.LittleEndian.AppendUint32(nil, zstdFrameMagic)
@@ -117,19 +106,12 @@ func buildZstdFrame(spec zstdFrameSpec) []byte {
 	if !singleSegment {
 		out = append(out, spec.windowByte)
 	}
-	switch spec.dictSize {
-	case 1:
-		out = append(out, byte(spec.dictID))
-	case 2:
-		out = binary.LittleEndian.AppendUint16(out, uint16(spec.dictID))
-	case 4:
+	if spec.dictID != 0 {
 		out = binary.LittleEndian.AppendUint32(out, spec.dictID)
 	}
 	switch spec.fcsMode {
 	case zstdFCS1:
 		out = append(out, byte(spec.fcs))
-	case zstdFCS2:
-		out = binary.LittleEndian.AppendUint16(out, uint16(spec.fcs-256))
 	case zstdFCS4:
 		out = binary.LittleEndian.AppendUint32(out, uint32(spec.fcs))
 	case zstdFCS8:
@@ -191,6 +173,28 @@ func knownOversizedFrame() []byte {
 	})
 }
 
+// splitKnownFrames splits data over two known-size frames.
+func splitKnownFrames(data []byte) []byte {
+	half := len(data) / 2
+	return append(knownFrame(data[:half]), knownFrame(data[half:])...)
+}
+
+// unknownDictFrame wraps data in a frame with a content size of twice the
+// limit and an unknown 4-byte dictionary ID.
+func unknownDictFrame(data []byte) []byte {
+	return buildZstdFrame(zstdFrameSpec{
+		fcsMode: zstdFCS8, fcs: 2 * maxDecodedIndexSize, windowByte: zstdTestWindowByte,
+		dictID: 0xDEADBEEF, blocks: rawBlocks(data),
+	})
+}
+
+// falseSmallFrame wraps data in a frame that declares a 16-byte content size.
+func falseSmallFrame(data []byte) []byte {
+	return buildZstdFrame(zstdFrameSpec{
+		fcsMode: zstdFCS4, fcs: 16, windowByte: zstdTestWindowByte, blocks: rawBlocks(data),
+	})
+}
+
 type zstdShape struct {
 	hasFCS        bool
 	fcs           uint64
@@ -227,12 +231,9 @@ func assertZstdShape(t *testing.T, name string, payload []byte, want zstdShape) 
 
 // Shared fixtures.
 
-func mustSmallIndex(t testing.TB) *GINIndex {
+func mustSmallIndex(t *testing.T) *GINIndex {
 	t.Helper()
-	builder, err := NewBuilder(DefaultConfig(), 1)
-	if err != nil {
-		t.Fatalf("NewBuilder() error = %v", err)
-	}
+	builder := mustNewBuilder(t, DefaultConfig(), 1)
 	if err := builder.AddDocument(0, []byte(`{"name":"alice"}`)); err != nil {
 		t.Fatalf("AddDocument() error = %v", err)
 	}
@@ -240,17 +241,13 @@ func mustSmallIndex(t testing.TB) *GINIndex {
 }
 
 // smallIndexRaw returns the uncompressed index body (no magic).
-func smallIndexRaw(t testing.TB) []byte {
+func smallIndexRaw(t *testing.T) []byte {
 	t.Helper()
-	raw, err := EncodeWithLevel(mustSmallIndex(t), CompressionNone)
-	if err != nil {
-		t.Fatalf("EncodeWithLevel() error = %v", err)
-	}
-	return raw[len(uncompressedMagic):]
+	return mustEncodeUncompressed(t, mustSmallIndex(t))[len(uncompressedMagic):]
 }
 
 // smallIndexCompressed returns the compressed index payload (no magic).
-func smallIndexCompressed(t testing.TB) []byte {
+func smallIndexCompressed(t *testing.T) []byte {
 	t.Helper()
 	data, err := Encode(mustSmallIndex(t))
 	if err != nil {
@@ -291,11 +288,6 @@ func legacyDecode(payload []byte) (*GINIndex, error) {
 	return Decode(append([]byte(uncompressedMagic), out...))
 }
 
-func legacyDecodeError(payload []byte) error {
-	_, err := legacyDecode(payload)
-	return err
-}
-
 var differentialSentinels = []struct {
 	name string
 	err  error
@@ -318,14 +310,11 @@ type differentialFixture struct {
 	wantSentinel error
 }
 
-func crcCorruptPayload(t *testing.T, raw []byte) []byte {
+// crcCorruptPayload copies the small compressed index and flips the last
+// byte of its frame checksum.
+func crcCorruptPayload(t *testing.T) []byte {
 	t.Helper()
-	enc, err := zstd.NewWriter(nil, zstd.WithEncoderCRC(true))
-	if err != nil {
-		t.Fatalf("zstd.NewWriter() error = %v", err)
-	}
-	defer enc.Close()
-	payload := enc.EncodeAll(raw, nil)
+	payload := append([]byte{}, smallIndexCompressed(t)...)
 	var h zstd.Header
 	if err := h.Decode(payload); err != nil {
 		t.Fatalf("Header.Decode() error = %v", err)
@@ -353,7 +342,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	assertZstdShape(t, "two known 1KiB", twoKnownSmall, zstdShape{hasFCS: true, fcs: 1024})
 	add(differentialFixture{name: "two known-size 1KiB frames", payload: twoKnownSmall})
 
-	splitKnown := append(knownFrame(raw[:half]), knownFrame(raw[half:])...)
+	splitKnown := splitKnownFrames(raw)
 	assertZstdShape(t, "split known", splitKnown, zstdShape{hasFCS: true, fcs: uint64(half)})
 	add(differentialFixture{name: "valid index split over two known-size frames", payload: splitKnown, wantOK: 1})
 
@@ -377,10 +366,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	assertZstdShape(t, "fcs>limit window>limit", fcsHugeWindow, zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1})
 	add(differentialFixture{name: "content size above limit with window above limit", payload: fcsHugeWindow, wantOK: -1})
 
-	fcsUnknownDict := buildZstdFrame(zstdFrameSpec{
-		fcsMode: zstdFCS8, fcs: 2 * maxDecodedIndexSize, windowByte: zstdTestWindowByte,
-		dictSize: 4, dictID: 0xDEADBEEF, blocks: rawBlocks(raw),
-	})
+	fcsUnknownDict := unknownDictFrame(raw)
 	assertZstdShape(t, "fcs>limit dict", fcsUnknownDict,
 		zstdShape{hasFCS: true, fcs: 2 * maxDecodedIndexSize, dictID: 0xDEADBEEF})
 	add(differentialFixture{
@@ -388,9 +374,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 		wantOK: -1, wantSentinel: zstd.ErrUnknownDictionary,
 	})
 
-	falseSmall := buildZstdFrame(zstdFrameSpec{
-		fcsMode: zstdFCS4, fcs: 16, windowByte: zstdTestWindowByte, blocks: rawBlocks(raw),
-	})
+	falseSmall := falseSmallFrame(raw)
 	assertZstdShape(t, "false small", falseSmall, zstdShape{hasFCS: true, fcs: 16})
 	add(differentialFixture{name: "false small content size", payload: falseSmall})
 
@@ -400,7 +384,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 	assertZstdShape(t, "false large", falseLarge, zstdShape{hasFCS: true, fcs: uint64(len(raw)) + 4096})
 	add(differentialFixture{name: "false large content size at most limit", payload: falseLarge})
 
-	crc := crcCorruptPayload(t, raw)
+	crc := crcCorruptPayload(t)
 	add(differentialFixture{name: "CRC failure", payload: crc, wantOK: -1, wantSentinel: zstd.ErrCRCMismatch})
 
 	add(differentialFixture{name: "truncated mid payload", payload: real[:len(real)/2], wantOK: -1})
@@ -424,7 +408,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 
 	singleSegDict := buildZstdFrame(zstdFrameSpec{
 		fcsMode: zstdFCS8, fcs: maxDecodedIndexSize + 1, singleSegment: true,
-		dictSize: 4, dictID: 0xDEADBEEF, blocks: rawBlocks(raw),
+		dictID: 0xDEADBEEF, blocks: rawBlocks(raw),
 	})
 	assertZstdShape(t, "single segment fcs>limit dict", singleSegDict,
 		zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1, dictID: 0xDEADBEEF, singleSegment: true})
@@ -460,10 +444,7 @@ func differentialFixtures(t *testing.T) []differentialFixture {
 }
 
 func TestDecodeZstdDifferential(t *testing.T) {
-	rawEnc, err := EncodeWithLevel(mustSmallIndex(t), CompressionNone)
-	if err != nil {
-		t.Fatalf("EncodeWithLevel() error = %v", err)
-	}
+	rawEnc := append([]byte(uncompressedMagic), smallIndexRaw(t)...)
 
 	for _, fx := range differentialFixtures(t) {
 		t.Run(fx.name, func(t *testing.T) {
@@ -504,14 +485,8 @@ func TestDecodeZstdDifferential(t *testing.T) {
 				return
 			}
 
-			gotEnc, err := EncodeWithLevel(gotIdx, CompressionNone)
-			if err != nil {
-				t.Fatalf("re-encode new index: %v", err)
-			}
-			wantEnc, err := EncodeWithLevel(wantIdx, CompressionNone)
-			if err != nil {
-				t.Fatalf("re-encode legacy index: %v", err)
-			}
+			gotEnc := mustEncodeUncompressed(t, gotIdx)
+			wantEnc := mustEncodeUncompressed(t, wantIdx)
 			if !bytes.Equal(gotEnc, wantEnc) {
 				t.Error("new and legacy decoded indexes re-encode differently")
 			}
@@ -584,65 +559,66 @@ func TestDecompressIndexPayloadFirstAttemptCapacity(t *testing.T) {
 	}
 }
 
-func TestDecodeCompressedSmallIndexAllocation(t *testing.T) {
-	raw := smallIndexRaw(t)
-	if len(raw) == 0 || len(raw) > 64<<10 {
-		t.Fatalf("fixture raw size = %d, want non-empty and at most 64 KiB", len(raw))
-	}
-	data, err := Encode(mustSmallIndex(t))
-	if err != nil {
-		t.Fatalf("Encode() error = %v", err)
-	}
-	if _, err := Decode(data); err != nil { // warm the shared decoder
-		t.Fatalf("Decode() error = %v", err)
+// maxDecodeAllocBytes is the per-call allocation ceiling for the Decode
+// allocation tests.
+const maxDecodeAllocBytes = 1 << 20
+
+// assertDecodeAllocsBelowLimit warms the shared decoder, measures Decode(data)
+// with testing.Benchmark, and fails if it allocates maxDecodeAllocBytes or
+// more per call. checkErr returns a non-nil error when Decode's result is not
+// the expected one.
+func assertDecodeAllocsBelowLimit(t *testing.T, desc string, data []byte, checkErr func(error) error) {
+	t.Helper()
+	if _, err := Decode(data); checkErr(err) != nil { // warm the shared decoder
+		t.Fatal(checkErr(err))
 	}
 
 	res := testing.Benchmark(func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if _, err := Decode(data); err != nil {
-				b.Fatal(err)
+			if _, err := Decode(data); checkErr(err) != nil {
+				b.Fatal(checkErr(err))
 			}
 		}
 	})
 	if res.N == 0 {
 		t.Fatal("benchmark did not run")
 	}
-	t.Logf("Decode of %d byte index: %d B/op, %d allocs/op", len(raw), res.AllocedBytesPerOp(), res.AllocsPerOp())
-	if got := res.AllocedBytesPerOp(); got >= 1<<20 {
-		t.Fatalf("Decode allocates %d B/op, want under 1 MiB", got)
+	t.Logf("Decode of %s: %d B/op, %d allocs/op", desc, res.AllocedBytesPerOp(), res.AllocsPerOp())
+	if got := res.AllocedBytesPerOp(); got >= maxDecodeAllocBytes {
+		t.Fatalf("Decode allocates %d B/op, want under %d", got, maxDecodeAllocBytes)
 	}
+}
+
+func TestDecodeCompressedSmallIndexAllocation(t *testing.T) {
+	raw := smallIndexRaw(t)
+	if len(raw) == 0 || len(raw) > 64<<10 {
+		t.Fatalf("fixture raw size = %d, want non-empty and at most 64 KiB", len(raw))
+	}
+	data := append([]byte(compressedMagic), smallIndexCompressed(t)...)
+	assertDecodeAllocsBelowLimit(t, fmt.Sprintf("%d byte index", len(raw)), data, func(err error) error {
+		if err != nil {
+			return errors.Errorf("Decode() error = %v", err)
+		}
+		return nil
+	})
 }
 
 func TestDecodeKnownOversizedFrameAllocation(t *testing.T) {
 	payload := knownOversizedFrame()
 	assertZstdShape(t, "known 64MiB+1", payload, zstdShape{hasFCS: true, fcs: maxDecodedIndexSize + 1})
 	data := append([]byte(compressedMagic), payload...)
-	if _, err := Decode(data); !stderrors.Is(err, ErrDecodedSizeExceedsLimit) { // warm the shared decoder
-		t.Fatalf("Decode() error = %v, want errors.Is %v", err, ErrDecodedSizeExceedsLimit)
-	}
-
-	res := testing.Benchmark(func(b *testing.B) {
-		b.ReportAllocs()
-		for i := 0; i < b.N; i++ {
-			if _, err := Decode(data); !stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
-				b.Fatalf("Decode() error = %v, want errors.Is %v", err, ErrDecodedSizeExceedsLimit)
-			}
+	assertDecodeAllocsBelowLimit(t, "known-size 64 MiB + 1 frame", data, func(err error) error {
+		if !stderrors.Is(err, ErrDecodedSizeExceedsLimit) {
+			return errors.Errorf("Decode() error = %v, want errors.Is %v", err, ErrDecodedSizeExceedsLimit)
 		}
+		return nil
 	})
-	if res.N == 0 {
-		t.Fatal("benchmark did not run")
-	}
-	t.Logf("Decode of known-size 64 MiB + 1 frame: %d B/op, %d allocs/op", res.AllocedBytesPerOp(), res.AllocsPerOp())
-	if got := res.AllocedBytesPerOp(); got >= 1<<20 {
-		t.Fatalf("Decode allocates %d B/op, want under 1 MiB", got)
-	}
 }
 
 func TestDecodeZstdConcurrentMixed(t *testing.T) {
 	raw := smallIndexRaw(t)
 	real := smallIndexCompressed(t)
-	half := len(raw) / 2
 
 	type input struct {
 		name string
@@ -650,37 +626,34 @@ func TestDecodeZstdConcurrentMixed(t *testing.T) {
 		ok   bool
 		err  string
 	}
+	// wantOK: 1 the reference path must accept, -1 must reject, 0 either.
 	payloads := []struct {
 		name    string
 		payload []byte
+		wantOK  int
 	}{
-		{"valid", real},
-		{"retry split frames", append(knownFrame(raw[:half]), knownFrame(raw[half:])...)},
-		{"crc corrupt", crcCorruptPayload(t, raw)},
-		{"unknown dictionary", buildZstdFrame(zstdFrameSpec{
-			fcsMode: zstdFCS8, fcs: 2 * maxDecodedIndexSize, windowByte: zstdTestWindowByte,
-			dictSize: 4, dictID: 0xDEADBEEF, blocks: rawBlocks(raw),
-		})},
-		{"false small fcs", buildZstdFrame(zstdFrameSpec{
-			fcsMode: zstdFCS4, fcs: 16, windowByte: zstdTestWindowByte, blocks: rawBlocks(raw),
-		})},
+		{"valid", real, 1},
+		{"retry split frames", splitKnownFrames(raw), 1},
+		{"crc corrupt", crcCorruptPayload(t), -1},
+		{"unknown dictionary", unknownDictFrame(raw), -1},
+		{"false small fcs", falseSmallFrame(raw), 0},
 	}
 
 	inputs := make([]input, 0, len(payloads))
 	for _, p := range payloads {
 		in := input{name: p.name, data: append([]byte(compressedMagic), p.payload...)}
-		if err := legacyDecodeError(p.payload); err != nil {
+		if _, err := legacyDecode(p.payload); err != nil {
 			in.err = err.Error()
 		} else {
 			in.ok = true
 		}
+		switch {
+		case p.wantOK == 1 && !in.ok:
+			t.Fatalf("%s: reference path error = %q, want accept", p.name, in.err)
+		case p.wantOK == -1 && in.ok:
+			t.Fatalf("%s: reference path accepted, want reject", p.name)
+		}
 		inputs = append(inputs, in)
-	}
-	if !inputs[0].ok || !inputs[1].ok {
-		t.Fatal("valid and split-frame inputs must be accepted by the reference path")
-	}
-	if inputs[2].ok || inputs[3].ok {
-		t.Fatal("CRC and dictionary inputs must be rejected by the reference path")
 	}
 
 	const goroutines, iterations = 4, 3
