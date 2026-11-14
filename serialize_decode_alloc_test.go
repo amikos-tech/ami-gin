@@ -552,7 +552,7 @@ func TestDecompressIndexPayloadFirstAttemptCapacity(t *testing.T) {
 		t.Fatalf("decompressIndexPayload() error = %v", err)
 	}
 	if cap(out) != int(h.FrameContentSize) {
-		t.Fatalf("cap(out) = %d, want frame content size %d", cap(out), h.FrameContentSize)
+		t.Fatalf("cap(out) = %d, want frame content size %d; this relies on klauspost/compress DecodeAll keeping a dst that already fits the frame, so a library upgrade can break it", cap(out), h.FrameContentSize)
 	}
 	if !bytes.Equal(out, raw) {
 		t.Fatal("decompressed bytes differ from the raw index")
