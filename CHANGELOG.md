@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- `Decode` of a compressed index (`GINc`) no longer allocates a 64 MiB buffer
+  for every index (#109). It sizes the first decompression buffer from the
+  zstd frame header, so an index that decodes to 17 KB now allocates well
+  under 1 MiB per decode instead of about 64 MiB. If a header-sized attempt
+  below the 64 MiB limit fails for any reason, `Decode` retries once with the
+  64 MiB buffer, so it accepts and rejects the same inputs as before, with the
+  same errors. The 64 MiB decoded-size limit and `ErrDecodedSizeExceedsLimit`
+  are unchanged. The wire format stays v11.
+  Known limitation: a frame without a content size still uses the 64 MiB
+  path, and an oversized one was observed to allocate about 192 MiB before
+  rejection (an observation, not a guaranteed bound).
 - The `ToLower`, `EmailDomain` and `URLHost` transformers no longer depend on
   the Go toolchain (#102). They lowercase with the in-tree Unicode 15.0.0
   tables that #99 added for trigrams. Before, an index built with Go 1.26
