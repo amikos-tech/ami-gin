@@ -543,10 +543,17 @@ type registeredRepresentation struct {
 }
 
 type GINConfig struct {
-	CardinalityThreshold    uint32
-	BloomFilterSize         uint32
-	BloomFilterHashes       uint8
-	EnableTrigrams          bool
+	CardinalityThreshold uint32
+	BloomFilterSize      uint32
+	BloomFilterHashes    uint8
+	EnableTrigrams       bool
+	// TrigramMinLength is the shortest term, in characters, that makes
+	// trigram grams. The builder only builds 3-character grams, so
+	// NewBuilder clamps values above 3 to 3 (the stored config holds the
+	// effective value). Terms shorter than 3 characters never make grams.
+	// Values of 3 or below are kept as given. A decoded index whose stored
+	// value exceeds its trigram N makes Contains and Regex return all row
+	// groups, because the writer skipped terms that still make grams (#111).
 	TrigramMinLength        int
 	HLLPrecision            uint8
 	PrefixBlockSize         int
