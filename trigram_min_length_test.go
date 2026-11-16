@@ -194,18 +194,12 @@ func TestTrigramMinLengthCompanionGuard(t *testing.T) {
 }
 
 func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
-	// (a) Plain re-encode keeps the stored value and the guard.
+	// (a) Encode, Decode, Encode keeps the stored value and the guard, and
+	// the bytes are stable across the round trip.
 	legacy := tmlLoadLegacy(t)
 	first, err := Encode(legacy)
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
-	}
-	second, err := Encode(legacy)
-	if err != nil {
-		t.Fatalf("second Encode: %v", err)
-	}
-	if !bytes.Equal(first, second) {
-		t.Error("re-encoded bytes differ")
 	}
 	again, err := Decode(first)
 	if err != nil {
@@ -215,6 +209,13 @@ func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
 		t.Errorf("re-decoded Config = %+v, want TrigramMinLength 5", again.Config)
 	}
 	tmlRows(t, again, Contains("$.s", "abc"), tmlAllRGs, "re-decoded Contains")
+	second, err := Encode(again)
+	if err != nil {
+		t.Fatalf("second Encode: %v", err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Error("bytes differ after an Encode, Decode, Encode round trip")
+	}
 
 	// (b) A nil config cannot carry the guard.
 	nilCfg := tmlLoadLegacy(t)
