@@ -9,7 +9,10 @@
   are unchanged, and encoded bytes for the default config do not change. An
   index built earlier with a value above 3 can hide matches, so a new reader
   returns every row group for `Contains` and `Regex` on those indexes until
-  they are rebuilt. EQ, range and null predicates keep pruning.
+  they are rebuilt. EQ, range and null predicates keep pruning. `Encode`
+  now returns an error for such an index if its config is nil or stores a
+  `TrigramMinLength` at or below that trigram index's N, so the written file
+  keeps the fallback.
   `RegexLiteralInfo.MinLength` stays in bytes, and the field comment now says
   so. The wire format stays v11.
 - `Decode` of a compressed index (`GINc`) no longer allocates a 64 MiB buffer

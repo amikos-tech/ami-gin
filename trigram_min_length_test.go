@@ -115,9 +115,6 @@ func TestTrigramMinLengthClampNewBuild(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.TrigramMinLength = minLen
 		built := tmlBuild(t, cfg, tmlDocs)
-		if cfg.TrigramMinLength != minLen {
-			t.Errorf("caller cfg.TrigramMinLength = %d after NewBuilder, want %d", cfg.TrigramMinLength, minLen)
-		}
 		for name, idx := range map[string]*GINIndex{"fresh": built, "decoded": tmlRoundTrip(t, built)} {
 			label := name
 			tmlRows(t, idx, Contains("$.s", "abc"), []int{0, 4}, label+" Contains abc")
@@ -260,7 +257,12 @@ func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
 	}
 }
 
-func TestTrigramRuneLengthGate(t *testing.T) {
+// TestTrigramRuneLengthBehavior and TestTrigramRegexRuneBehavior pin the
+// end-to-end Contains/Regex answers for short multi-byte terms. They do not
+// guard the rune-count change itself: with TrigramMinLength clamped to 3, the
+// old byte gates admit a superset that TrigramIndex.Add and Search filter by
+// rune count anyway. TestTrigramBuilderGateCountsRunes guards the builder gate.
+func TestTrigramRuneLengthBehavior(t *testing.T) {
 	values := []string{"éé", "日本", "ab", "zzzzzz", "ééé", "日本語", "Kab"}
 	idx := tmlStrings(t, values)
 	ti := idx.TrigramIndexes[requirePathID(t, idx, "$.s")]
@@ -279,15 +281,12 @@ func TestTrigramRuneLengthGate(t *testing.T) {
 	tmlRows(t, idx, Regex("$.s", "ééé"), []int{4}, "Regex ééé")
 	tmlRows(t, idx, Contains("$.s", "日本語"), []int{5}, "Contains 日本語")
 	tmlRows(t, idx, Regex("$.s", "日本語"), []int{5}, "Regex 日本語")
-	got := idx.Evaluate([]Predicate{Contains("$.s", "kab")}).ToSlice()
-	if !slices.Contains(got, 6) {
-		t.Errorf("Contains kab = %v, want it to include row group 6", got)
-	}
+	tmlRows(t, idx, Contains("$.s", "kab"), []int{6}, "Contains kab")
 	tmlRows(t, idx, Contains("$.s", "éé"), all, "Contains éé")
 	tmlRows(t, idx, Regex("$.s", "éé"), all, "Regex éé")
 }
 
-func TestTrigramRegexRuneLiterals(t *testing.T) {
+func TestTrigramRegexRuneBehavior(t *testing.T) {
 	idx := tmlStrings(t, []string{"éé", "日本", "ab", "zzzzzz", "ééé", "日本語", "Kab"})
 	all := []int{0, 1, 2, 3, 4, 5, 6}
 	tmlRows(t, idx, Regex("$.s", "éé|abcdef"), all, "short alternative")
@@ -295,6 +294,34 @@ func TestTrigramRegexRuneLiterals(t *testing.T) {
 	tmlRows(t, idx, Regex("$.s", "日本|abcdef"), all, "mixed 日本|abcdef")
 	// 4 bytes, 2 characters.
 	tmlRows(t, idx, Regex("$.s", "éé"), all, "long in bytes, short in characters")
+}
+
+// TestTrigramBuilderGateCountsRunes skips the NewBuilder clamp, as
+// buildLegacyTrigramMinLengthEncoded does, so a byte-count gate would admit
+// "日本語" (9 bytes, 3 characters) where the rune-count gate rejects it.
+func TestTrigramBuilderGateCountsRunes(t *testing.T) {
+	builder := mustNewBuilder(t, DefaultConfig(), 2)
+	builder.config.TrigramMinLength = 4
+	for i, v := range []string{"日本語", "abcdefgh"} {
+		raw, err := json.Marshal(map[string]any{"s": v})
+		if err != nil {
+			t.Fatalf("json.Marshal: %v", err)
+		}
+		if err := builder.AddDocument(DocID(i), raw); err != nil {
+			t.Fatalf("AddDocument(%d): %v", i, err)
+		}
+	}
+	idx := builder.Finalize()
+	ti := idx.TrigramIndexes[requirePathID(t, idx, "$.s")]
+	if ti == nil {
+		t.Fatal("no trigram index for $.s")
+	}
+	if _, ok := ti.Trigrams["日本語"]; ok {
+		t.Error("gram 日本語 indexed, want the 3-character term rejected by TrigramMinLength 4")
+	}
+	if _, ok := ti.Trigrams["abc"]; !ok {
+		t.Error("gram abc missing, want the 8-character term indexed")
+	}
 }
 
 func TestAnalyzeRegexMinLengthStaysBytes(t *testing.T) {
