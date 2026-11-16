@@ -6,6 +6,9 @@ import (
 	"github.com/pkg/errors"
 )
 
+// defaultTrigramN is the gram size the builder and NewTrigramIndex use.
+const defaultTrigramN = 3
+
 type NGramConfig struct {
 	N       int
 	Padding string
@@ -41,10 +44,16 @@ type TrigramIndex struct {
 	// index owns the serialized token; Encode refuses this copy when it is
 	// foreign and differs from the index token (#99).
 	unicodeToken string
+	// minLengthUnsafe is set by Decode when the stored TrigramMinLength
+	// exceeds this index's N: the writer skipped terms shorter than that
+	// value, so a gram absent from Trigrams proves nothing (#111). Search
+	// then returns every row group. Encode keeps the guard (see
+	// validateTrigramMinLengthGuards).
+	minLengthUnsafe bool
 }
 
 func NewTrigramIndex(numRGs int, opts ...NGramOption) (*TrigramIndex, error) {
-	cfg := &NGramConfig{N: 3}
+	cfg := &NGramConfig{N: defaultTrigramN}
 	for _, opt := range opts {
 		if err := opt(cfg); err != nil {
 			return nil, err
@@ -85,6 +94,11 @@ func (ti *TrigramIndex) Add(value string, rgID int) {
 func (ti *TrigramIndex) Search(pattern string) *RGSet {
 	// Grams written with unknown tables cannot be matched safely.
 	if !trigramUnicodeTokenSupported(ti.unicodeToken) {
+		return AllRGs(ti.NumRGs)
+	}
+	// Terms shorter than the stored TrigramMinLength never made grams, so
+	// absent grams cannot be trusted (#111).
+	if ti.minLengthUnsafe {
 		return AllRGs(ti.NumRGs)
 	}
 	runes := trigramLowerRunes(pattern)
