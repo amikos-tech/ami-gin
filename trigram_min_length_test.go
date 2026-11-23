@@ -30,9 +30,11 @@ var tmlDocs = []map[string]any{
 var tmlAllRGs = []int{0, 1, 2, 3, 4}
 
 // buildLegacyTrigramMinLengthEncoded builds and encodes docs with minLen set
-// on the builder's own config after NewBuilder. Code without the NewBuilder
-// clamp keeps the value as it is, which reproduces what older writers stored;
-// code with the clamp is bypassed on purpose.
+// on the builder's own config after NewBuilder, so the stored
+// TrigramMinLength bypasses the NewBuilder clamp. On code that predates the
+// #111 fix this is what older writers stored. Current code counts runes, so
+// for non-ASCII terms the grams can differ from an older writer's: use the
+// golden file where exact legacy grams matter.
 func buildLegacyTrigramMinLengthEncoded(t *testing.T, cfg GINConfig, minLen int, docs []map[string]any) []byte {
 	t.Helper()
 	builder := mustNewBuilder(t, cfg, len(docs))
