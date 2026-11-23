@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/cespare/xxhash/v2"
 	"github.com/pkg/errors"
@@ -242,6 +243,9 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	}
 	config.ParserFailureMode = normalizeIngestFailureMode(config.ParserFailureMode)
 	config.NumericFailureMode = normalizeIngestFailureMode(config.NumericFailureMode)
+	// Clamp to the only gram size the builder makes, so that no term that
+	// makes grams is skipped (#111); see GINConfig.TrigramMinLength.
+	config.TrigramMinLength = min(config.TrigramMinLength, defaultTrigramN)
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)
 	if err != nil {
 		return nil, errors.Wrap(err, "create bloom filter")
@@ -1138,7 +1142,7 @@ func (b *GINBuilder) addStringTerm(pd *pathBuildData, term string, rgID int, pat
 
 	b.addStringLengthStat(pd, len(term), rgID)
 
-	if pd.trigrams != nil && len(term) >= b.config.TrigramMinLength {
+	if pd.trigrams != nil && utf8.RuneCountInString(term) >= b.config.TrigramMinLength {
 		pd.trigrams.Add(term, rgID)
 	}
 }

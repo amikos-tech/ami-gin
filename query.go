@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"unicode/utf8"
 
 	"github.com/amikos-tech/ami-gin/logging"
 	"github.com/amikos-tech/ami-gin/telemetry"
@@ -836,25 +837,11 @@ func (idx *GINIndex) evaluateRegex(pathID int, entry *PathEntry, value any) *RGS
 		return AllRGs(numRGs)
 	}
 
-	// If all literals are too short for trigrams, can't prune
-	if info.MinLength < ti.N {
-		allTooShort := true
-		for _, lit := range info.Literals {
-			if len(lit) >= ti.N {
-				allTooShort = false
-				break
-			}
-		}
-		if allTooShort {
-			return AllRGs(numRGs)
-		}
-	}
-
 	// For each literal alternative, find matching row groups using trigrams
 	// Union the results (OR semantics for alternation)
 	result := NoRGs(numRGs)
 	for _, lit := range info.Literals {
-		if len(lit) < ti.N {
+		if utf8.RuneCountInString(lit) < ti.N {
 			// Literal too short, can't use trigrams - must include all RGs
 			return AllRGs(numRGs)
 		}

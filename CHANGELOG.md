@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- The trigram length checks now count characters, not bytes, in the builder
+  and in regex queries (#111). `GINConfig.TrigramMinLength` above 3 no longer
+  loses matches: `NewBuilder` clamps it to 3 because the builder only builds
+  3-character grams, and the encoded config stores 3. Values of 3 or below
+  are unchanged, and encoded bytes for the default config do not change. An
+  index built earlier with a value above 3 can hide matches, so a new reader
+  returns every row group for `Contains` and `Regex` on those indexes until
+  they are rebuilt. EQ, range and null predicates keep pruning. `Encode`
+  now returns an error for such an index if its config is nil or stores a
+  `TrigramMinLength` at or below that trigram index's N, so the written file
+  keeps the fallback.
+  `RegexLiteralInfo.MinLength` stays in bytes, and the field comment now says
+  so. The wire format stays v11.
 - `Decode` of a compressed index (`GINc`) no longer allocates a 64 MiB buffer
   for every index (#109). It sizes the first decompression buffer from the
   zstd frame header, so an index that decodes to 17 KB now allocates well
