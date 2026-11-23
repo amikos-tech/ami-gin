@@ -83,6 +83,18 @@ func TestTrigramMinLengthClampNewBuild(t *testing.T) {
 	}
 }
 
+func TestTrigramMinLengthClampKeepsCallerConfig(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.TrigramMinLength = 5
+	idx := buildTrigramUnicodeIndex(t, cfg, tmlDocs)
+	if cfg.TrigramMinLength != 5 {
+		t.Errorf("caller TrigramMinLength = %d, want 5", cfg.TrigramMinLength)
+	}
+	if idx.Config == nil || idx.Config.TrigramMinLength != 3 {
+		t.Errorf("index Config = %+v, want TrigramMinLength 3", idx.Config)
+	}
+}
+
 func TestTrigramMinLengthLegacyIndexGuard(t *testing.T) {
 	idx := tmlLoadLegacy(t)
 	for _, pat := range []string{"abc", "ééé", "日本語", "zzzyyy"} {
@@ -110,7 +122,10 @@ func TestTrigramMinLengthLegacyIndexGuard(t *testing.T) {
 	tmlRows(t, idx, Contains("$.nope", "abc"), want, "absent path")
 }
 
-func TestTrigramMinLengthPerIndexGuard(t *testing.T) {
+// tmlMixedNIndex returns an index that stores TrigramMinLength 4 with an N=3
+// trigram index on $.a and an N=4 one on $.b, so Decode guards only $.a.
+func tmlMixedNIndex(t *testing.T) *GINIndex {
+	t.Helper()
 	docs := []map[string]any{
 		{"a": "abc", "b": "abcd"},
 		{"a": "zzzzzz", "b": "zzzzzz"},
@@ -122,14 +137,33 @@ func TestTrigramMinLengthPerIndexGuard(t *testing.T) {
 	n4.Add("zzzzzz", 1)
 	idx.TrigramIndexes[bID] = n4
 	idx.Config.TrigramMinLength = 4
-	decoded := mustRoundTripIndex(t, idx)
+	return idx
+}
+
+func TestTrigramMinLengthPerIndexGuard(t *testing.T) {
+	decoded := mustRoundTripIndex(t, tmlMixedNIndex(t))
 
 	tmlRows(t, decoded, Contains("$.a", "qqq"), []int{0, 1}, "N=3 path guarded")
 	tmlRows(t, decoded, Contains("$.b", "qqqq"), nil, "N=4 path keeps pruning")
 	tmlRows(t, decoded, Contains("$.b", "abcd"), []int{0}, "N=4 path hit")
 }
 
-func TestTrigramMinLengthCompanionGuard(t *testing.T) {
+func TestTrigramMinLengthPerIndexGuardUnknownToken(t *testing.T) {
+	idx := tmlMixedNIndex(t)
+	idx.trigramUnicodeToken = trigramUnicodeForeignToken
+	decoded := mustRoundTripIndex(t, idx)
+
+	all := []int{0, 1}
+	for _, path := range []string{"$.a", "$.b"} {
+		tmlRows(t, decoded, Contains(path, "qqqq"), all, "unknown token "+path)
+		tmlRows(t, decoded, Regex(path, "qqqq"), all, "unknown token "+path)
+	}
+}
+
+// tmlLegacyCompanionIndex decodes an index that stores TrigramMinLength 5 and
+// has a ToLower companion on $.name.
+func tmlLegacyCompanionIndex(t *testing.T) *GINIndex {
+	t.Helper()
 	cfg, err := NewConfig(WithToLowerTransformer("$.name", "lower"))
 	if err != nil {
 		t.Fatalf("NewConfig: %v", err)
@@ -139,9 +173,22 @@ func TestTrigramMinLengthCompanionGuard(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
+	return idx
+}
+
+func TestTrigramMinLengthCompanionGuard(t *testing.T) {
+	idx := tmlLegacyCompanionIndex(t)
 	all := []int{0, 1, 2}
 	tmlRows(t, idx, Predicate{Path: "$.name", Operator: OpContains, Value: As("lower", "abc")}, all, "companion As")
 	tmlRows(t, idx, Contains("$.name", "abc"), all, "raw path")
+}
+
+func TestTrigramMinLengthCompanionEQKeepsPruning(t *testing.T) {
+	legacy := tmlLegacyCompanionIndex(t)
+	for name, idx := range map[string]*GINIndex{"decoded": legacy, "re-encoded": mustRoundTripIndex(t, legacy)} {
+		tmlRows(t, idx, EQ("$.name", As("lower", "abcd")), []int{0}, name+" companion EQ")
+		tmlRows(t, idx, EQ("$.name", "Abcd"), []int{0}, name+" raw EQ")
+	}
 }
 
 func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
