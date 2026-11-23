@@ -11,7 +11,8 @@ import (
 // TestRegenerateTrigramMinLengthGolden writes the old-format fixture. Run it
 // only on code that predates the #111 clamp: the file records what such a
 // writer stored for TrigramMinLength 5, and later code would index different
-// terms.
+// terms. Command:
+// go test -tags regenerate_goldens -run TestRegenerateTrigramMinLengthGolden .
 func TestRegenerateTrigramMinLengthGolden(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(trigramMinLengthLegacyGolden), 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)

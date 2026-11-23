@@ -550,8 +550,7 @@ type GINConfig struct {
 	// TrigramMinLength is the shortest term, in characters, that makes
 	// trigram grams. The builder only builds 3-character grams, so
 	// NewBuilder clamps values above 3 to 3 (the stored config holds the
-	// effective value). Terms shorter than 3 characters never make grams.
-	// Values of 3 or below are kept as given. A decoded index whose stored
+	// effective value), and values below 3 have no effect. A decoded index whose stored
 	// value exceeds its trigram N makes Contains and Regex return all row
 	// groups, because the writer skipped terms that still make grams (#111).
 	TrigramMinLength        int
@@ -967,7 +966,7 @@ func DefaultConfig() GINConfig {
 		BloomFilterSize:         65536,
 		BloomFilterHashes:       5,
 		EnableTrigrams:          true,
-		TrigramMinLength:        3,
+		TrigramMinLength:        defaultTrigramN,
 		HLLPrecision:            12,
 		PrefixBlockSize:         defaultPrefixBlockSize,
 		AdaptiveMinRGCoverage:   2,

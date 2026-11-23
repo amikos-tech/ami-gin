@@ -96,8 +96,7 @@ func (ti *TrigramIndex) Search(pattern string) *RGSet {
 	if !trigramUnicodeTokenSupported(ti.unicodeToken) {
 		return AllRGs(ti.NumRGs)
 	}
-	// Terms shorter than the stored TrigramMinLength never made grams, so
-	// absent grams cannot be trusted (#111).
+	// The writer skipped terms, so absent grams prove nothing (#111).
 	if ti.minLengthUnsafe {
 		return AllRGs(ti.NumRGs)
 	}

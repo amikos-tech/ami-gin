@@ -746,13 +746,10 @@ func decodeCore(data []byte) (*GINIndex, error) {
 	idx.Config = cfg
 	idx.trigramUnicodeToken = trigramToken
 	// The config follows the trigram section, so the trigram indexes learn
-	// their table version only here.
-	// The same holds for the stored TrigramMinLength: an index whose N is
-	// below it lacks grams for the terms the writer skipped (#111). A nil
-	// config leaves the index unmarked.
+	// their table version and min-length guard only here.
 	for _, ti := range idx.TrigramIndexes {
 		ti.unicodeToken = trigramToken
-		ti.minLengthUnsafe = cfg != nil && cfg.TrigramMinLength > ti.N
+		ti.minLengthUnsafe = trigramMinLengthSkipsGrams(cfg, ti.N)
 	}
 	representations, err := readRepresentations(buf)
 	if err != nil {
@@ -1999,26 +1996,27 @@ func validateTrigramUnicodeTokens(idx *GINIndex) error {
 	return nil
 }
 
+// trigramMinLengthSkipsGrams reports whether a writer that stored cfg skipped
+// terms long enough to make n-character grams (#111).
+func trigramMinLengthSkipsGrams(cfg *GINConfig, n int) bool {
+	return cfg != nil && cfg.TrigramMinLength > n
+}
+
 // validateTrigramMinLengthGuards refuses a TrigramIndex that Decode marked
-// minLengthUnsafe when the config Encode would write is nil or stores a
-// TrigramMinLength at or below that index's N. The written file would then
-// drop the guard and a reader would prune on grams the writer never made
-// (#111). A guarded index in an index whose config still stores a larger
-// value is allowed.
+// minLengthUnsafe when the config Encode writes would not make the next
+// Decode mark it again.
 func validateTrigramMinLengthGuards(idx *GINIndex) error {
 	for _, pathID := range sortedPathIDs(idx.TrigramIndexes) {
 		ti := idx.TrigramIndexes[pathID]
-		if ti == nil || !ti.minLengthUnsafe {
+		if ti == nil || !ti.minLengthUnsafe || trigramMinLengthSkipsGrams(idx.Config, ti.N) {
 			continue
 		}
 		if idx.Config == nil {
 			return errors.Errorf("trigram index for path ID %d (N=%d) needs the stored TrigramMinLength it was decoded with, but the index has no config",
 				pathID, ti.N)
 		}
-		if idx.Config.TrigramMinLength <= ti.N {
-			return errors.Errorf("trigram index for path ID %d (N=%d) needs a stored TrigramMinLength above %d, but the config stores %d",
-				pathID, ti.N, ti.N, idx.Config.TrigramMinLength)
-		}
+		return errors.Errorf("trigram index for path ID %d (N=%d) needs a stored TrigramMinLength above %d, but the config stores %d",
+			pathID, ti.N, ti.N, idx.Config.TrigramMinLength)
 	}
 	return nil
 }

@@ -243,14 +243,9 @@ func NewBuilder(config GINConfig, numRGs int, opts ...BuilderOption) (*GINBuilde
 	}
 	config.ParserFailureMode = normalizeIngestFailureMode(config.ParserFailureMode)
 	config.NumericFailureMode = normalizeIngestFailureMode(config.NumericFailureMode)
-	// The builder only builds defaultTrigramN-character grams. A larger
-	// TrigramMinLength would skip terms that still make grams and make
-	// Contains/Regex lose matches (#111), so clamp it on this local copy;
-	// Finalize and Encode store the effective value. Values at or below the
-	// gram size are kept as given.
-	if config.TrigramMinLength > defaultTrigramN {
-		config.TrigramMinLength = defaultTrigramN
-	}
+	// Clamp to the only gram size the builder makes, so that no term that
+	// makes grams is skipped (#111); see GINConfig.TrigramMinLength.
+	config.TrigramMinLength = min(config.TrigramMinLength, defaultTrigramN)
 	bloom, err := NewBloomFilter(config.BloomFilterSize, config.BloomFilterHashes)
 	if err != nil {
 		return nil, errors.Wrap(err, "create bloom filter")

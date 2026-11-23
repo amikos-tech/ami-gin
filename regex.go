@@ -141,7 +141,7 @@ func crossJoin(prefixes, suffixes []string) []string {
 type RegexLiteralInfo struct {
 	Literals    []string // Extracted literal strings
 	HasWildcard bool     // Pattern contains unbounded wildcards
-	MinLength   int      // Minimum length of any literal, in bytes (len), not characters; evaluateRegex counts characters itself
+	MinLength   int      // Minimum length of any literal, in bytes (not characters)
 }
 
 // AnalyzeRegex extracts literals and metadata from a regex pattern

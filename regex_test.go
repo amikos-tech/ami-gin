@@ -139,6 +139,12 @@ func TestAnalyzeRegex(t *testing.T) {
 			hasWildcard: false,
 			minLength:   1,
 		},
+		{
+			name:        "multi-byte literals count bytes",
+			pattern:     "éé|abcd",
+			hasWildcard: false,
+			minLength:   4,
+		},
 	}
 
 	for _, tt := range tests {

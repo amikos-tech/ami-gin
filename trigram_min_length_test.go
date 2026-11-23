@@ -2,10 +2,8 @@ package gin
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
+	"fmt"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"testing"
 )
@@ -39,62 +37,23 @@ func buildLegacyTrigramMinLengthEncoded(t *testing.T, cfg GINConfig, minLen int,
 	t.Helper()
 	builder := mustNewBuilder(t, cfg, len(docs))
 	builder.config.TrigramMinLength = minLen
-	for i, fields := range docs {
-		raw, err := json.Marshal(fields)
-		if err != nil {
-			t.Fatalf("json.Marshal: %v", err)
-		}
-		if err := builder.AddDocument(DocID(i), raw); err != nil {
-			t.Fatalf("AddDocument(%d): %v", i, err)
-		}
-	}
-	encoded, err := Encode(builder.Finalize())
+	encoded, err := Encode(addDocsAndFinalize(t, builder, docs))
 	if err != nil {
 		t.Fatalf("Encode: %v", err)
 	}
 	return encoded
 }
 
-func tmlBuild(t *testing.T, cfg GINConfig, docs []map[string]any) *GINIndex {
-	t.Helper()
-	builder := mustNewBuilder(t, cfg, len(docs))
-	for i, fields := range docs {
-		raw, err := json.Marshal(fields)
-		if err != nil {
-			t.Fatalf("json.Marshal: %v", err)
-		}
-		if err := builder.AddDocument(DocID(i), raw); err != nil {
-			t.Fatalf("AddDocument(%d): %v", i, err)
-		}
-	}
-	return builder.Finalize()
-}
-
-func tmlStrings(t *testing.T, values []string) *GINIndex {
-	t.Helper()
-	docs := make([]map[string]any, len(values))
-	for i, v := range values {
-		docs[i] = map[string]any{"s": v}
-	}
-	return tmlBuild(t, DefaultConfig(), docs)
-}
-
 func tmlLoadLegacy(t *testing.T) *GINIndex {
 	t.Helper()
-	data, err := os.ReadFile(trigramMinLengthLegacyGolden)
-	if err != nil {
-		t.Fatalf("read golden %s: %v (regenerate on pre-fix code via `go test -tags regenerate_goldens -run TestRegenerateTrigramMinLengthGolden .`)", trigramMinLengthLegacyGolden, err)
-	}
-	idx, err := Decode(data)
+	idx, err := Decode(readTestFile(t, trigramMinLengthLegacyGolden))
 	if err != nil {
 		t.Fatalf("Decode golden: %v", err)
 	}
+	if idx.Config == nil || idx.Config.TrigramMinLength != 5 {
+		t.Fatalf("golden Config = %+v, want TrigramMinLength 5", idx.Config)
+	}
 	return idx
-}
-
-func tmlRoundTrip(t *testing.T, idx *GINIndex) *GINIndex {
-	t.Helper()
-	return mustRoundTripIndex(t, idx)
 }
 
 func tmlRows(t *testing.T, idx *GINIndex, pred Predicate, want []int, label string) {
@@ -105,26 +64,19 @@ func tmlRows(t *testing.T, idx *GINIndex, pred Predicate, want []int, label stri
 	}
 }
 
-func TestTrigramMinLengthGoldenSanity(t *testing.T) {
-	idx := tmlLoadLegacy(t)
-	if idx.Config == nil || idx.Config.TrigramMinLength != 5 {
-		t.Fatalf("golden Config = %+v, want TrigramMinLength 5", idx.Config)
-	}
-}
-
 func TestTrigramMinLengthClampNewBuild(t *testing.T) {
 	for _, minLen := range []int{5, 4} {
 		cfg := DefaultConfig()
 		cfg.TrigramMinLength = minLen
-		built := tmlBuild(t, cfg, tmlDocs)
-		for name, idx := range map[string]*GINIndex{"fresh": built, "decoded": tmlRoundTrip(t, built)} {
-			label := name
+		built := buildTrigramUnicodeIndex(t, cfg, tmlDocs)
+		decoded := mustRoundTripIndex(t, built)
+		for name, idx := range map[string]*GINIndex{"fresh": built, "decoded": decoded} {
+			label := fmt.Sprintf("minLen %d %s", minLen, name)
 			tmlRows(t, idx, Contains("$.s", "abc"), []int{0, 4}, label+" Contains abc")
 			tmlRows(t, idx, Regex("$.s", "abc"), []int{0, 4}, label+" Regex abc")
 			tmlRows(t, idx, Contains("$.s", "ééé"), []int{3}, label+" Contains ééé")
 			tmlRows(t, idx, Contains("$.s", "日本語"), []int{2}, label+" Contains 日本語")
 		}
-		decoded := tmlRoundTrip(t, built)
 		if decoded.Config == nil || decoded.Config.TrigramMinLength != 3 {
 			t.Errorf("minLen %d: decoded Config = %+v, want TrigramMinLength 3", minLen, decoded.Config)
 		}
@@ -153,7 +105,7 @@ func TestTrigramMinLengthLegacyIndexGuard(t *testing.T) {
 	requirePredicateResult(t, idx, []Predicate{Contains("$.s", "abc"), EQ("$.s", "abcd")}, []int{0}, "Contains AND EQ")
 
 	// An absent path answers as it does on a default-built decoded index.
-	control := tmlRoundTrip(t, tmlBuild(t, DefaultConfig(), tmlDocs))
+	control := mustRoundTripIndex(t, buildTrigramUnicodeIndex(t, DefaultConfig(), tmlDocs))
 	want := control.Evaluate([]Predicate{Contains("$.nope", "abc")}).ToSlice()
 	tmlRows(t, idx, Contains("$.nope", "abc"), want, "absent path")
 }
@@ -163,14 +115,14 @@ func TestTrigramMinLengthPerIndexGuard(t *testing.T) {
 		{"a": "abc", "b": "abcd"},
 		{"a": "zzzzzz", "b": "zzzzzz"},
 	}
-	idx := tmlBuild(t, DefaultConfig(), docs)
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), docs)
 	bID := requirePathID(t, idx, "$.b")
 	n4 := MustNewTrigramIndex(len(docs), WithN(4))
 	n4.Add("abcd", 0)
 	n4.Add("zzzzzz", 1)
 	idx.TrigramIndexes[bID] = n4
 	idx.Config.TrigramMinLength = 4
-	decoded := tmlRoundTrip(t, idx)
+	decoded := mustRoundTripIndex(t, idx)
 
 	tmlRows(t, decoded, Contains("$.a", "qqq"), []int{0, 1}, "N=3 path guarded")
 	tmlRows(t, decoded, Contains("$.b", "qqqq"), nil, "N=4 path keeps pruning")
@@ -225,9 +177,7 @@ func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
 
 	// (c) A config storing a value at or below N cannot carry the guard.
 	lowCfg := tmlLoadLegacy(t)
-	c := *lowCfg.Config
-	c.TrigramMinLength = 3
-	lowCfg.Config = &c
+	lowCfg.Config.TrigramMinLength = 3
 	if _, err := Encode(lowCfg); err == nil {
 		t.Error("Encode with TrigramMinLength 3 succeeded, want error")
 	}
@@ -238,7 +188,7 @@ func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
 		wantErr bool
 	}{{3, true}, {5, false}} {
 		src := tmlLoadLegacy(t)
-		fresh := tmlBuild(t, DefaultConfig(), tmlDocs)
+		fresh := buildTrigramUnicodeIndex(t, DefaultConfig(), tmlDocs)
 		fresh.TrigramIndexes[requirePathID(t, fresh, "$.s")] = src.TrigramIndexes[requirePathID(t, src, "$.s")]
 		fresh.Config.TrigramMinLength = tc.minLen
 		encoded, err := Encode(fresh)
@@ -259,14 +209,14 @@ func TestTrigramMinLengthEncodeKeepsGuard(t *testing.T) {
 	}
 }
 
-// TestTrigramRuneLengthBehavior and TestTrigramRegexRuneBehavior pin the
-// end-to-end Contains/Regex answers for short multi-byte terms. They do not
-// guard the rune-count change itself: with TrigramMinLength clamped to 3, the
+// TestTrigramRuneLengthBehavior pins the end-to-end Contains/Regex answers for
+// short multi-byte terms. It does not guard the rune-count change itself: with TrigramMinLength clamped to 3, the
 // old byte gates admit a superset that TrigramIndex.Add and Search filter by
 // rune count anyway. TestTrigramBuilderGateCountsRunes guards the builder gate.
 func TestTrigramRuneLengthBehavior(t *testing.T) {
-	values := []string{"éé", "日本", "ab", "zzzzzz", "ééé", "日本語", "Kab"}
-	idx := tmlStrings(t, values)
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), []map[string]string{
+		{"s": "éé"}, {"s": "日本"}, {"s": "ab"}, {"s": "zzzzzz"}, {"s": "ééé"}, {"s": "日本語"}, {"s": "Kab"},
+	})
 	ti := idx.TrigramIndexes[requirePathID(t, idx, "$.s")]
 	if ti == nil {
 		t.Fatal("no trigram index for $.s")
@@ -286,16 +236,9 @@ func TestTrigramRuneLengthBehavior(t *testing.T) {
 	tmlRows(t, idx, Contains("$.s", "kab"), []int{6}, "Contains kab")
 	tmlRows(t, idx, Contains("$.s", "éé"), all, "Contains éé")
 	tmlRows(t, idx, Regex("$.s", "éé"), all, "Regex éé")
-}
-
-func TestTrigramRegexRuneBehavior(t *testing.T) {
-	idx := tmlStrings(t, []string{"éé", "日本", "ab", "zzzzzz", "ééé", "日本語", "Kab"})
-	all := []int{0, 1, 2, 3, 4, 5, 6}
 	tmlRows(t, idx, Regex("$.s", "éé|abcdef"), all, "short alternative")
+	tmlRows(t, idx, Regex("$.s", "日本|abcdef"), all, "short alternative")
 	tmlRows(t, idx, Regex("$.s", "ééé|zzzzzz"), []int{3, 4}, "long alternatives")
-	tmlRows(t, idx, Regex("$.s", "日本|abcdef"), all, "mixed 日本|abcdef")
-	// 4 bytes, 2 characters.
-	tmlRows(t, idx, Regex("$.s", "éé"), all, "long in bytes, short in characters")
 }
 
 // TestTrigramBuilderGateCountsRunes skips the NewBuilder clamp, as
@@ -304,16 +247,7 @@ func TestTrigramRegexRuneBehavior(t *testing.T) {
 func TestTrigramBuilderGateCountsRunes(t *testing.T) {
 	builder := mustNewBuilder(t, DefaultConfig(), 2)
 	builder.config.TrigramMinLength = 4
-	for i, v := range []string{"日本語", "abcdefgh"} {
-		raw, err := json.Marshal(map[string]any{"s": v})
-		if err != nil {
-			t.Fatalf("json.Marshal: %v", err)
-		}
-		if err := builder.AddDocument(DocID(i), raw); err != nil {
-			t.Fatalf("AddDocument(%d): %v", i, err)
-		}
-	}
-	idx := builder.Finalize()
+	idx := addDocsAndFinalize(t, builder, []map[string]string{{"s": "日本語"}, {"s": "abcdefgh"}})
 	ti := idx.TrigramIndexes[requirePathID(t, idx, "$.s")]
 	if ti == nil {
 		t.Fatal("no trigram index for $.s")
@@ -326,22 +260,12 @@ func TestTrigramBuilderGateCountsRunes(t *testing.T) {
 	}
 }
 
-func TestAnalyzeRegexMinLengthStaysBytes(t *testing.T) {
-	info, err := AnalyzeRegex("éé|abcd")
-	if err != nil {
-		t.Fatalf("AnalyzeRegex: %v", err)
-	}
-	if info.MinLength != 4 {
-		t.Errorf("AnalyzeRegex(éé|abcd).MinLength = %d, want 4 (bytes)", info.MinLength)
-	}
-}
-
 func TestTrigramMinLengthAtOrBelowNUnchanged(t *testing.T) {
 	queries := []Predicate{
 		Contains("$.s", "abc"), Regex("$.s", "abc"), Contains("$.s", "ééé"),
 		Contains("$.s", "日本語"), Contains("$.s", "zzzyyy"), Regex("$.s", "abcd|zzzzzz"),
 	}
-	baseline := tmlBuild(t, DefaultConfig(), tmlDocs)
+	baseline := buildTrigramUnicodeIndex(t, DefaultConfig(), tmlDocs)
 	baselineBytes, err := Encode(baseline)
 	if err != nil {
 		t.Fatalf("Encode baseline: %v", err)
@@ -349,13 +273,10 @@ func TestTrigramMinLengthAtOrBelowNUnchanged(t *testing.T) {
 	for _, minLen := range []int{3, 0, -7} {
 		cfg := DefaultConfig()
 		cfg.TrigramMinLength = minLen
-		idx := tmlBuild(t, cfg, tmlDocs)
+		idx := buildTrigramUnicodeIndex(t, cfg, tmlDocs)
 		for _, q := range queries {
 			want := baseline.Evaluate([]Predicate{q}).ToSlice()
-			got := idx.Evaluate([]Predicate{q}).ToSlice()
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("minLen %d: %v %q = %v, want %v", minLen, q.Operator, q.Value, got, want)
-			}
+			tmlRows(t, idx, q, want, fmt.Sprintf("minLen %d", minLen))
 		}
 		encoded, err := Encode(idx)
 		if err != nil {
@@ -375,16 +296,9 @@ func TestTrigramMinLengthAtOrBelowNUnchanged(t *testing.T) {
 }
 
 func TestTrigramMinLengthNilConfigDecode(t *testing.T) {
-	idx := tmlBuild(t, DefaultConfig(), tmlDocs)
+	idx := buildTrigramUnicodeIndex(t, DefaultConfig(), tmlDocs)
 	idx.Config = nil
-	encoded, err := Encode(idx)
-	if err != nil {
-		t.Fatalf("Encode: %v", err)
-	}
-	decoded, err := Decode(encoded)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
-	}
+	decoded := mustRoundTripIndex(t, idx)
 	if decoded.Config != nil {
 		t.Errorf("decoded Config = %+v, want nil", decoded.Config)
 	}

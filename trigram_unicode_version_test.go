@@ -21,9 +21,14 @@ var trigramUnicodeVersionDocs = []map[string]string{
 }
 
 // buildTrigramUnicodeIndex builds an index with one document per row group.
-func buildTrigramUnicodeIndex(t *testing.T, cfg GINConfig, docs []map[string]string) *GINIndex {
+func buildTrigramUnicodeIndex[V any](t *testing.T, cfg GINConfig, docs []map[string]V) *GINIndex {
 	t.Helper()
-	builder := mustNewBuilder(t, cfg, len(docs))
+	return addDocsAndFinalize(t, mustNewBuilder(t, cfg, len(docs)), docs)
+}
+
+// addDocsAndFinalize adds one document per row group and finalizes builder.
+func addDocsAndFinalize[V any](t *testing.T, builder *GINBuilder, docs []map[string]V) *GINIndex {
+	t.Helper()
 	for i, fields := range docs {
 		doc, err := json.Marshal(fields)
 		if err != nil {
